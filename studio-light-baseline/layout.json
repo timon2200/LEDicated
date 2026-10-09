@@ -1,0 +1,22 @@
+{
+  "project": "Studio Varazdin 9 Bar Club Grid",
+  "view": "audience facing stage/back wall",
+  "electronics_box": "behind C1",
+  "music_source": "MacBook system audio, including browser playback",
+  "bar_length_m": 1.2,
+  "rows": 3,
+  "columns": 3,
+  "pixel_count_per_bar_estimate": 12,
+  "pixel_count_note": "Estimate assumes 24V WS2814, 60 physical LEDs/m and 6 LEDs per addressable group; verify on sample.",
+  "bars": [
+    {"id": "L1", "row": 1, "column": 1, "node": "C3-B", "output": 1},
+    {"id": "C1", "row": 1, "column": 2, "node": "C3-A", "output": 1},
+    {"id": "R1", "row": 1, "column": 3, "node": "C3-C", "output": 1},
+    {"id": "L2", "row": 2, "column": 1, "node": "C3-B", "output": 2},
+    {"id": "C2", "row": 2, "column": 2, "node": "C3-A", "output": 2},
+    {"id": "R2", "row": 2, "column": 3, "node": "C3-C", "output": 2},
+    {"id": "L3", "row": 3, "column": 1, "node": "C3-D", "output": 1},
+    {"id": "C3", "row": 3, "column": 2, "node": "C3-D", "output": 2},
+    {"id": "R3", "row": 3, "column": 3, "node": "C3-E", "output": 1}
+  ]
+}

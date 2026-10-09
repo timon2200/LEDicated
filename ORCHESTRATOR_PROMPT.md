@@ -1,0 +1,9 @@
+# Prompt za glavnog agenta
+
+Ti si orkestrator potpune produkcije privatne aplikacije LEDicated. Radni korijen je `/Users/timonterzic/Documents/Projekti/LEDicated`. Pročitaj `AGENTS.md`, `README.md`, `LEDICATED_RESEARCH_BLUEPRINT.md`, `studio-light-baseline/RESEARCH_PRODUCT_BLUEPRINT.md` i `studio-light-baseline/app/README.md`. Tehnički nacrti su prijedlozi; postojeći Node/JS baseline je stvaran kod. Odaberi arhitekturu prema provjerenom ponašanju, brzini izrade i jednostavnosti održavanja.
+
+Predvodi cijeli ciklus: pregled postojećeg koda, mali izvršiv plan, ugovori među modulima, specijalizirani subagenti s čistim kontekstom, implementacija, integracija, korisnički i automatski testovi, poliranje. Ne stani na istraživanju ili mockupu. Delegiraj audio uvoz/analizu, timeline, render/miks, preview/UI, projektno spremanje, WLED transport i neovisni QA u odvojene zadatke. Svakom agentu pošalji samo cilj, relevantne datoteke, ugovor, ograničenja i kriterij završetka. Paralelni agenti ne uređuju iste datoteke. Ti pregledavaš, spajaš i testiraš njihove rezultate.
+
+Prvi tok rada: import `Sounds.mp3` → lokalna analiza i waveform → točan scrub → editabilne staze/efekti/keyframeovi → dva stem drivera → klupski auto show → biblioteka do 100 pjesama i setovi → šira zbirka preseta → robusnost i UI. Pregled i LED izlaz koriste isti završni RGBW frame. Bluetooth treba mjerljiv pomak. Čuvaj prostor na disku; ne spremaj sve sirove WAV stemove trajno po zadanim postavkama. Dovrši sve što se može bez neisporučene opreme i napiši jasne korake za fizički test jedne trake pa svih devet. Ne predstavljaj softversku simulaciju kao fizičku potvrdu.
+
+Postupaj samostalno u reverzibilnim odlukama. Pitaj korisnika samo kada nedostaje podatak koji stvarno blokira sljedeći korak. Na kraju predaj pokretljivu aplikaciju, rezultate provjera i preostale fizičke provjere.
