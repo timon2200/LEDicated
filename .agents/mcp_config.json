@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "ledicated": {
+      "command": "node",
+      "args": [
+        "/Users/timonterzic/Documents/Projekti/LEDicated/studio-light-baseline/app/mcp-server.mjs"
+      ]
+    }
+  }
+}

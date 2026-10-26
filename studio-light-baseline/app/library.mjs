@@ -1,6 +1,6 @@
 // Private, local song/project library. No audio decoding or network access lives here.
 import { createHash, randomUUID } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import { Readable, Transform } from 'node:stream';
@@ -125,8 +125,32 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
     index = next;
   }
 
-  async function importStream(name, readable) {
+  function extractMeta(meta) {
+    const out = {};
+    if (meta && typeof meta === 'object') {
+      if (typeof meta.videoId === 'string' && meta.videoId.trim()) out.videoId = meta.videoId.trim();
+      if (typeof meta.sourceUrl === 'string' && meta.sourceUrl.trim()) out.sourceUrl = meta.sourceUrl.trim();
+      if (typeof meta.theme === 'string' && meta.theme.trim()) out.theme = meta.theme.trim();
+      if (typeof meta.author === 'string' && meta.author.trim()) out.author = meta.author.trim().slice(0, 80);
+    }
+    return out;
+  }
+
+  function normalizeLookupTitle(raw) {
+    if (typeof raw !== 'string') return '';
+    return raw
+      .toLowerCase()
+      .replace(/\.(mp3|wav|m4a|aac|flac|ogg|aif|aiff)$/i, '')
+      .replace(/\(\s*(official\s*(music\s*)?video|official\s*audio|official\s*lyric\s*video|lyric\s*video|lyrics|audio|visualizer|hd|hq|4k|remastered[^)]*)\s*\)/gi, ' ')
+      .replace(/\[\s*(official\s*(music\s*)?video|official\s*audio|official\s*lyric\s*video|lyric\s*video|lyrics|audio|visualizer|hd|hq|4k|remastered[^\]]*)\s*\]/gi, ' ')
+      .replace(/[_\-|–—:.,!?'"()[\]]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  async function importStream(name, readable, meta = {}) {
     const file = cleanName(name);
+    const metaFields = extractMeta(meta);
     if (!readable || typeof readable.pipe !== 'function') throw new Error('Potreban je čitljiv audio tok.');
     return serialized(async () => {
       const free = await statfs(base);
@@ -147,7 +171,14 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
         if (sizeBytes === 0) throw new Error('Audio datoteka je prazna.');
         const sha256 = hash.digest('hex');
         const duplicate = index.tracks.find(track => track.sha256 === sha256);
-        if (duplicate) return copy(duplicate);
+        if (duplicate) {
+          if (Object.keys(metaFields).length > 0) {
+            const enriched = { ...duplicate, ...metaFields, updatedAt: new Date().toISOString() };
+            await commit({ ...index, tracks: index.tracks.map(item => item.id === duplicate.id ? enriched : item) });
+            return copy(enriched);
+          }
+          return copy(duplicate);
+        }
         if (index.tracks.length >= maxTracks) throw new Error(`Biblioteka prima najviše ${maxTracks} pjesama.`);
         const title = label(file.name.slice(0, -extname(file.name).length), 'naziv pjesme');
         const destination = join(audioDir, `${sha256}${file.extension}`);
@@ -157,7 +188,8 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
         const track = {
           id, projectId: id, title,
           originalName: file.name, extension: file.extension, sha256, sizeBytes,
-          hasTimeline: false, hasAnalysis: false, createdAt: now, updatedAt: now
+          hasTimeline: false, hasAnalysis: false, createdAt: now, updatedAt: now,
+          ...metaFields
         };
         try {
           await commit({ ...index, tracks: [...index.tracks, track] });
@@ -172,18 +204,72 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
     });
   }
 
-  async function importFile(path) {
+  async function importFile(path, meta = {}) {
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error('Izvor mora biti obična lokalna datoteka.');
     if (info.size > maxAudioBytes) throw new Error('Audio datoteka je prevelika.');
     const { createReadStream } = await import('node:fs');
-    return importStream(basename(path), createReadStream(path));
+    return importStream(basename(path), createReadStream(path), meta);
   }
 
-  function importBuffer(name, bytes) {
+  async function importTrack(sourcePath, originalName, meta = {}) {
+    if (originalName && typeof originalName === 'object') {
+      meta = originalName;
+      originalName = basename(sourcePath);
+    }
+    const info = await lstat(sourcePath);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error('Izvor mora biti obična lokalna datoteka.');
+    if (info.size > maxAudioBytes) throw new Error('Audio datoteka je prevelika.');
+    const ext = extname(sourcePath).toLowerCase() || '.mp3';
+    let rawName = typeof originalName === 'string' && originalName.trim() ? originalName.trim() : basename(sourcePath);
+    rawName = rawName.replace(/[\\/\x00-\x1f\x7f]+/g, ' ').trim();
+    if (!EXTENSIONS.has(extname(rawName).toLowerCase())) rawName = `${rawName}${EXTENSIONS.has(ext) ? ext : '.mp3'}`;
+    if (rawName.length > 200) {
+      const e = extname(rawName);
+      rawName = `${rawName.slice(0, 190 - e.length).trim()}${e}`;
+    }
+    const { createReadStream } = await import('node:fs');
+    return importStream(rawName, createReadStream(sourcePath), meta);
+  }
+
+  function importBuffer(name, bytes, meta = {}) {
     if (!(bytes instanceof Uint8Array)) throw new Error('Potreban je niz bajtova.');
     if (bytes.byteLength > maxAudioBytes) throw new Error('Audio datoteka je prevelika.');
-    return importStream(name, Readable.from([bytes]));
+    return importStream(name, Readable.from([bytes]), meta);
+  }
+
+  function findTrackByVideo({ videoId, title, sha256 } = {}) {
+    if (!index) {
+      try {
+        const parsed = JSON.parse(readFileSync(indexPath, 'utf8'));
+        if (parsed && Array.isArray(parsed.tracks)) index = parsed;
+      } catch {
+        return null;
+      }
+    }
+    if (!index || !Array.isArray(index.tracks)) return null;
+    const sha = typeof sha256 === 'string' ? sha256.trim().toLowerCase() : '';
+    const vid = typeof videoId === 'string' ? videoId.trim() : '';
+    const normTitle = normalizeLookupTitle(title);
+    if (!sha && !vid && !normTitle) return null;
+
+    let match = null;
+    if (sha) {
+      match = index.tracks.find(item => item.sha256 === sha) || null;
+    }
+    if (!match && vid) {
+      match = index.tracks.find(item => item.videoId === vid) || null;
+    }
+    if (!match && normTitle) {
+      match = index.tracks.find(item =>
+        normalizeLookupTitle(item.title) === normTitle ||
+        normalizeLookupTitle(item.originalName) === normTitle
+      ) || null;
+    }
+    if (!match) return null;
+    const out = copy(match);
+    if (out.hasAnalysis && !out.status) out.status = 'ready';
+    return out;
   }
 
   async function list() { await init(); await tail; return copy(index.tracks); }
@@ -193,8 +279,13 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
   function updateTrack(id, patch) {
     return serialized(async () => {
       const track = trackById(id);
-      if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).some(key => key !== 'title')) throw new Error('Dopušteno je mijenjati samo naslov pjesme.');
-      const nextTrack = { ...track, title: label(patch.title, 'naziv pjesme'), updatedAt: new Date().toISOString() };
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).some(key => !['title', 'author'].includes(key))) throw new Error('Dopušteno je mijenjati samo naslov pjesme.');
+      const nextTrack = {
+        ...track,
+        ...(patch.title !== undefined ? { title: label(patch.title, 'naziv pjesme') } : {}),
+        ...(typeof patch.author === 'string' ? { author: patch.author.trim().slice(0, 80) } : {}),
+        updatedAt: new Date().toISOString()
+      };
       await commit({ ...index, tracks: index.tracks.map(item => item.id === id ? nextTrack : item) });
       return copy(nextTrack);
     });
@@ -207,10 +298,32 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Potreban je JSON objekt.');
       const path = kind === 'timeline' ? timelineFor(id) : analysisFor(id);
       await atomicJson(path, data);
-      const nextTrack = { ...track, [kind === 'timeline' ? 'hasTimeline' : 'hasAnalysis']: true, updatedAt: new Date().toISOString() };
+      const analysisPatch = kind === 'analysis' ? {
+        status: 'ready',
+        ...(Number.isFinite(data.durationSec) ? { durationSec: data.durationSec } : (Number.isFinite(data.duration) ? { durationSec: data.duration } : {})),
+        ...(Number.isFinite(data.bpm) ? { bpm: data.bpm } : {})
+      } : {};
+      const nextTrack = {
+        ...track,
+        [kind === 'timeline' ? 'hasTimeline' : 'hasAnalysis']: true,
+        ...analysisPatch,
+        updatedAt: new Date().toISOString()
+      };
       await commit({ ...index, tracks: index.tracks.map(item => item.id === id ? nextTrack : item) });
       return copy(data);
     });
+  }
+
+  function saveAnalysis(id, analysis) {
+    return saveSidecar(id, analysis, 'analysis');
+  }
+
+  async function analyzeTrack(id) {
+    const audioPath = await getAudioPath(id);
+    const { analyzeAudio } = await import('./audio-analysis.mjs');
+    const analysis = await analyzeAudio(audioPath);
+    await saveAnalysis(id, analysis);
+    return analysis;
   }
 
   async function readSidecar(id, kind) {
@@ -271,10 +384,12 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
   }
 
   return {
-    init, importFile, importBuffer, importStream, list, getTrack, getAudioPath, updateTrack, deleteTrack,
+    init, importFile, importTrack, importBuffer, importStream, findTrackByVideo, analyzeTrack,
+    list, getTrack, getAudioPath, updateTrack, deleteTrack,
     saveTimeline: (id, timeline) => saveSidecar(id, timeline, 'timeline'),
     getTimeline: id => readSidecar(id, 'timeline'),
-    setAnalysis: (id, analysis) => saveSidecar(id, analysis, 'analysis'),
+    setAnalysis: saveAnalysis,
+    saveAnalysis,
     getAnalysis: id => readSidecar(id, 'analysis'),
     createSet, listSets, getSet, updateSet, deleteSet
   };

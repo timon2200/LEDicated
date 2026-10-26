@@ -318,7 +318,8 @@ export function clampBand(band) {
   const highHz = clamp(Math.max(band.highHz, lowHz * 1.05), lowHz * 1.05, SPECTRUM_MAX_HZ);
   const threshold = clamp(band.threshold, 0, 0.98);
   const ceiling = clamp(Math.max(band.ceiling, threshold + 0.02), threshold + 0.02, 1);
-  return { lowHz, highHz, threshold, ceiling, mode: band.mode === 'gate' ? 'gate' : 'follow', releaseSec: clamp(band.releaseSec, 0, 2) };
+  const source = ['master', 'drums', 'bass', 'vocals', 'other'].includes(band.source) ? band.source : 'master';
+  return { source, lowHz, highHz, threshold, ceiling, mode: band.mode === 'gate' ? 'gate' : 'follow', releaseSec: clamp(band.releaseSec, 0, 2) };
 }
 
 /** Apply a property patch to clips; targets 'all'/array normalised, color kept 0–1. */

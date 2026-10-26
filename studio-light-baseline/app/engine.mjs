@@ -24,7 +24,7 @@ const median = values => { const sorted = [...values].sort((a, b) => a - b); con
  * This is not calibrated colorimetry; WLED auto-white also needs bench verification.
  */
 export function rgbwToRgb([r = 0, g = 0, b = 0, w = 0]) {
-  return [r + w, g + .78 * w, b + .45 * w].map(v => Math.round(clamp(finite(v, 0), 0, 153)));
+  return [r + w, g + .78 * w, b + .45 * w].map(v => Math.round(clamp(finite(v, 0), 0, 255)));
 }
 
 /** Phase-preserving manual clock. Tap resets phase to the operator's beat. */
@@ -85,7 +85,7 @@ function sanitize(patch, previous) {
   return {
     scene: Object.hasOwn(SCENES, patch.scene) ? patch.scene : previous.scene,
     palette: Object.hasOwn(PALETTES, patch.palette) ? patch.palette : previous.palette,
-    brightness: clamp(finite(patch.brightness, previous.brightness), 0, .6),
+    brightness: clamp(finite(patch.brightness, previous.brightness), 0, 1),
     speed: clamp(finite(patch.speed, previous.speed), .25, 4),
     energy: clamp(finite(patch.energy, previous.energy), 0, 1),
     audioLevel: clamp(finite(patch.audioLevel, previous.audioLevel), 0, 1),
@@ -123,7 +123,7 @@ function render(state, beat) {
       }
       const position = clamp(colorPosition, 0, 1) * (colors.length - 1), a = Math.floor(position), b = Math.min(a + 1, colors.length - 1), t = position - a;
       const gain = state.brightness * intensity * level;
-      return colors[a].map((channel, c) => Math.round(clamp((channel * (1 - t) + colors[b][c] * t) * gain * 255, 0, 153)));
+      return colors[a].map((channel, c) => Math.round(clamp((channel * (1 - t) + colors[b][c] * t) * gain * 255, 0, 255)));
     });
   });
   return result;

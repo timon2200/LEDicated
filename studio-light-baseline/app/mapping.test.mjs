@@ -18,8 +18,8 @@ test('resampling and output limits are identical for preview and transport', () 
   const bar = { pixels: 5, physicalLeds: 30, reverse: true };
   const groups = mapBarPixels(source, bar);
   const diodes = physicalLedPixels(source, bar);
-  assert.deepEqual(groups.map(p => p[0]), [153, 140, 80, 40, 0]);
+  assert.deepEqual(groups.map(p => p[0]), [180, 140, 80, 40, 0]);
   assert.equal(diodes.length, 30);
   assert.ok(diodes.every((pixel, i) => pixel.every((channel, index) => channel === groups[Math.floor(i / 6)][index])));
-  assert.ok(diodes.every(pixel => pixel.every(value => value <= 153)));
+  assert.ok(diodes.every(pixel => pixel.every(value => value <= 255)));
 });

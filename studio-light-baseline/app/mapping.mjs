@@ -1,6 +1,6 @@
 /** One resampling path for WLED logical groups and the per-diode preview. */
 export const SOURCE_SAMPLES = 12;
-const cap = value => Math.max(0, Math.min(153, value));
+const cap = value => Math.max(0, Math.min(255, value));
 
 export function mapBarPixels(source, { pixels, reverse = false }) {
   if (!Array.isArray(source) || source.length !== SOURCE_SAMPLES || !Number.isInteger(pixels) || pixels < 1 || pixels > 72 || typeof reverse !== 'boolean') throw new TypeError('Neispravan RGBW kadar ili mapiranje bara.');

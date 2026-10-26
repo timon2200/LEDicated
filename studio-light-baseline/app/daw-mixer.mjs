@@ -144,12 +144,12 @@ export function createMixer(host, ctx) {
         h('select', { class: 'mini-select', 'aria-label': `Blend ${layer.name}`, onChange: e => store.commit('Blend', t => { t.layers.find(l => l.id === layer.id).blend = e.target.value; }) }, TIMELINE_BLENDS.map(b => h('option', { value: b, selected: layer.blend === b }, b)))));
     });
 
-    master = createFader({ label: 'Master svjetlina (ograničeno na 60)', value: ctx.getBrightness(), max: 60, format: v => `${Math.round(v)}%`, onInput: v => ctx.setBrightness(v) });
+    master = createFader({ label: 'Master svjetlina (crveno iznad 70%)', value: ctx.getBrightness(), max: 100, warnAbove: 70, format: v => `${Math.round(v)}%`, onInput: v => ctx.setBrightness(v) });
     const masterStrip = h('div', { class: 'mx-strip master light-master' },
       h('div', { class: 'mx-color' }),
       h('span', { class: 'mx-name static' }, 'SVJETLO'),
       master.element,
-      h('small', { class: 'mx-note' }, 'Maks. 60%')
+      h('small', { class: 'mx-note' }, 'Crveno > 70%')
     );
 
     lightStrips.append(masterStrip);

@@ -3,6 +3,8 @@
 Verzija: 9. listopada 2026.  
 Lokacija centralne kutije: iza bara C1.
 
+**Status sheme:** ovo je raniji plan s pet ESP32-C3 pločica, a ne shema za naručeni E8-WiFi Plus V1.01. Za E8 pinout, ugrađene 5 V podatkovne buffere, osigurače, osam izlaza i otvorena pitanja napajanja vidi [E8 referencu](E8_WIFI_PLUS_V1_01.md). Ne prenosi C3 GPIO 2/3, zasebne AHCT buffere ili raspored pet čvorova na E8 bez novog nacrta i mjerenja.
+
 ---
 
 ## 1. Temeljna električna pravila
@@ -14,7 +16,7 @@ Lokacija centralne kutije: iza bara C1.
 3. **Smjer podataka (Data Flow):**  
    WS2814 je jednosmjerna traka. Podaci moraju ulaziti isključivo na oznaku **DI** (Data In) u smjeru strelice otisnute na traci. Spajanje na izlazni kraj (DO - Data Out) ne daje nikakav signal.
 4. **Razdvajanje napajanja:**  
-   Tri naručena napajanja (100 W, 300 W, 400 W) su zasebne jedinice. Njihovi izlazi +24 V **ne smiju se spajati paralelno**. Za testiranje se koristi 100 W jedinica; za kompletnu instalaciju 9 barova koristi se isključivo 400 W (ili 300 W) jedinica.
+   Tri naručena napajanja (100 W, 300 W, 400 W) su zasebne jedinice. Njihovi izlazi +24 V **ne smiju se spajati paralelno**. U ovoj starijoj C3 shemi 100 W jedinica je kandidat samo za osigurani test jednog bara, a 300/400 W jedinice kandidati za kompletan sustav. Njihove stvarne kontinuirane mogućnosti i potrošnja traka moraju se izmjeriti prije konačnog izbora. E8 datasheet za glavni ulaz X5 zasebno navodi najmanje 10 A dostupne struje; ne prenosi C3 bench plan izravno na E8.
 
 ---
 
@@ -75,7 +77,7 @@ Ova shema služi za trenutnu provjeru jedne ESP32-C3 pločice, 24 V napajanja od
 
 ## 3. Shema 2: Puna instalacija za 9 barova (Centralna kutija iza C1)
 
-Kompletna instalacija koristi jedno glavno napajanje od 400 W (ili 300 W), kutiju s rastalnim osiguracima za svaku granu, 24V→5V Step-Down (Buck) pretvarač za logiku te 5 ESP32-C3 čvorova.
+Ovaj raniji prijedlog C3 instalacije koristi jedno glavno napajanje od 400 W (ili 300 W) kao kandidata, kutiju s rastalnim osiguračima za svaku granu, 24V→5V Step-Down (Buck) pretvarač za logiku te 5 ESP32-C3 čvorova. Odabir napajanja i osigurača nije potvrđen mjerenjem; E8 zahtijeva novu shemu.
 
 ### Blok dijagram razvoda
 

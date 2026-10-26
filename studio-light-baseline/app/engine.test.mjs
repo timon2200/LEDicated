@@ -13,7 +13,7 @@ test('all scenes and palettes produce finite capped RGBW bytes with consistent t
       assert.deepEqual(Object.keys(frame.bars), BAR_IDS);
       for (const bar of Object.values(frame.bars)) {
         assert.equal(bar.length, PIXELS_PER_BAR);
-        for (const pixel of bar) { assert.equal(pixel.length, 4); assert.ok(pixel.every(v => Number.isInteger(v) && v >= 0 && v <= 153)); }
+        for (const pixel of bar) { assert.equal(pixel.length, 4); assert.ok(pixel.every(v => Number.isInteger(v) && v >= 0 && v <= 255)); }
       }
       assert.ok(frame.beatPhase >= 0 && frame.beatPhase < 1);
     }
@@ -65,6 +65,17 @@ test('master zero and blackout stop every channel including white immediately du
   assert.ok(lit(engine.frame(502)));
 });
 
+test('blackout toggle turns output completely off and lights it up again', () => {
+  const engine = new LightingEngine({ state: { palette: 'warm', scene: 'ambient', brightness: .4 } });
+  assert.ok(lit(engine.frame(0)), 'initial frame must be lit');
+  // First toggle: blackout active
+  engine.setState({ blackout: true }, 1);
+  assert.equal(lit(engine.frame(1)), false, 'blackout frame must be completely dark');
+  // Second toggle: blackout released
+  engine.setState({ blackout: false }, 2);
+  assert.ok(lit(engine.frame(2)), 'lights must light up again after blackout release');
+});
+
 test('palette change starts exactly at outgoing frame and crossfades RGBW to target', () => {
   const engine = new LightingEngine({ state: { scene: 'ambient', palette: 'warm' } });
   const before = engine.frame(1).bars;
@@ -101,7 +112,7 @@ test('reactivity changes intensity without topology changes or runaway values', 
 
 test('RGB approximation consistently maps warm white and clamps combined channels', () => {
   assert.deepEqual(rgbwToRgb([0, 0, 0, 100]), [100, 78, 45]);
-  assert.deepEqual(rgbwToRgb([153, 153, 153, 153]), [153, 153, 153]);
+  assert.deepEqual(rgbwToRgb([255, 255, 255, 255]), [255, 255, 255]);
   assert.deepEqual(rgbwToRgb([NaN, -4, Infinity, 0]), [0, 0, 0]);
 });
 

@@ -1,10 +1,10 @@
 /** Compact live board. The song arrangement above is the visual timeline;
  * this pane focuses on cues, movable pads, and one set of controls. */
-import { h, toast } from './daw-ui.mjs';
+import { h, toast, segmentIntersectsRect } from './daw-ui.mjs';
 import { PRESET_LABELS } from './daw-playlist.mjs';
 import { SECTION_COLORS, SECTION_NAMES } from './audio-sections.mjs';
 import { BAR_IDS } from './engine.mjs';
-import { DEFAULT_PADS, LIVE_PARAM_OPTIONS, PAD_KEYS, createPerformance } from './live-performance-state.mjs';
+import { DEFAULT_PADS, LIVE_PARAM_OPTIONS, PAD_KEYS, createPerformance, nextBeat } from './live-performance-state.mjs';
 
 const STORAGE = 'ledicated.perform.pads.v1';
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -49,10 +49,14 @@ const EFFECT_GUIDES = {
   sweep: ['Prelet', 'Smjer i širina prolaza.']
 };
 const targetName = value => value === 'all' ? 'all' : Object.keys(targetIds).find(k => JSON.stringify(targetIds[k]) === JSON.stringify(value)) || 'all';
+const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export function createPerformancePanel(host, ctx) {
   let saved;
   try { saved = JSON.parse(localStorage.getItem(STORAGE) || 'null'); } catch { saved = null; }
+  if (Array.isArray(saved) && saved[3]?.preset === 'strobe' && saved[3].intensity === .55) {
+    saved[3] = { ...saved[3], color: [1, 1, 1, 1], intensity: 1, params: { ...saved[3].params, rate: '1/8', duty: 'sharp' } };
+  }
   const desk = createPerformance(Array.isArray(saved) ? saved : DEFAULT_PADS);
   let selected = 0, lastPaint = 0, lastPads = '', lastTrack = null, effectPickerOpen = false;
   const save = () => { try { localStorage.setItem(STORAGE, JSON.stringify(desk.pads)); } catch { toast('Postavke padova nije moguće spremiti.', 'error'); } };
@@ -69,6 +73,13 @@ export function createPerformancePanel(host, ctx) {
     desk.setQuantize(!desk.quantize); quant.classList.toggle('on', desk.quantize); quant.setAttribute('aria-pressed', String(desk.quantize)); quant.textContent = desk.quantize ? '● Beat sync' : '○ Odmah';
   } }, '○ Odmah');
   const stopAll = h('button', { type: 'button', class: 'pf-stop', title: 'Ugasi izvedbene efekte; spremljeni show ostaje', onClick: () => { desk.clear(); paintPads(); feedback.textContent = 'Svi izvedbeni efekti ugašeni.'; ctx.status('Izvedbeni efekti ugašeni.'); } }, 'Stop FX');
+  const recSessionBtn = h('button', {
+    type: 'button',
+    class: 'pf-rec',
+    title: 'Snimaj live izvedbu na vremensku traku (⇧R)',
+    'aria-pressed': 'false',
+    onClick: () => ctx.toggleRecord?.()
+  }, '● REC');
   const cue = h('div', { class: 'pf-cue' },
     h('div', { class: 'pf-cue-song' }, h('span', { class: 'pf-eyebrow' }, 'SADA SVIRA'), title), section,
     h('div', { class: 'pf-beat' }, beatText, h('div', { class: 'pf-beat-track' }, beatFill)), next,
@@ -79,7 +90,7 @@ export function createPerformancePanel(host, ctx) {
       h('button', { type: 'button', onClick: () => { ctx.setLoop(null); loopState.textContent = 'Bez petlje'; } }, 'Bez petlje')),
     loopState);
   const board = h('div', { class: 'pf-board' },
-    h('div', { class: 'pf-board-head' }, h('div', {}, h('b', {}, 'LIVE BOARD'), h('small', {}, '12 mjesta · QWER / ASDF / ZXCV')), h('div', { class: 'pf-board-tools' }, quant, stopAll)),
+    h('div', { class: 'pf-board-head' }, h('div', {}, h('b', {}, 'LIVE BOARD'), h('small', {}, '12 mjesta · QWER / ASDF / ZXCV')), h('div', { class: 'pf-board-tools' }, quant, recSessionBtn, stopAll)),
     pads, feedback);
   const split = h('div', { class: 'pf-split', role: 'separator', tabIndex: 0, 'aria-label': 'Širina Live Boarda', 'aria-orientation': 'vertical', title: 'Povuci za širinu · dvoklik vraća početnu veličinu' });
   const root = h('div', { class: 'pf-root' }, cue, board, split, inspector);
@@ -117,6 +128,14 @@ export function createPerformancePanel(host, ctx) {
     if (ctx.blackout()) { feedback.textContent = 'Blackout je aktivan. Otpusti ga za svjetlo.'; return; }
     if (select) { selected = index; effectPickerOpen = false; }
     const result = desk.trigger(index, { songTime: ctx.songTime(), clockTime: ctx.clockTime(), playing: ctx.playing(), bpm: ctx.bpm(), beatOffsetSec: ctx.beatOffset(), beatTimes: ctx.beatTimes() });
+    if (result === 'started') {
+      if (desk.pads[index]) ctx.recorder?.onPadDown(index, desk.pads[index], ctx.songTime());
+    } else if (result === 'queued') {
+      const cueTime = nextBeat(ctx.songTime(), ctx.bpm(), ctx.beatOffset(), ctx.beatTimes());
+      if (desk.pads[index]) ctx.recorder?.onPadDown(index, desk.pads[index], ctx.songTime(), { isQueued: true, queueTime });
+    } else if (result === 'stopped' || result === 'cancelled') {
+      ctx.recorder?.onPadUp(index, ctx.songTime());
+    }
     padMessage(result, index); paintPads(); if (select) renderInspector();
   }
   const performanceContext = () => ({ songTime: ctx.songTime(), clockTime: ctx.clockTime(), playing: ctx.playing(), bpm: ctx.bpm(), beatOffsetSec: ctx.beatOffset(), beatTimes: ctx.beatTimes() });
@@ -134,17 +153,28 @@ export function createPerformancePanel(host, ctx) {
     if (ctx.blackout()) { feedback.textContent = 'Blackout je aktivan. Otpusti ga za svjetlo.'; return; }
     if (select) selectCard(index);
     const result = desk.press(index, performanceContext());
+    if (result !== 'held' && result !== 'invalid' && desk.pads[index]) {
+      ctx.recorder?.onPadDown(index, desk.pads[index], ctx.songTime());
+    }
     padMessage(result, index); syncPadStates();
   }
   function release(index, { cancel = false } = {}) {
     const result = desk.release(index, { clockTime: ctx.clockTime(), cancel });
+    if (result !== 'ignored') {
+      ctx.recorder?.onPadUp(index, ctx.songTime());
+    }
     padMessage(result, index); syncPadStates();
   }
-  function releaseAll() { desk.releaseAll(); syncPadStates(); }
+  function releaseAll() {
+    desk.releaseAll();
+    for (let i = 0; i < desk.pads.length; i++) ctx.recorder?.onPadUp(i, ctx.songTime());
+    syncPadStates();
+  }
   function assignPreset(preset, index = selected) {
     if (!PRESET_LABELS[preset]) return false;
     selected = index; effectPickerOpen = false;
     desk.setPad(index, { preset, params: {} });
+    ctx.recorder?.onPadChange(index, desk.pads[index], ctx.songTime());
     save(); paintPads(); renderInspector();
     feedback.textContent = `${PRESET_LABELS[preset]} dodan na ${PAD_KEYS[index].toUpperCase()}.`;
     return true;
@@ -155,7 +185,7 @@ export function createPerformancePanel(host, ctx) {
     const occupied = Boolean(desk.pads[to]);
     if (!desk.movePad(from, to)) return false;
     selected = to; effectPickerOpen = false; save(); paintPads(); renderInspector();
-    if (fromRect && toRect && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (fromRect && toRect && !reducedMotion()) {
       const glide = (cell, x, y) => cell?.animate([
         { transform: `translate(${x}px, ${y}px) scale(1.04)`, opacity: .72, filter: 'brightness(1.35)' },
         { transform: 'translate(0,0) scale(1)', opacity: 1, filter: 'brightness(1)' }
@@ -247,7 +277,7 @@ export function createPerformancePanel(host, ctx) {
       }
       return cell;
     }));
-    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) [...pads.children].forEach((cell, i) => {
+    if (!reducedMotion()) [...pads.children].forEach((cell, i) => {
       const nowActive = cell.classList.contains('active'), nowQueued = cell.classList.contains('queued');
       if (before[i] && ((nowActive && !before[i].active) || (nowQueued && !before[i].queued))) cell.animate([
         { transform: 'scale(.88)', filter: 'brightness(2)' }, { transform: 'scale(1.04)', filter: 'brightness(1.45)' }, { transform: 'scale(1)', filter: 'brightness(1)' }
@@ -273,13 +303,16 @@ export function createPerformancePanel(host, ctx) {
         badge.textContent = pressed ? '●' : queued ? '◌' : pad.mode === 'hit' ? '✦' : '↻';
         badge.title = pressed ? 'Drži · prestaje pri otpuštanju' : queued ? 'Čeka beat' : active ? 'Aktivan efekt' : pad.mode === 'hit' ? 'Udar · svira jednom' : 'Petlja · klik pali/gasi';
       }
-      if ((newlyPressed || newlyActive) && !matchMedia('(prefers-reduced-motion: reduce)').matches) cell.animate([
+      if ((newlyPressed || newlyActive) && !reducedMotion()) cell.animate([
         { filter: 'brightness(1.8)' }, { filter: 'brightness(1)' }
       ], { duration: 240, easing: 'ease-out' });
     });
   }
-  function renderInspector() {
-    const scrollTop = host.scrollTop;
+  let lastRenderedSelected = selected;
+  function renderInspector({ keepScroll = undefined } = {}) {
+    const preserve = keepScroll !== undefined ? keepScroll : (lastRenderedSelected === selected);
+    const savedScroll = preserve ? inspector.scrollTop : 0;
+    lastRenderedSelected = selected;
     const pad = desk.pads[selected];
     const effectPalette = (current, onPick) => h('div', { class: 'pf-effect-palette', role: 'group', 'aria-label': 'Odabir efekta' },
       ...Object.entries(PRESET_LABELS).map(([key, name]) => h('button', {
@@ -293,10 +326,15 @@ export function createPerformancePanel(host, ctx) {
       inspector.replaceChildren(header,
         h('div', { class: 'pf-empty-editor' }, h('span', {}, '+'), h('strong', {}, 'Prazno mjesto'), h('p', {}, 'Povuci efekt iz kataloga ili dodirni jedan ispod.')),
         effectPalette(null, value => assignPreset(value)));
-      host.scrollTop = scrollTop;
+      if (preserve) inspector.scrollTop = savedScroll;
       return;
     }
-    const edit = patch => { desk.setPad(selected, patch); save(); paintPads(); };
+    const edit = patch => {
+      desk.setPad(selected, patch);
+      ctx.recorder?.onPadChange(selected, desk.pads[selected], ctx.songTime());
+      save();
+      paintPads();
+    };
     const commit = patch => { edit(patch); renderInspector(); };
     const choice = (label, value, values, onChange, aria = label) => {
       const buttons = values.map(([key, name]) => h('button', {
@@ -357,41 +395,214 @@ export function createPerformancePanel(host, ctx) {
     };
     let currentTargets = pad.targets === 'all' ? [...BAR_IDS] : [...pad.targets];
     let targetSet = new Set(currentTargets);
+    const countLabel = h('small', {}, `${currentTargets.length}/9 uključeno`);
+
+    const targetPresets = [
+      ['Lijevo', ['L1', 'L2', 'L3']], ['Centar', ['C1', 'C2', 'C3']], ['Desno', ['R1', 'R2', 'R3']],
+      ['Rub', ['L1', 'L2', 'L3', 'R1', 'R2', 'R3']], ['Svi', BAR_IDS], ['Križ', ['C1', 'L2', 'C2', 'R2', 'C3']]
+    ];
+
+    let targetButtons = [];
+    let presetButtons = [];
+
     const setTargets = values => {
       currentTargets = [...values]; targetSet = new Set(values);
       edit({ targets: values.length === 9 ? 'all' : values });
-      targetPanel.querySelector('.pf-section-title small').textContent = `${values.length}/9 uključeno`;
-      targetPanel.querySelectorAll('.pf-target').forEach((button, index) => {
-        const on = targetSet.has(BAR_IDS[index]);
+      countLabel.textContent = `${values.length}/9 uključeno`;
+      targetButtons.forEach((button, index) => {
+        const id = BAR_IDS[index];
+        const on = targetSet.has(id);
         button.classList.toggle('on', on); button.setAttribute('aria-pressed', String(on));
-        button.title = `${BAR_IDS[index]} · klikni za ${on ? 'isključivanje' : 'uključivanje'}`;
+        button.title = `${id} · klikni ili povuci za ${on ? 'isključivanje' : 'uključivanje'} (Option za solo)`;
       });
-      targetPanel.querySelectorAll('.pf-target-presets button').forEach((button, index) => {
+      presetButtons.forEach((button, index) => {
         const preset = targetPresets[index][1];
         const on = preset.length === values.length && preset.every(id => targetSet.has(id));
         button.classList.toggle('on', on); button.setAttribute('aria-pressed', String(on));
       });
     };
+
     const toggleTarget = id => {
       const next = targetSet.has(id) ? currentTargets.filter(x => x !== id) : BAR_IDS.filter(x => targetSet.has(x) || x === id);
       if (!next.length) { feedback.textContent = 'Barem jedan bar mora ostati uključen.'; return; }
       setTargets(next);
     };
-    const targetPresets = [
-      ['Lijevo', ['L1', 'L2', 'L3']], ['Centar', ['C1', 'C2', 'C3']], ['Desno', ['R1', 'R2', 'R3']],
-      ['Rub', ['L1', 'L2', 'L3', 'R1', 'R2', 'R3']], ['Svi', BAR_IDS], ['Križ', ['C1', 'L2', 'C2', 'R2', 'C3']]
-    ];
+
+    let isDragging = false;
+    let dragMode = null; // 'add' | 'remove' | 'solo'
+    let touchedIds = new Set();
+    let lastPoint = null;
+    let suppressClick = false;
+    let suppressTimer = 0;
+    let cachedCells = [];
+
+    const applyCell = id => {
+      if (dragMode === 'solo') {
+        setTargets(BAR_IDS.filter(b => touchedIds.has(b)));
+      } else if (dragMode === 'add') {
+        if (!targetSet.has(id)) {
+          setTargets(BAR_IDS.filter(b => targetSet.has(b) || b === id));
+        }
+      } else if (dragMode === 'remove') {
+        if (targetSet.has(id)) {
+          const next = currentTargets.filter(b => b !== id);
+          if (next.length) {
+            setTargets(next);
+          } else {
+            feedback.textContent = 'Barem jedan bar mora ostati uključen.';
+          }
+        }
+      }
+    };
+
+    const updateDragAtPoint = (x, y) => {
+      if (!isDragging) return;
+      const p1 = lastPoint || { x, y };
+      const p2 = { x, y };
+      lastPoint = p2;
+
+      for (const cell of cachedCells) {
+        if (touchedIds.has(cell.id)) continue;
+        if (cell.rect && segmentIntersectsRect(p1.x, p1.y, p2.x, p2.y, cell.rect)) {
+          touchedIds.add(cell.id);
+          applyCell(cell.id);
+        }
+      }
+      const hit = (typeof document !== 'undefined' && document.elementFromPoint)
+        ? document.elementFromPoint(x, y)?.closest?.('.pf-target')
+        : null;
+      const hitId = hit?.dataset?.barId;
+      if (hitId && !touchedIds.has(hitId)) {
+        touchedIds.add(hitId);
+        applyCell(hitId);
+      }
+    };
+
+    const onPointerMove = e => {
+      if (!isDragging) return;
+      updateDragAtPoint(e.clientX, e.clientY);
+    };
+
+    const onPointerUp = e => {
+      if (!isDragging) return;
+      isDragging = false;
+      targetGrid.classList.remove('dragging');
+      try {
+        if (e.pointerId !== undefined && targetGrid.hasPointerCapture && targetGrid.hasPointerCapture(e.pointerId)) {
+          targetGrid.releasePointerCapture(e.pointerId);
+        }
+      } catch {}
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointercancel', onPointerUp);
+      }
+      clearTimeout(suppressTimer);
+      suppressTimer = setTimeout(() => { suppressClick = false; }, 80);
+    };
+
+    const onPointerDown = e => {
+      if (e.button !== 0) return;
+      const targetBtn = e.target?.closest?.('.pf-target');
+      const startId = targetBtn?.dataset?.barId || null;
+
+      isDragging = true;
+      suppressClick = true;
+      clearTimeout(suppressTimer);
+      targetGrid.classList.add('dragging');
+      try {
+        if (e.pointerId !== undefined && targetGrid.setPointerCapture) {
+          targetGrid.setPointerCapture(e.pointerId);
+        }
+      } catch {}
+
+      cachedCells = targetButtons.map(btn => ({
+        id: btn.dataset.barId,
+        btn,
+        rect: btn.getBoundingClientRect ? btn.getBoundingClientRect() : null
+      }));
+
+      lastPoint = { x: e.clientX, y: e.clientY };
+      touchedIds = new Set();
+
+      if (e.altKey) {
+        dragMode = 'solo';
+        if (startId) {
+          touchedIds.add(startId);
+          setTargets([startId]);
+        }
+      } else if (e.shiftKey) {
+        dragMode = 'add';
+        if (startId) {
+          touchedIds.add(startId);
+          if (!targetSet.has(startId)) {
+            setTargets(BAR_IDS.filter(id => targetSet.has(id) || id === startId));
+          }
+        }
+      } else if (startId) {
+        touchedIds.add(startId);
+        if (targetSet.has(startId)) {
+          dragMode = 'remove';
+          const next = currentTargets.filter(id => id !== startId);
+          if (next.length) {
+            setTargets(next);
+          } else {
+            feedback.textContent = 'Barem jedan bar mora ostati uključen.';
+          }
+        } else {
+          dragMode = 'add';
+          setTargets(BAR_IDS.filter(id => targetSet.has(id) || id === startId));
+        }
+      } else {
+        dragMode = 'add';
+      }
+
+      if (typeof window !== 'undefined') {
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', onPointerUp);
+      }
+    };
+
+    targetButtons = BAR_IDS.map(id => {
+      const on = targetSet.has(id);
+      const btn = h('button', {
+        type: 'button',
+        class: `pf-target ${on ? 'on' : ''}`,
+        'aria-label': `Bar ${id}`,
+        'aria-pressed': String(on),
+        dataset: { barId: id },
+        title: `${id} · klikni ili povuci za ${on ? 'isključivanje' : 'uključivanje'} (Option za solo)`,
+        onClick: () => {
+          if (suppressClick) return;
+          toggleTarget(id);
+        }
+      }, h('i', {}), h('span', {}, id));
+      btn.addEventListener('pointerenter', () => {
+        if (!isDragging) return;
+        if (!touchedIds.has(id)) {
+          touchedIds.add(id);
+          applyCell(id);
+        }
+      });
+      return btn;
+    });
+
+    const targetGrid = h('div', { class: 'pf-target-grid', role: 'group', 'aria-label': 'Odabir LED barova' }, ...targetButtons);
+    targetGrid.addEventListener('pointerdown', onPointerDown);
+
+    presetButtons = targetPresets.map(([name, values]) => h('button', {
+      type: 'button',
+      class: values.length === currentTargets.length && values.every(id => targetSet.has(id)) ? 'on' : '',
+      'aria-pressed': String(values.length === currentTargets.length && values.every(id => targetSet.has(id))),
+      onClick: () => setTargets(values)
+    }, name));
+
     const targetPanel = h('section', { class: 'pf-editor-section pf-target-section' },
-      h('div', { class: 'pf-section-title' }, h('b', {}, 'BAROVI · 3 × 3'), h('small', {}, `${currentTargets.length}/9 uključeno`)),
-      h('div', { class: 'pf-target-grid', role: 'group', 'aria-label': 'Odabir LED barova' }, ...BAR_IDS.map(id => h('button', {
-        type: 'button', class: `pf-target ${targetSet.has(id) ? 'on' : ''}`, 'aria-label': `Bar ${id}`, 'aria-pressed': String(targetSet.has(id)),
-        title: `${id} · klikni za ${targetSet.has(id) ? 'isključivanje' : 'uključivanje'}`, onClick: () => toggleTarget(id)
-      }, h('i', {}), h('span', {}, id)))),
-      h('div', { class: 'pf-target-presets' }, ...targetPresets.map(([name, values]) => h('button', {
-        type: 'button', class: values.length === currentTargets.length && values.every(id => targetSet.has(id)) ? 'on' : '',
-        'aria-pressed': String(values.length === currentTargets.length && values.every(id => targetSet.has(id))), onClick: () => setTargets(values)
-      }, name))),
-      h('p', { class: 'pf-section-note' }, 'Svaki pad ima svoju zonu.'));
+      h('div', { class: 'pf-section-title' }, h('b', {}, 'BAROVI · 3 × 3'), countLabel),
+      targetGrid,
+      h('div', { class: 'pf-target-presets' }, ...presetButtons),
+      h('p', { class: 'pf-section-note' }, 'Svaki pad ima svoju zonu · povuci mišem za odabir reda ili stupca.'));
     const preset = h('div', { class: 'pf-preset-picker' },
       h('button', { type: 'button', class: 'pf-preset-open', 'aria-expanded': String(effectPickerOpen),
         onClick: () => { effectPickerOpen = !effectPickerOpen; renderInspector(); } },
@@ -516,7 +727,7 @@ export function createPerformancePanel(host, ctx) {
     inspector.replaceChildren(header, lightPanel, mode, targetPanel, effectPanel, playbackPanel,
       h('div', { class: 'pf-editor-actions' }, duplicate, remove),
       h('p', { class: 'pf-tip' }, 'Esc = blackout · pregled i WLED izlaz koriste isti RGBW kadar.'));
-    host.scrollTop = scrollTop;
+    if (preserve) inspector.scrollTop = savedScroll;
   }
   function tick(clockTime) {
     desk.tick({ songTime: ctx.songTime(), clockTime, playing: ctx.playing(), bpm: ctx.bpm() });
@@ -545,6 +756,14 @@ export function createPerformancePanel(host, ctx) {
     beatText.textContent = `BEAT ${(Math.floor(beat) % 4 + 4) % 4 + 1}/4`;
     beatFill.style.width = `${phase * 100}%`;
   }
+  function syncRecState({ armed, recording } = {}) {
+    const isRec = recording ?? ctx.recorder?.isRecording;
+    const isArm = armed ?? ctx.recorder?.isArmed;
+    recSessionBtn.classList.toggle('on', Boolean(isArm || isRec));
+    recSessionBtn.classList.toggle('recording', Boolean(isRec));
+    recSessionBtn.setAttribute('aria-pressed', String(Boolean(isArm || isRec)));
+    recSessionBtn.textContent = isRec ? '● SNIMA SE' : isArm ? '● REC SPREMAN' : '● REC';
+  }
   paintPads(); renderInspector();
-  return { desk, tick, trigger, press, release, releaseAll, assignPreset, clear: () => { desk.clear(); syncPadStates(); feedback.textContent = 'Izvedbeni efekti ugašeni.'; }, render: (base, clockTime, bpm, scale, analysis, songTime) => desk.render(base, clockTime, bpm, scale, analysis, songTime) };
+  return { desk, tick, trigger, press, release, releaseAll, assignPreset, syncRecState, clear: () => { desk.clear(); syncPadStates(); feedback.textContent = 'Izvedbeni efekti ugašeni.'; }, render: (base, clockTime, bpm, scale, analysis, songTime) => desk.render(base, clockTime, bpm, scale, analysis, songTime) };
 }

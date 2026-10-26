@@ -8,7 +8,7 @@ import {
   MIN_CLIP_SEC, addKeyframe, beatPosition, clamp, clipEnd, deleteClips, duplicateClips, findClip, moveKeyframe, moveKeyframes, patchClips, removeKeyframe, removeKeyframes, snapTime, splitClip, timeAtBeat,
   toggleTarget
 } from './daw-state.mjs';
-import { clipUiColor, h, hexToRgb, rgbToHex } from './daw-ui.mjs';
+import { clipUiColor, h, hexToRgb, rgbToHex, segmentIntersectsRect } from './daw-ui.mjs';
 import { PRESET_LABELS } from './daw-playlist.mjs';
 import { formatBBT } from './daw-state.mjs';
 
@@ -44,7 +44,7 @@ export const DEVICE_INFO = {
     name: 'Chase Engine',
     tag: 'BEAM & TRAIL',
     glyph: '⚡',
-    desc: 'Usmjereni laserski prelet svjetla kroz panele s podesivim profilom zrake i ambijentalnim sjajem.',
+    desc: 'Usmjereni laserski prelet svjetla kroz panele s fizikalnom kompenzacijom razmaka (55–60 cm) između barova.',
     params: [
       {
         key: 'beam',
@@ -55,6 +55,17 @@ export const DEVICE_INFO = {
           ['razor', '✦ Žilet', 'Oštar laserski rez srednje širine'],
           ['beam', '━ Zraka', 'Standardni snop s prirodnim padom intenziteta'],
           ['comet', '☄ Komet', 'Dugački kometasti rep s postepenim gašenjem']
+        ]
+      },
+      {
+        key: 'gap',
+        title: 'Prostorni razmak (L1–L3)',
+        default: 'physical',
+        options: [
+          ['physical', '📏 58 cm (Stvarni)', 'Fizikalni izračun brzine kroz 55–60 cm praznog prostora između barova'],
+          ['tight', '📐 30 cm (Usko)', 'Kraći prostorni prijelaz između barova'],
+          ['wide', '🌌 90 cm (Široko)', 'Duži prostorni let zrake između barova'],
+          ['none', '🔗 0 cm (Spojeno)', 'Bez pauze u praznom prostoru (odmah prelazi na idući bar)']
         ]
       },
       {
@@ -822,7 +833,29 @@ export function createClipEditor(host, ctx) {
     const grid = h('div', { class: 'bp-grid', role: 'group', 'aria-label': 'Barovi na koje clip djeluje' });
     grid.append(h('button', { type: 'button', class: 'bp-corner', title: 'Odaberi svih 9 barova', onClick: () => commit([...BAR_IDS]) }, 'svi'));
     COLS.forEach((c, ci) => grid.append(h('button', { type: 'button', class: 'bp-head', title: `Cijela kolona ${c} (Shift dodaje)`, onClick: e => { const col = BAR_IDS.filter((_, i) => i % 3 === ci); commit(e.shiftKey ? [...new Set([...selected(), ...col])] : col); } }, c)));
-    let draft = null, paint = true;
+    let draft = null, paint = true, lastPoint = null, cachedCells = [];
+    const onMove = e => {
+      if (!draft || e.buttons !== 1) return;
+      const p1 = lastPoint || { x: e.clientX, y: e.clientY };
+      const p2 = { x: e.clientX, y: e.clientY };
+      lastPoint = p2;
+      for (const cell of cachedCells) {
+        if (cell.rect && segmentIntersectsRect(p1.x, p1.y, p2.x, p2.y, cell.rect)) {
+          draft = paint ? [...new Set([...draft, cell.id])] : draft.filter(x => x !== cell.id);
+        }
+      }
+      show(draft);
+    };
+    const onUp = () => {
+      if (!draft) return;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+      }
+      const out = BAR_IDS.filter(x => draft.includes(x));
+      draft = null;
+      commit(out);
+    };
     const patternBtns = [];
     const patterns = h('div', { class: 'bp-patterns', role: 'group', 'aria-label': 'Predlošci barova' },
       BAR_PATTERNS.map(([label, title, make]) => {
@@ -854,9 +887,16 @@ export function createClipEditor(host, ctx) {
         cell.addEventListener('pointerdown', e => {
           if (e.button !== 0) return; e.preventDefault();
           if (e.shiftKey) { commit([id]); return; }
+          cachedCells = [...cells.entries()].map(([cid, el]) => ({ id: cid, rect: el.getBoundingClientRect ? el.getBoundingClientRect() : null }));
+          lastPoint = { x: e.clientX, y: e.clientY };
           draft = selected(); paint = !draft.includes(id);
           draft = paint ? [...draft, id] : draft.filter(x => x !== id); show(draft);
-          addEventListener('pointerup', () => { if (!draft) return; const out = BAR_IDS.filter(x => draft.includes(x)); draft = null; commit(out); }, { once: true });
+          if (typeof window !== 'undefined') {
+            window.addEventListener('pointermove', onMove);
+            window.addEventListener('pointerup', onUp, { once: true });
+          } else {
+            addEventListener('pointerup', onUp, { once: true });
+          }
         });
         cell.addEventListener('pointerover', e => {
           if (!draft || e.buttons !== 1) return;
@@ -924,11 +964,13 @@ export function createClipEditor(host, ctx) {
   }
 
   /* --------------------------------------------------------- driver summary */
-  const STEM_NAMES = { drums: 'Bubnjevi', bass: 'Bas', vocals: 'Vokal', other: 'Ostalo' };
+  const STEM_NAMES = { master: 'Miks', drums: 'Bubnjevi', bass: 'Bas', vocals: 'Vokal', other: 'Ostalo' };
   function driverSummary(clip) {
     const fmt = hz => hz >= 1000 ? `${(hz / 1000).toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(hz)}`;
+    const band = clip.band;
+    const src = band?.source && band.source !== 'master' ? `${STEM_NAMES[band.source] || band.source} (stem) · ` : '';
     const text = clip.driver === 'none' ? 'Bez drivera: clip svijetli stalno.'
-      : clip.driver === 'band' ? `${fmt(clip.band.lowHz)}–${fmt(clip.band.highHz)} Hz · prag ${Math.round(clip.band.threshold * 100)}% · ${clip.band.mode === 'gate' ? 'okidač' : 'prati razinu'} · jačina ${Math.round(clip.driverGain * 100)}%`
+      : clip.driver === 'band' && band ? `${src}${fmt(band.lowHz)}–${fmt(band.highHz)} Hz · prag ${Math.round(band.threshold * 100)}% · ${band.mode === 'gate' ? 'okidač' : 'prati razinu'} · jačina ${Math.round(clip.driverGain * 100)}%`
         : `${STEM_NAMES[clip.driver] || clip.driver} (stem pojas) · jačina ${Math.round(clip.driverGain * 100)}%`;
     return h('div', { class: 'ce-section' }, h('label', {}, 'Audio driver'), h('div', { class: 'drv-summary' }, text),
       h('div', { class: 'ce-actions' },
@@ -1312,8 +1354,8 @@ export function createClipEditor(host, ctx) {
       return;
     }
 
-    // Escape: clear selection
-    if (event.key === 'Escape') {
+    // Escape: clear selection if keyframes are selected
+    if (event.key === 'Escape' && s.selectedKeys.size > 0) {
       event.preventDefault();
       event.stopPropagation();
       s.selectedKeys.clear();

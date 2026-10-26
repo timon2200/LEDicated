@@ -7,8 +7,31 @@ import {
   MIN_CLIP_SEC, addClip, addKeyframe, addLayer, beatPosition, clamp, clipEnd, clipsInRect, deleteClips, duplicateClips, duplicateLayer, easeValue, envelopeAt, findClip, moveClip, moveKeyframe, moveLayer, refKey,
   removeKeyframe, removeLayer, resizeClip, setKeyframeEase, snapTime, splitClip, timeAtBeat
 } from './daw-state.mjs';
-import { TIMELINE_BLENDS, driverLevel } from './timeline.mjs';
+import { TIMELINE_BLENDS, driverLevel, regenerateSectionClips } from './timeline.mjs';
+import { SECTION_TYPES, SECTION_NAMES, SECTION_COLORS } from './audio-sections.mjs';
 import { clipUiColor, h, hexToRgb, showMenu } from './daw-ui.mjs';
+
+export function relabelSections(sections) {
+  if (!Array.isArray(sections)) return [];
+  const counts = {};
+  for (let i = 0; i < sections.length; i++) {
+    const s = sections[i];
+    const type = SECTION_TYPES.includes(s.type) ? s.type : 'verse';
+    s.type = type;
+    counts[type] = (counts[type] || 0) + 1;
+    const count = counts[type];
+    const totalOfType = sections.filter(x => x.type === type).length;
+    s.name = totalOfType > 1 && type !== 'intro' && type !== 'outro'
+      ? `${SECTION_NAMES[type]} ${count}`
+      : SECTION_NAMES[type];
+    s.color = SECTION_COLORS[type] || s.color || '#3a86ff';
+    s.id = `sec-${i + 1}`;
+    s.startSec = Math.round(Number(s.startSec || 0) * 100) / 100;
+    s.endSec = Math.round(Number(s.endSec || 0) * 100) / 100;
+    s.durationSec = Math.round(Math.max(0.05, s.endSec - s.startSec) * 100) / 100;
+  }
+  return sections;
+}
 
 const RULER_BARS = 18, RULER_LOOP = 14, RULER_SECTIONS = 18;
 const RULER_H = RULER_BARS + RULER_LOOP + RULER_SECTIONS;
@@ -29,7 +52,7 @@ const STEM_ITEMS = [
 
 export function createPlaylist(host, ctx) {
   const { store } = ctx;
-  const state = { pps: 20, scrollSec: 0, laneSize: 'M', expandedLayerId: null, selectedKeyframe: null, selection: [], hover: null, marquee: null, ghost: null, gesture: null, dirty: true, peaks: null, peaksFor: null, solo: new Set(), spaceDown: false };
+  const state = { pps: 20, scrollSec: 0, laneSize: 'M', expandedLayerId: null, selectedKeyframe: null, selection: [], hover: null, marquee: null, ghost: null, gesture: null, dirty: true, peaks: null, peaksFor: null, solo: new Set(), spaceDown: false, shiftDown: false };
   if (ctx.stems?.subscribe) {
     ctx.stems.subscribe(() => {
       renderHeads();
@@ -39,12 +62,14 @@ export function createPlaylist(host, ctx) {
   /* ---------------------------------------------------------------- DOM */
   const corner = h('div', { class: 'pl-corner' });
   const ruler = h('canvas', { class: 'pl-ruler', 'aria-label': 'Ravnalo, takt i loop' });
+  const topRow = h('div', { class: 'pl-top' }, corner, ruler);
   const heads = h('div', { class: 'pl-heads' });
   const canvas = h('canvas', { class: 'pl-canvas', tabIndex: 0, 'aria-label': 'Playlist: waveform i slojevi svjetla' });
   const scroller = h('div', { class: 'pl-scroll' }, heads, h('div', { class: 'pl-stage' }, canvas));
   const overviewCorner = h('div', { class: 'pl-corner pl-overview-corner' }, h('span', {}, 'PREGLED'));
   const overview = h('canvas', { class: 'pl-overview', 'aria-label': 'Pregled cijele pjesme; povuci za pomak' });
-  const root = h('div', { class: 'pl' }, h('div', { class: 'pl-top' }, corner, ruler), scroller, h('div', { class: 'pl-bottom' }, overviewCorner, overview));
+  const bottomRow = h('div', { class: 'pl-bottom' }, overviewCorner, overview);
+  const root = h('div', { class: 'pl' }, topRow, scroller, bottomRow);
   host.append(root);
 
   const tl = () => store.timeline;
@@ -73,9 +98,9 @@ export function createPlaylist(host, ctx) {
     const count = tl().layers.length;
     if (count === 0) return h + laneH() + 40;
     for (let i = 0; i < count; i++) h += layerHeight(i);
-    return h + 40;
+    return h + laneH() + 20;
   };
-  const laneAt = y => {
+  const laneAt = (y, allowNew = false) => {
     if (y < layersTop()) return -1;
     let curr = layersTop();
     const count = tl().layers.length;
@@ -84,6 +109,7 @@ export function createPlaylist(host, ctx) {
       if (y >= curr && y < curr + lh) return i;
       curr += lh;
     }
+    if (allowNew) return count;
     return count > 0 ? count - 1 : -1;
   };
   const snapMode = () => ctx.getSnap();
@@ -122,7 +148,20 @@ export function createPlaylist(host, ctx) {
     }
   }
 
+  let lastSbW = -1;
+  function syncScrollbarGutter() {
+    if (scroller.offsetWidth === undefined || scroller.clientWidth === undefined) return;
+    const sbW = Math.max(0, scroller.offsetWidth - scroller.clientWidth);
+    if (sbW !== lastSbW) {
+      topRow.style.paddingRight = `${sbW}px`;
+      bottomRow.style.paddingRight = `${sbW}px`;
+      root.style.setProperty?.('--pl-sb-w', `${sbW}px`);
+      lastSbW = sbW;
+    }
+  }
+
   function clampView() {
+    syncScrollbarGutter();
     state.pps = clamp(state.pps, fitPps(), 800);
     state.scrollSec = clamp(state.scrollSec, 0, Math.max(0, duration() - visibleSec()));
   }
@@ -494,16 +533,38 @@ export function createPlaylist(host, ctx) {
         ctx.onStructure?.(); requestDraw(); return;
       }
       if (tool === 'erase') { store.begin(); state.gesture = { mode: 'erase' }; canvas.setPointerCapture(event.pointerId); store.update(tlm => deleteClips(tlm, [hit.ref])); pruneSelection(); requestDraw(); return; }
-      if (event.shiftKey || event.metaKey || event.ctrlKey) {
+      if (event.metaKey || event.ctrlKey) {
         setSelection(isSelected(hit.ref) ? state.selection.filter(s => refKey(s) !== refKey(hit.ref)) : [...state.selection, hit.ref]); return;
       }
-      const collapse = state.selection.length > 1 && isSelected(hit.ref) ? hit.ref : null;
-      if (!isSelected(hit.ref)) setSelection([hit.ref]); else ctx.onSelect?.([...state.selection]);
+      if (event.shiftKey && !isSelected(hit.ref)) {
+        setSelection([...state.selection, hit.ref]);
+      } else if (!event.shiftKey && !isSelected(hit.ref)) {
+        setSelection([hit.ref]);
+      } else {
+        ctx.onSelect?.([...state.selection]);
+      }
+      const collapse = (!event.shiftKey && state.selection.length > 1 && isSelected(hit.ref)) ? hit.ref : null;
       store.begin();
       const sources = state.selection.map(ref => ({ ...findClip(tl(), ref), ref }));
       const items = sources.map(s => ({ ref: s.ref, startSec: s.clip.startSec, endSec: clipEnd(s.clip), layerIndex: s.layerIndex }));
       const anchor = items.find(i => i.ref.clipId === hit.ref.clipId) ?? items[0];
-      state.gesture = { mode: hit.zone === 'body' ? 'move' : hit.zone, x0: x, y0: y, items, anchor, collapse, dup: event.altKey && hit.zone === 'body', moved: false, label: hit.zone === 'body' ? (event.altKey ? 'Dupliciraj clip' : 'Pomakni clip') : 'Promijeni duljinu' };
+      const isShift = Boolean(event.shiftKey || state.shiftDown);
+      state.gesture = {
+        mode: hit.zone === 'body' ? 'move' : hit.zone,
+        x0: x,
+        y0: y,
+        items,
+        anchor,
+        collapse,
+        dup: event.altKey && hit.zone === 'body',
+        moved: false,
+        label: hit.zone === 'body' ? (event.altKey ? 'Dupliciraj clip' : 'Pomakni clip') : 'Promijeni duljinu',
+        baseLayerCount: tl().layers.length,
+        createdLayerId: null,
+        lastRenderedCount: tl().layers.length,
+        shiftLock: isShift,
+        dl: 0
+      };
       canvas.setPointerCapture(event.pointerId); return;
     }
     // empty lane or void
@@ -582,23 +643,88 @@ export function createPlaylist(host, ctx) {
       });
       requestDraw(); return;
     }
-    const dxSec = (x - g.x0) / state.pps;
+  function applyMove(x, y, clientY, isShift) {
+    const g = state.gesture;
+    if (!g || g.mode !== 'move') return;
     if (Math.abs(x - g.x0) > 2 || Math.abs(y - g.y0) > 2) g.moved = true;
     if (!g.moved) return;
+
     if (g.dup) {
       g.dup = false; const index = Math.max(0, g.items.findIndex(i => i.ref.clipId === g.anchor.ref.clipId));
       let dup; store.update(tlm => { dup = duplicateClips(tlm, g.items.map(i => i.ref), 0, 0); });
       g.items = dup.map(ref => { const hit = findClip(tl(), ref); return { ref, startSec: hit.clip.startSec, endSec: clipEnd(hit.clip), layerIndex: hit.layerIndex }; });
       g.anchor = g.items[index]; setSelection(dup, false);
+      g.baseLayerCount = tl().layers.length;
+      g.lastRenderedCount = tl().layers.length;
     }
+
+    const scrollRect = scroller.getBoundingClientRect?.();
+    if (scrollRect && clientY !== undefined) {
+      if (clientY > scrollRect.bottom - 30) scroller.scrollTop += 10;
+      else if (clientY < scrollRect.top + 30) scroller.scrollTop -= 10;
+    }
+    const dxSec = (x - g.x0) / state.pps;
+    const wanted = snap(g.anchor.startSec + dxSec), minStart = Math.min(...g.items.map(i => i.startSec));
+    const delta = isShift ? 0 : Math.max(-minStart, wanted - g.anchor.startSec);
+    const baseCount = g.baseLayerCount;
+    const targetAnchorLane = Math.min(baseCount, laneAt(y, true));
+    const rawDl = targetAnchorLane - g.anchor.layerIndex;
+    const minLayer = Math.min(...g.items.map(i => i.layerIndex));
+    const maxLayer = Math.max(...g.items.map(i => i.layerIndex));
+    const maxDl = baseCount - maxLayer;
+    const minDl = -minLayer;
+    const dl = clamp(rawDl, minDl, maxDl);
+    g.dl = dl;
+    g.shiftLock = Boolean(isShift);
+    const needsNewLayer = (maxLayer + dl) >= baseCount;
+
+    store.update(tlm => {
+      if (needsNewLayer && !g.createdLayerId) {
+        const newLayer = addLayer(tlm);
+        g.createdLayerId = newLayer.id;
+      } else if (!needsNewLayer && g.createdLayerId) {
+        for (const item of g.items) {
+          const targetIdx = clamp(item.layerIndex + dl, 0, baseCount - 1);
+          moveClip(tlm, item.ref, { layerId: tlm.layers[targetIdx].id });
+        }
+        const idx = tlm.layers.findIndex(l => l.id === g.createdLayerId);
+        if (idx >= 0) tlm.layers.splice(idx, 1);
+        g.createdLayerId = null;
+      }
+
+      for (const item of g.items) {
+        const targetIndex = item.layerIndex + dl;
+        const targetLayer = tlm.layers[targetIndex];
+        if (targetLayer) {
+          const next = moveClip(tlm, item.ref, { startSec: item.startSec + delta, layerId: targetLayer.id });
+          if (next) item.ref = next;
+        }
+      }
+    });
+
+    if (tl().layers.length !== g.lastRenderedCount) {
+      g.lastRenderedCount = tl().layers.length;
+      if (g.createdLayerId) {
+        const newIdx = tl().layers.findIndex(l => l.id === g.createdLayerId);
+        if (newIdx >= 0) ctx.setActiveLayer(newIdx);
+      }
+      renderHeads();
+    }
+
+    state.selection = g.items.map(i => i.ref);
+    ctx.onSelect?.([...state.selection]);
+    requestDraw();
+  }
+
     if (g.mode === 'move') {
-      const wanted = snap(g.anchor.startSec + dxSec), minStart = Math.min(...g.items.map(i => i.startSec));
-      const delta = Math.max(-minStart, wanted - g.anchor.startSec);
-      const rawDl = laneAt(y) - laneAt(g.y0), minLayer = Math.min(...g.items.map(i => i.layerIndex)), maxLayer = Math.max(...g.items.map(i => i.layerIndex));
-      const dl = clamp(rawDl, -minLayer, tl().layers.length - 1 - maxLayer);
-      store.update(tlm => { for (const item of g.items) { const next = moveClip(tlm, item.ref, { startSec: item.startSec + delta, layerId: tlm.layers[item.layerIndex + dl].id }); if (next) item.ref = next; } });
-      state.selection = g.items.map(i => i.ref); ctx.onSelect?.([...state.selection]); requestDraw(); return;
+      const isShift = Boolean(event.shiftKey || state.shiftDown);
+      g.lastMoveArgs = [x, y, event.clientY];
+      applyMove(x, y, event.clientY, isShift);
+      return;
     }
+    const dxSec = (x - g.x0) / state.pps;
+    if (Math.abs(x - g.x0) > 2 || Math.abs(y - g.y0) > 2) g.moved = true;
+    if (!g.moved) return;
     if (g.mode === 'end') {
       const wanted = snap(g.anchor.endSec + dxSec), delta = wanted - g.anchor.endSec;
       store.update(tlm => { for (const item of g.items) resizeClip(tlm, item.ref, 'end', item.endSec + delta, duration()); });
@@ -623,17 +749,24 @@ export function createPlaylist(host, ctx) {
     if (g.mode === 'scrub') {
       if (!g.moved && ctx.getSnap() !== 'none' && !event.altKey) {
         ctx.seek(snap(tAt(g.startX)), false);
-      } else {
-        ctx.commitSeek?.();
       }
+      ctx.commitSeek?.();
       requestDraw();
       return;
     }
     if (g.mode === 'marquee') { ctx.onSelect?.([...state.selection]); requestDraw(); return; }
     if (g.mode === 'draw') { store.end('Novi clip'); ctx.onStructure?.(); ctx.onSelect?.([...state.selection]); requestDraw(); return; }
     if (['move', 'start', 'end'].includes(g.mode)) {
-      store.end(g.label);
+      const openedNewTrack = Boolean(g.createdLayerId && tl().layers.some(l => l.id === g.createdLayerId));
+      const label = openedNewTrack ? 'Novi sloj i premjesti clip' : g.label;
+      store.end(label);
       if (!g.moved && g.collapse) setSelection([g.collapse]);
+      if (openedNewTrack) {
+        const newIdx = tl().layers.findIndex(l => l.id === g.createdLayerId);
+        if (newIdx >= 0) ctx.setActiveLayer(newIdx);
+        renderHeads();
+        ctx.status('Novi sloj otvoren i clip postavljen.');
+      }
       ctx.onStructure?.(); requestDraw(); return;
     }
     if (g.mode === 'erase') { store.end('Obriši clipove'); ctx.onStructure?.(); requestDraw(); }
@@ -673,40 +806,213 @@ export function createPlaylist(host, ctx) {
   canvas.addEventListener('dragover', event => {
     if (!presetFrom(event)) return;
     event.preventDefault(); event.dataTransfer.dropEffect = 'copy';
-    const { x, y } = localPoint(event); state.ghost = { t: snap(tAt(x)), layerIndex: laneAt(y), tool: 'draw' }; requestDraw();
+    const { x, y } = localPoint(event); state.ghost = { t: snap(tAt(x)), layerIndex: laneAt(y, true), tool: 'draw' }; requestDraw();
   });
   canvas.addEventListener('dragleave', () => { state.ghost = null; requestDraw(); });
   canvas.addEventListener('drop', event => {
     const preset = event.dataTransfer.getData('application/x-ledicated-preset'); if (!preset) return;
     event.preventDefault(); state.ghost = null;
-    const { x, y } = localPoint(event), layerIndex = clamp(laneAt(y), 0, tl().layers.length - 1), start = snap(tAt(x));
-    const ref = createClipAt(layerIndex, start, Math.min(barLength(start), Math.max(MIN_CLIP_SEC, duration() - start)), { preset });
-    if (ref) { setSelection([ref]); ctx.onStructure?.(); ctx.status(`Clip „${PRESET_LABELS[preset] || preset}” dodan.`); }
+    const { x, y } = localPoint(event), layerIndex = laneAt(y, true), start = snap(tAt(x));
+    if (layerIndex >= tl().layers.length) {
+      let created;
+      const out = store.commit('Novi sloj', t => { created = addLayer(t); });
+      if (out.error) return ctx.status(out.error);
+      const newIdx = tl().layers.findIndex(l => l.id === created.id);
+      if (newIdx >= 0) ctx.setActiveLayer(newIdx);
+      renderHeads(); ctx.onStructure?.();
+      const ref = createClipAt(newIdx, start, Math.min(barLength(start), Math.max(MIN_CLIP_SEC, duration() - start)), { preset });
+      if (ref) { setSelection([ref]); ctx.onStructure?.(); ctx.status(`Novi sloj otvoren i clip „${PRESET_LABELS[preset] || preset}” dodan.`); }
+    } else {
+      const ref = createClipAt(clamp(layerIndex, 0, tl().layers.length - 1), start, Math.min(barLength(start), Math.max(MIN_CLIP_SEC, duration() - start)), { preset });
+      if (ref) { setSelection([ref]); ctx.onStructure?.(); ctx.status(`Clip „${PRESET_LABELS[preset] || preset}” dodan.`); }
+    }
   });
 
   /* ruler */
   let rulerGesture = null;
+  let hoverSectionBoundary = null;
+
+  function findSectionBoundary(x, sections) {
+    if (!Array.isArray(sections) || sections.length < 2) return -1;
+    let bestIdx = -1;
+    let bestDist = 7;
+    for (let i = 1; i < sections.length; i++) {
+      const dist = Math.abs(x - xAt(sections[i].startSec));
+      if (dist <= 6 && dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }
+
+  function findSectionIndexAt(t, sections) {
+    if (!Array.isArray(sections) || !sections.length) return -1;
+    for (let i = 0; i < sections.length; i++) {
+      const s = sections[i];
+      if (t >= s.startSec && (t < s.endSec || (i === sections.length - 1 && t <= s.endSec + 1e-3))) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function setSectionType(idx, type, { regenerate = true } = {}) {
+    const a = analysis();
+    if (!a?.sections?.[idx] || !SECTION_TYPES.includes(type)) return false;
+    const sec = a.sections[idx];
+    sec.type = type;
+    sec.color = SECTION_COLORS[type];
+    relabelSections(a.sections);
+    if (regenerate) {
+      const themeOpts = ctx.getThemeOptions?.() || {};
+      store.commit(`Dionica: ${SECTION_NAMES[type]}`, tlm => {
+        regenerateSectionClips(tlm, a, idx, { ...themeOpts, sectionType: type });
+      });
+      ctx.status?.(`Dionica promijenjena u „${sec.name}” i svjetlo regenerirano.`);
+    } else {
+      ctx.status?.(`Oznaka dionice promijenjena u „${sec.name}”.`);
+    }
+    ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: regenerate ? idx : null });
+    requestDraw();
+    return true;
+  }
+
+  function regenerateSingleSection(idx) {
+    const a = analysis();
+    if (!a?.sections?.[idx]) return false;
+    const sec = a.sections[idx];
+    const themeOpts = ctx.getThemeOptions?.() || {};
+    store.commit(`Regeneriraj: ${sec.name}`, tlm => {
+      regenerateSectionClips(tlm, a, idx, { ...themeOpts, sectionType: sec.type });
+    });
+    ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: idx });
+    ctx.status?.(`Svjetlo regenerirano za dionicu „${sec.name}”.`);
+    requestDraw();
+    return true;
+  }
+
+  function splitSectionAt(idx, clickTimeSec) {
+    const a = analysis();
+    if (!a?.sections?.[idx]) return false;
+    const sec = a.sections[idx];
+    const bpm = clamp(Number(tl()?.bpm || a?.bpm || 120), 40, 240);
+    const barSec = (60 / bpm) * 4;
+    if (sec.endSec - sec.startSec < 0.5) {
+      ctx.status?.('Dionica je prekratka za podjelu.');
+      return false;
+    }
+    let splitT = snapTime(clamp(clickTimeSec, 0, duration()), 'bar', tl(), a);
+    const minMargin = Math.min(barSec, (sec.endSec - sec.startSec) * 0.35);
+    if (splitT <= sec.startSec + minMargin * 0.5 || splitT >= sec.endSec - minMargin * 0.5) {
+      splitT = snapTime((sec.startSec + sec.endSec) / 2, 'bar', tl(), a);
+    }
+    splitT = clamp(splitT, sec.startSec + Math.min(0.25, (sec.endSec - sec.startSec) * 0.25), sec.endSec - Math.min(0.25, (sec.endSec - sec.startSec) * 0.25));
+    splitT = Math.round(splitT * 100) / 100;
+    const first = { ...sec, endSec: splitT, durationSec: Math.round((splitT - sec.startSec) * 100) / 100 };
+    const second = { ...sec, id: `sec-split-${idx + 1}`, startSec: splitT, endSec: sec.endSec, durationSec: Math.round((sec.endSec - splitT) * 100) / 100 };
+    a.sections.splice(idx, 1, first, second);
+    relabelSections(a.sections);
+    ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: null });
+    ctx.status?.(`Dionica podijeljena na ${splitT.toFixed(1)}s.`);
+    requestDraw();
+    return true;
+  }
+
+  function mergeSectionWithNext(idx) {
+    const a = analysis();
+    if (!a?.sections?.[idx] || idx >= a.sections.length - 1) return false;
+    const sec = a.sections[idx];
+    const next = a.sections[idx + 1];
+    sec.endSec = next.endSec;
+    sec.durationSec = Math.round((sec.endSec - sec.startSec) * 100) / 100;
+    a.sections.splice(idx + 1, 1);
+    relabelSections(a.sections);
+    ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: null });
+    ctx.status?.(`Dionica „${sec.name}” spojena sa sljedećom.`);
+    requestDraw();
+    return true;
+  }
+
+  function openSectionMenu(clientX, clientY, idx, clickTimeSec) {
+    const a = analysis();
+    const sec = a?.sections?.[idx];
+    if (!sec) return;
+    const typeItems = SECTION_TYPES.map(type => ({
+      label: `${sec.type === type ? '✓ ' : ''}${SECTION_NAMES[type]} (promijeni i regeneriraj dionicu)`,
+      onClick: () => setSectionType(idx, type, { regenerate: true })
+    }));
+    showMenu(clientX, clientY, [
+      ...typeItems,
+      { separator: true },
+      {
+        label: 'Samo promijeni oznaku u…',
+        onClick: () => {
+          showMenu(clientX, clientY, SECTION_TYPES.map(type => ({
+            label: `${sec.type === type ? '✓ ' : ''}Oznaka: ${SECTION_NAMES[type]} (bez promjene clipova)`,
+            onClick: () => setSectionType(idx, type, { regenerate: false })
+          })));
+        }
+      },
+      {
+        label: `Regeneriraj svjetlo za ovu dionicu (${sec.name})`,
+        onClick: () => regenerateSingleSection(idx)
+      },
+      {
+        label: 'Podijeli dionicu ovdje (na taktu)',
+        disabled: (sec.endSec - sec.startSec) < 0.5,
+        onClick: () => splitSectionAt(idx, clickTimeSec)
+      },
+      {
+        label: 'Spoji sa sljedećom dionicom',
+        disabled: idx >= a.sections.length - 1,
+        onClick: () => mergeSectionWithNext(idx)
+      },
+      { separator: true },
+      { label: `Loop „${sec.name}” (${sec.durationSec.toFixed(1)}s)`, onClick: () => { ctx.setLoop?.({ start: sec.startSec, end: sec.endSec }); ctx.seek(sec.startSec, true); } },
+      { label: `Skoči na početak (${sec.startSec.toFixed(1)}s)`, onClick: () => ctx.seek(sec.startSec, true) },
+      { label: 'Odaberi clipove u dionici', onClick: () => {
+        const hits = clipsInRect(tl(), sec.startSec, sec.endSec, 0, tl().layers.length - 1);
+        setSelection(hits);
+      }},
+      { label: 'Dodaj clip kroz dionicu (aktivni sloj)', onClick: () => {
+        const li = ctx.getActiveLayerIndex();
+        const ref = createClipAt(li, sec.startSec, sec.durationSec);
+        if (ref) setSelection([ref]);
+      }}
+    ]);
+  }
+
   ruler.addEventListener('pointerdown', event => {
+    if (event.button === 2) return;
     const r = ruler.getBoundingClientRect(), x = event.clientX - r.left, y = event.clientY - r.top;
     ruler.setPointerCapture(event.pointerId);
     const px = Math.round(xAt(ctx.getTime()));
     const nearPlayhead = Math.abs(x - px) <= 8;
+    if (y >= RULER_BARS + RULER_LOOP && !nearPlayhead) {
+      const a = analysis();
+      const bIdx = findSectionBoundary(x, a?.sections);
+      if (bIdx >= 1) {
+        rulerGesture = { mode: 'section-drag', index: bIdx, startX: x, moved: false };
+        requestDraw();
+        return;
+      }
+      const t = tAt(x);
+      const secIdx = findSectionIndexAt(t, a?.sections);
+      const hitSec = secIdx >= 0 ? a.sections[secIdx] : null;
+      if (hitSec) {
+        ctx.seek(hitSec.startSec, false);
+        ctx.setLoop?.({ start: hitSec.startSec, end: hitSec.endSec });
+        ctx.status?.(`Dionica „${hitSec.name}” (${hitSec.startSec.toFixed(1)}s – ${hitSec.endSec.toFixed(1)}s) odabrana za loop.`);
+        requestDraw();
+      }
+      return;
+    }
     if (nearPlayhead || y < RULER_BARS) {
       rulerGesture = { mode: 'seek', startX: x, moved: false };
       const t = tAt(clamp(x, 0, stageWidth()));
       ctx.seek(t, true);
       requestDraw();
-      return;
-    }
-    if (y >= RULER_BARS + RULER_LOOP) {
-      const t = tAt(x), a = analysis();
-      const hitSec = a?.sections?.find(s => t >= s.startSec && t < s.endSec);
-      if (hitSec) {
-        ctx.seek(hitSec.startSec, false);
-        ctx.setLoop({ start: hitSec.startSec, end: hitSec.endSec });
-        ctx.status(`Dionica „${hitSec.name}” (${hitSec.startSec.toFixed(1)}s – ${hitSec.endSec.toFixed(1)}s) odabrana za loop.`);
-        requestDraw();
-      }
       return;
     }
     const loop = ctx.getLoop(), a = loop ? xAt(loop.start) : -99, b = loop ? xAt(loop.end) : -99;
@@ -720,17 +1026,63 @@ export function createPlaylist(host, ctx) {
     const px = Math.round(xAt(ctx.getTime()));
     const nearPlayhead = Math.abs(x - px) <= 8;
     if (!g) {
-      if (nearPlayhead || y < RULER_BARS) {
-        ruler.style.cursor = 'col-resize';
-        ruler.title = 'Playhead: povuci za glatki scrub · klikni za skok na beat';
-      } else if (y >= RULER_BARS + RULER_LOOP) {
-        ruler.style.cursor = 'pointer';
-        const t = tAt(x), a = analysis();
-        const hitSec = a?.sections?.find(s => t >= s.startSec && t < s.endSec);
-        ruler.title = hitSec ? `Dionica: ${hitSec.name} (${hitSec.startSec.toFixed(1)}s – ${hitSec.endSec.toFixed(1)}s) · Klikni za loop i skok` : 'Dionice pjesme';
+      if (y >= RULER_BARS + RULER_LOOP && !nearPlayhead) {
+        const a = analysis();
+        const bIdx = findSectionBoundary(x, a?.sections);
+        if (bIdx !== hoverSectionBoundary) {
+          hoverSectionBoundary = bIdx >= 1 ? bIdx : null;
+          requestDraw();
+        }
+        if (bIdx >= 1) {
+          ruler.style.cursor = 'ew-resize';
+          const prevS = a.sections[bIdx - 1], curS = a.sections[bIdx];
+          ruler.title = `Granica dionica: ${prevS.name} | ${curS.name} (${curS.startSec.toFixed(1)}s) · Povuci za pomak po taktu`;
+        } else {
+          ruler.style.cursor = 'pointer';
+          const t = tAt(x);
+          const secIdx = findSectionIndexAt(t, a?.sections);
+          const hitSec = secIdx >= 0 ? a.sections[secIdx] : null;
+          ruler.title = hitSec
+            ? `Dionica: ${hitSec.name} (${hitSec.startSec.toFixed(1)}s – ${hitSec.endSec.toFixed(1)}s) · Klikni za loop, desni klik ili dvoklik za vrstu i opcije`
+            : 'Dionice pjesme';
+        }
       } else {
-        ruler.style.cursor = 'ew-resize';
-        ruler.title = 'Loop pojas: povuci za petlju';
+        if (hoverSectionBoundary !== null) {
+          hoverSectionBoundary = null;
+          requestDraw();
+        }
+        if (nearPlayhead || y < RULER_BARS) {
+          ruler.style.cursor = 'col-resize';
+          ruler.title = 'Playhead: povuci za glatki scrub · klikni za skok na beat';
+        } else {
+          ruler.style.cursor = 'ew-resize';
+          ruler.title = 'Loop pojas: povuci za petlju';
+        }
+      }
+      return;
+    }
+    if (g.mode === 'section-drag') {
+      const a = analysis();
+      const idx = g.index;
+      const prevSec = a?.sections?.[idx - 1], curSec = a?.sections?.[idx];
+      if (!prevSec || !curSec) return;
+      const bpm = clamp(Number(tl()?.bpm || a?.bpm || 120), 40, 240);
+      const barSec = (60 / bpm) * 4;
+      const span = curSec.endSec - prevSec.startSec;
+      const margin = Math.min(barSec, span * 0.45);
+      const minT = prevSec.startSec + margin;
+      const maxT = curSec.endSec - margin;
+      const snapped = snapTime(clamp(tAt(x), 0, duration()), 'bar', tl(), a);
+      const nextT = Math.round(clamp(snapped, minT, maxT) * 100) / 100;
+      if (Math.abs(nextT - curSec.startSec) > 1e-4) {
+        g.moved = true;
+        prevSec.endSec = nextT;
+        prevSec.durationSec = Math.round((prevSec.endSec - prevSec.startSec) * 100) / 100;
+        curSec.startSec = nextT;
+        curSec.durationSec = Math.round((curSec.endSec - curSec.startSec) * 100) / 100;
+        ctx.status?.(`Granica ${prevSec.name} | ${curSec.name}: ${nextT.toFixed(2)}s`);
+        requestDraw();
+        drawRuler(stageWidth(), ctx.getTime());
       }
       return;
     }
@@ -755,42 +1107,50 @@ export function createPlaylist(host, ctx) {
     else if (g.mode === 'loop-move') { const len = g.end - g.start, s = clamp(snap(g.start + tAt(x) - g.t0), 0, duration() - len); ctx.setLoop({ start: s, end: s + len }); }
   });
   const rulerUp = event => {
+    if (rulerGesture?.mode === 'section-drag') {
+      const a = analysis();
+      if (a?.sections) {
+        relabelSections(a.sections);
+        ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: null });
+      }
+      requestDraw();
+    }
     if (rulerGesture?.mode === 'seek') {
       if (!rulerGesture.moved && ctx.getSnap() !== 'none' && !event.altKey) {
         ctx.seek(snap(tAt(rulerGesture.startX)), false);
-      } else {
-        ctx.commitSeek?.();
       }
+      ctx.commitSeek?.();
       requestDraw();
     }
     if (rulerGesture?.mode === 'loop-new' && !rulerGesture.moved) ctx.setLoop(null);
     rulerGesture = null;
-    if (ruler.hasPointerCapture(event.pointerId)) ruler.releasePointerCapture(event.pointerId);
+    if (ruler.hasPointerCapture?.(event.pointerId)) ruler.releasePointerCapture(event.pointerId);
   };
   ruler.addEventListener('pointerup', rulerUp); ruler.addEventListener('pointercancel', rulerUp);
-  ruler.addEventListener('dblclick', () => ctx.setLoop(null));
+  ruler.addEventListener('pointerleave', () => {
+    if (hoverSectionBoundary !== null && !rulerGesture) {
+      hoverSectionBoundary = null;
+      requestDraw();
+    }
+  });
+  ruler.addEventListener('dblclick', event => {
+    const r = ruler.getBoundingClientRect(), x = event.clientX - r.left, y = event.clientY - r.top;
+    if (y >= RULER_BARS + RULER_LOOP) {
+      event.preventDefault();
+      const t = tAt(x), a = analysis();
+      const idx = findSectionIndexAt(t, a?.sections);
+      if (idx >= 0) openSectionMenu(event.clientX, event.clientY, idx, t);
+      return;
+    }
+    ctx.setLoop(null);
+  });
   ruler.addEventListener('contextmenu', event => {
     const r = ruler.getBoundingClientRect(), x = event.clientX - r.left, y = event.clientY - r.top;
     if (y >= RULER_BARS + RULER_LOOP) {
       event.preventDefault();
       const t = tAt(x), a = analysis();
-      const hitSec = a?.sections?.find(s => t >= s.startSec && t < s.endSec);
-      if (hitSec) {
-        showMenu(event.clientX, event.clientY, [
-          { label: `Loop „${hitSec.name}” (${hitSec.durationSec.toFixed(1)}s)`, onClick: () => { ctx.setLoop({ start: hitSec.startSec, end: hitSec.endSec }); ctx.seek(hitSec.startSec, true); } },
-          { label: `Skoči na početak (${hitSec.startSec.toFixed(1)}s)`, onClick: () => ctx.seek(hitSec.startSec, true) },
-          { separator: true },
-          { label: 'Odaberi clipove u dionici', onClick: () => {
-            const hits = clipsInRect(tl(), hitSec.startSec, hitSec.endSec, 0, tl().layers.length - 1);
-            setSelection(hits);
-          }},
-          { label: 'Dodaj clip kroz dionicu (aktivni sloj)', onClick: () => {
-            const li = ctx.getActiveLayerIndex();
-            const ref = createClipAt(li, hitSec.startSec, hitSec.durationSec);
-            if (ref) setSelection([ref]);
-          }}
-        ]);
-      }
+      const idx = findSectionIndexAt(t, a?.sections);
+      if (idx >= 0) openSectionMenu(event.clientX, event.clientY, idx, t);
     }
   });
   ruler.addEventListener('wheel', event => {
@@ -845,18 +1205,54 @@ export function createPlaylist(host, ctx) {
   /* --------------------------------------------------------------- draw */
   function computePeaks() {
     const a = analysis();
-    if (state.peaksFor === a) return state.peaks;
+    const pcmMono = a?.pcmMono || null;
+    if (state.peaksFor === a && state.peaks?.pcmMono === pcmMono) return state.peaks;
     state.peaksFor = a; state.peaks = null;
     const peaks = a?.waveform?.peaks; if (!peaks?.length) return null;
-    const abs = new Float32Array(peaks.length);
-    peaks.forEach((p, i) => { abs[i] = Array.isArray(p) ? Math.max(...p.map(Math.abs)) : Math.abs(p); });
-    state.peaks = { abs, rms: a.waveform.rms ? Float32Array.from(a.waveform.rms, v => Math.abs(v)) : null, binSec: a.waveform.binSec || duration() / peaks.length };
+    const len = peaks.length;
+    const abs = new Float32Array(len);
+    const min = new Float32Array(len);
+    const max = new Float32Array(len);
+    const rawMin = a.waveform.min;
+    const rawMax = a.waveform.max;
+    const hasMin = (Array.isArray(rawMin) || ArrayBuffer.isView(rawMin)) && rawMin.length > 0;
+    const hasMax = (Array.isArray(rawMax) || ArrayBuffer.isView(rawMax)) && rawMax.length > 0;
+    for (let i = 0; i < len; i++) {
+      const p = peaks[i];
+      if (Array.isArray(p)) {
+        const lo = Number(p[0]) || 0, hi = Number(p[1]) || 0;
+        const m = Math.max(Math.abs(lo), Math.abs(hi));
+        abs[i] = m;
+        min[i] = hasMin && rawMin[i] !== undefined ? Number(rawMin[i]) : (lo <= 0 ? lo : -m);
+        max[i] = hasMax && rawMax[i] !== undefined ? Number(rawMax[i]) : (hi >= 0 ? hi : m);
+      } else {
+        const v = Math.abs(Number(p) || 0);
+        abs[i] = v;
+        min[i] = hasMin && rawMin[i] !== undefined ? Number(rawMin[i]) : -v;
+        max[i] = hasMax && rawMax[i] !== undefined ? Number(rawMax[i]) : v;
+      }
+    }
+    const toFloat = arr => ((Array.isArray(arr) || ArrayBuffer.isView(arr)) && arr.length
+      ? Float32Array.from(arr, v => Math.abs(Number(v) || 0))
+      : null);
+    state.peaks = {
+      abs,
+      min,
+      max,
+      rms: toFloat(a.waveform.rms),
+      low: toFloat(a.waveform.low),
+      mid: toFloat(a.waveform.mid),
+      high: toFloat(a.waveform.high),
+      binSec: a.waveform.binSec || duration() / len,
+      pcmMono,
+      pcmSampleRate: Number(a.pcmSampleRate) || 44100
+    };
     return state.peaks;
   }
   const sizeCanvas = (c, width, height) => {
     const dpr = devicePixelRatio || 1;
     if (c.width !== Math.round(width * dpr) || c.height !== Math.round(height * dpr)) { c.width = Math.round(width * dpr); c.height = Math.round(height * dpr); }
-    const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); return g;
+    const g = c.getContext('2d'); g.setTransform?.(dpr, 0, 0, dpr, 0, 0); return g;
   };
 
   function gridLines(width) {
@@ -875,7 +1271,7 @@ export function createPlaylist(host, ctx) {
     return lines;
   }
 
-  function drawRuler(width) {
+  function drawRuler(width, nowSec = ctx.getTime()) {
     const g = sizeCanvas(ruler, width, RULER_H);
     g.fillStyle = '#10151d'; g.fillRect(0, 0, width, RULER_BARS);
     g.fillStyle = '#0b0f15'; g.fillRect(0, RULER_BARS, width, RULER_LOOP);
@@ -899,44 +1295,52 @@ export function createPlaylist(host, ctx) {
     const a = analysis();
     if (a?.sections?.length) {
       g.font = '700 9px system-ui, -apple-system, sans-serif';
-      for (const s of a.sections) {
+      a.sections.forEach((s, idx) => {
         const x0 = xAt(s.startSec), x1 = xAt(s.endSec);
-        if (x1 < 0 || x0 > width) continue;
+        if (x1 < 0 || x0 > width) return;
         const drawX0 = Math.max(0, x0), drawX1 = Math.min(width, x1), w = drawX1 - drawX0;
-        if (w < 2) continue;
+        if (w < 2) return;
         g.fillStyle = `${s.color}38`;
         g.fillRect(drawX0, secY, w, RULER_SECTIONS - 1);
         g.fillStyle = s.color;
         g.fillRect(drawX0, secY, w, 2);
-        if (x0 >= 0) {
-          g.fillStyle = `${s.color}aa`;
-          g.fillRect(x0, secY, 1, RULER_SECTIONS);
+        if (x0 >= 0 && idx >= 1) {
+          const isActiveDiv = hoverSectionBoundary === idx || (rulerGesture?.mode === 'section-drag' && rulerGesture.index === idx);
+          g.fillStyle = isActiveDiv ? '#ffd36b' : `${s.color}cc`;
+          g.fillRect(Math.round(x0) - (isActiveDiv ? 1 : 0), secY, isActiveDiv ? 2 : 1, RULER_SECTIONS);
+          if (w > 14 || isActiveDiv) {
+            g.fillStyle = isActiveDiv ? '#ffd36b' : '#ffffff88';
+            const hx = Math.round(x0);
+            g.fillRect(hx - 1, secY + 5, 2, 2);
+            g.fillRect(hx - 1, secY + 9, 2, 2);
+            g.fillRect(hx - 1, secY + 13, 2, 2);
+          }
         }
         if (w > 20) {
           g.save();
           g.beginPath();
-          g.rect(drawX0 + 3, secY, Math.max(0, w - 6), RULER_SECTIONS);
-          g.clip();
+          g.rect?.(drawX0 + 4, secY, Math.max(0, w - 8), RULER_SECTIONS);
+          g.clip?.();
           g.fillStyle = '#e4edf7';
-          const label = w > 65 ? `${s.name.toUpperCase()} · ${s.durationSec.toFixed(0)}s` : s.name.toUpperCase();
-          g.fillText(label, drawX0 + 4, secY + RULER_SECTIONS / 2 + .5);
+          const label = w > 72 ? `${s.name.toUpperCase()} · ${s.durationSec.toFixed(0)}s ▾` : s.name.toUpperCase();
+          g.fillText(label, drawX0 + 5, secY + RULER_SECTIONS / 2 + .5);
           g.restore();
         }
-      }
+      });
     } else {
       g.fillStyle = '#3a4654'; g.font = '9px system-ui';
       g.fillText(ctx.hasTrack() ? 'analiza dionica…' : 'dionice pjesme', 6, secY + RULER_SECTIONS / 2 + .5);
     }
 
     g.fillStyle = '#05080c'; g.fillRect(0, RULER_H - 1, width, 1);
-    const px = Math.round(xAt(ctx.getTime()));
+    const px = Math.round(xAt(nowSec));
     if (px >= -10 && px <= width + 10) {
       const isScrub = state.gesture?.mode === 'scrub' || rulerGesture?.mode === 'seek';
       if (isScrub) {
         g.fillStyle = 'rgba(255, 211, 107, 0.3)';
         g.beginPath();
         g.moveTo(px - 9, 0); g.lineTo(px + 9, 0); g.lineTo(px, 14);
-        g.closePath();
+        g.closePath?.();
         g.fill();
         g.fillRect(px - 3.5, 0, 7, RULER_H);
       }
@@ -945,35 +1349,180 @@ export function createPlaylist(host, ctx) {
       g.moveTo(px - 6, 0);
       g.lineTo(px + 6, 0);
       g.lineTo(px, 11);
-      g.closePath();
+      g.closePath?.();
       g.fill();
       g.fillRect(px - .5, 0, 1.5, RULER_H);
     }
+  }
+
+  function catmullRom(p0, p1, p2, p3, t) {
+    const t2 = t * t, t3 = t2 * t;
+    return 0.5 * (
+      (2 * p1) +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+    );
+  }
+
+  function sampleCubic(arr, fIdx) {
+    if (!arr || !arr.length) return 0;
+    const len = arr.length;
+    const i1 = clamp(Math.floor(fIdx), 0, len - 1);
+    const t = clamp(fIdx - i1, 0, 1);
+    const i0 = Math.max(0, i1 - 1);
+    const i2 = Math.min(len - 1, i1 + 1);
+    const i3 = Math.min(len - 1, i1 + 2);
+    return catmullRom(arr[i0], arr[i1], arr[i2], arr[i3], t);
+  }
+
+  function spectralRgba(lowVal, midVal, highVal, alpha = 0.75) {
+    const l = Math.max(0, lowVal), m = Math.max(0, midVal), h = Math.max(0, highVal);
+    const sum = l + m + h;
+    if (sum <= 1e-5) return `rgba(56, 189, 248, ${alpha})`;
+    const wl = l / sum, wm = m / sum, wh = h / sum;
+    // Bass: warm magenta/electric blue (#a855f7 / #3b82f6 -> ~[145, 92, 246])
+    // Mid: vibrant cyan/teal (#06b6d4 / #38bdf8 -> ~[20, 186, 232])
+    // High: crisp ice-white/aqua (#bae6fd / #e0f2fe -> ~[205, 236, 254])
+    const r = Math.round(clamp(wl * 152 + wm * 18 + wh * 208, 0, 255));
+    const gg = Math.round(clamp(wl * 88 + wm * 186 + wh * 238, 0, 255));
+    const b = Math.round(clamp(wl * 246 + wm * 232 + wh * 254, 0, 255));
+    return `rgba(${r}, ${gg}, ${b}, ${alpha})`;
   }
 
   function drawWave(g, width, y, height) {
     const peaks = computePeaks();
     g.fillStyle = '#0c1118'; g.fillRect(0, y, width, height);
     const mid = y + height / 2, amp = height / 2 - 4;
-    if (!peaks) { g.fillStyle = '#5b6978'; g.font = '12px system-ui'; g.fillText(ctx.hasTrack() ? 'Analiza waveforma traje…' : 'Povuci MP3/WAV u prozor ili u biblioteku', 16, mid + 4); return; }
-    const { abs, rms, binSec } = peaks, perPx = 1 / state.pps / binSec;
-    const grad = g.createLinearGradient(0, y, 0, y + height); grad.addColorStop(0, '#59d4ff'); grad.addColorStop(.5, '#2a8fd0'); grad.addColorStop(1, '#59d4ff');
-    g.fillStyle = grad;
-    for (let x = 0; x < width; x++) {
-      const i0 = Math.max(0, Math.floor((state.scrollSec + x / state.pps) / binSec)), i1 = Math.min(abs.length - 1, Math.max(i0, Math.floor(i0 + perPx)));
-      if (i0 >= abs.length) break;
-      let m = 0; for (let i = i0; i <= i1; i++) if (abs[i] > m) m = abs[i];
-      const a = Math.max(.5, clamp(m, 0, 1) * amp); g.fillRect(x, mid - a, 1, a * 2);
+    if (!peaks) {
+      g.fillStyle = '#5b6978'; g.font = '12px system-ui';
+      g.fillText(ctx.hasTrack() ? 'Analiza waveforma traje…' : 'Povuci MP3/WAV u prozor ili u biblioteku', 16, mid + 4);
+      return;
     }
-    if (rms) {
-      g.fillStyle = '#b8f0ffcc';
-      for (let x = 0; x < width; x++) {
-        const i0 = Math.max(0, Math.floor((state.scrollSec + x / state.pps) / binSec)); if (i0 >= rms.length) break;
-        const i1 = Math.min(rms.length - 1, Math.max(i0, Math.floor(i0 + perPx))); let m = 0; for (let i = i0; i <= i1; i++) if (rms[i] > m) m = rms[i];
-        const a = clamp(m, 0, 1) * amp; if (a > .5) g.fillRect(x, mid - a, 1, a * 2);
+    const { abs, min, max, rms, low, mid: midBand, high, binSec, pcmMono, pcmSampleRate } = peaks;
+    const perPx = 1 / state.pps / binSec;
+    const hasSpectral = Boolean(low && midBand && high && low.length && midBand.length && high.length);
+    let fallbackFill = 'rgba(56, 189, 248, 0.75)';
+    if (!hasSpectral && g.createLinearGradient) {
+      const grad = g.createLinearGradient(0, y, 0, y + height);
+      grad.addColorStop(0, 'rgba(89, 212, 255, 0.78)');
+      grad.addColorStop(0.5, 'rgba(42, 143, 208, 0.75)');
+      grad.addColorStop(1, 'rgba(89, 212, 255, 0.78)');
+      fallbackFill = grad;
+    }
+
+    const wInt = Math.max(0, Math.floor(width));
+    const topY = new Float32Array(wInt);
+    const botY = new Float32Array(wInt);
+    const rmsVals = new Float32Array(wInt);
+    let validCount = 0;
+
+    for (let x = 0; x < wInt; x++) {
+      const t0 = state.scrollSec + x / state.pps;
+      const t1 = state.scrollSec + (x + 1) / state.pps;
+      const fIdx = t0 / binSec;
+      if (fIdx >= abs.length) break;
+
+      let minVal = 0, maxVal = 0, rVal = 0;
+      let lVal = 0, mVal = 0, hVal = 0;
+
+      if (perPx < 1.2) {
+        if (pcmMono && pcmMono.length && pcmSampleRate > 0) {
+          const s0 = clamp(Math.floor(t0 * pcmSampleRate), 0, pcmMono.length - 1);
+          const s1 = clamp(Math.floor(t1 * pcmSampleRate), s0, pcmMono.length - 1);
+          if (s1 > s0 + 1) {
+            let lo = 1, hi = -1, sumSq = 0, count = 0;
+            const span = s1 - s0;
+            const step = span > 64 ? Math.max(1, span >> 5) : 1;
+            for (let s = s0; s <= s1; s += step) {
+              const v = pcmMono[s];
+              if (v < lo) lo = v;
+              if (v > hi) hi = v;
+              sumSq += v * v;
+              count++;
+            }
+            minVal = Math.min(0, lo);
+            maxVal = Math.max(0, hi);
+            rVal = Math.sqrt(sumSq / Math.max(1, count));
+          } else {
+            const v = sampleCubic(pcmMono, t0 * pcmSampleRate);
+            const env = Math.abs(sampleCubic(abs, fIdx));
+            minVal = Math.min(-env * 0.35, v);
+            maxVal = Math.max(env * 0.35, v);
+            rVal = rms ? Math.max(0, sampleCubic(rms, fIdx)) : Math.abs(v) * 0.7;
+          }
+        } else {
+          minVal = Math.min(0, sampleCubic(min, fIdx));
+          maxVal = Math.max(0, sampleCubic(max, fIdx));
+          rVal = rms ? Math.max(0, sampleCubic(rms, fIdx)) : 0;
+        }
+        if (hasSpectral) {
+          lVal = Math.max(0, sampleCubic(low, fIdx));
+          mVal = Math.max(0, sampleCubic(midBand, fIdx));
+          hVal = Math.max(0, sampleCubic(high, fIdx));
+        }
+      } else {
+        const i0 = Math.max(0, Math.floor(fIdx));
+        const i1 = Math.min(abs.length - 1, Math.max(i0, Math.floor(fIdx + perPx)));
+        let lo = 0, hi = 0, rm = 0;
+        for (let i = i0; i <= i1; i++) {
+          if (min[i] < lo) lo = min[i];
+          if (max[i] > hi) hi = max[i];
+          if (rms && i < rms.length && rms[i] > rm) rm = rms[i];
+          if (hasSpectral) {
+            if (i < low.length && low[i] > lVal) lVal = low[i];
+            if (i < midBand.length && midBand[i] > mVal) mVal = midBand[i];
+            if (i < high.length && high[i] > hVal) hVal = high[i];
+          }
+        }
+        minVal = lo;
+        maxVal = hi;
+        rVal = rm;
+      }
+
+      const y1 = mid + clamp(minVal, -1, 1) * amp;
+      const y2 = mid + clamp(maxVal, -1, 1) * amp;
+      let yTop = Math.min(y1, y2, mid - 0.5);
+      let yBot = Math.max(y1, y2, mid + 0.5);
+      topY[x] = yTop;
+      botY[x] = yBot;
+      rmsVals[x] = clamp(rVal, 0, 1);
+      validCount = x + 1;
+
+      g.fillStyle = hasSpectral ? spectralRgba(lVal, mVal, hVal, 0.75) : fallbackFill;
+      g.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
+    }
+
+    if (rms || pcmMono) {
+      g.fillStyle = '#e0f7ffcc';
+      for (let x = 0; x < validCount; x++) {
+        const rAmp = rmsVals[x] * amp;
+        if (rAmp > 0.45) {
+          const ry0 = Math.max(topY[x], mid - rAmp);
+          const ry1 = Math.min(botY[x], mid + rAmp);
+          if (ry1 > ry0) g.fillRect(x, ry0, 1, ry1 - ry0);
+        }
       }
     }
-    g.fillStyle = '#ffffff10'; g.fillRect(0, mid, width, 1);
+
+    if (validCount > 1) {
+      g.save();
+      g.strokeStyle = hasSpectral ? 'rgba(186, 230, 253, 0.88)' : 'rgba(89, 212, 255, 0.88)';
+      g.lineWidth = 1;
+      g.beginPath();
+      for (let x = 0; x < validCount; x++) {
+        if (x === 0) g.moveTo(x, topY[x]);
+        else g.lineTo(x, topY[x]);
+      }
+      for (let x = 0; x < validCount; x++) {
+        if (x === 0) g.moveTo(x, botY[x]);
+        else g.lineTo(x, botY[x]);
+      }
+      g.stroke();
+      g.restore();
+    }
+
+    g.fillStyle = '#ffffff14'; g.fillRect(0, mid, width, 1);
   }
 
   function drawFeature(g, width, y, height, samples, color, features) {
@@ -987,7 +1536,46 @@ export function createPlaylist(host, ctx) {
     }
   }
 
-  function drawClip(g, layer, layerIndex, clip) {
+  const clipCurveCache = new WeakMap();
+  function getClipCurves(clip, a, steps) {
+    const n = Math.max(2, steps);
+    const ks = clip.keyframes || [];
+    let kfHash = ks.length;
+    for (let i = 0; i < ks.length; i++) {
+      const k = ks[i];
+      kfHash = (kfHash * 31 + Math.round(k.timeSec * 1000) + Math.round(k.value * 1000) + (k.ease ? k.ease.charCodeAt(0) : 0)) | 0;
+    }
+    const b = clip.band;
+    const bandHash = b
+      ? `${b.source || 'm'}:${b.lowHz}:${b.highHz}:${b.threshold}:${b.ceiling}:${b.mode}:${b.releaseSec}`
+      : '';
+    const hasSp = Boolean(a?.spectrum);
+    const hasFt = Boolean(a?.features);
+    const key = `${n}|${clip.startSec.toFixed(3)}|${clip.durationSec.toFixed(3)}|${clip.driver}|${clip.driverGain ?? 1}|${kfHash}|${bandHash}|${hasSp ? 1 : 0}|${hasFt ? 1 : 0}`;
+    const cached = clipCurveCache.get(clip);
+    if (cached && cached.key === key && cached.analysis === a) return cached;
+
+    const env = new Float32Array(n);
+    const drv = new Float32Array(n);
+    const strength = new Float32Array(n);
+    const hasDriver = Boolean(clip.driver && clip.driver !== 'none');
+    const gain = clip.driverGain ?? 1;
+    const span = Math.max(1, n - 1);
+    for (let i = 0; i < n; i++) {
+      const localT = (i / span) * clip.durationSec;
+      const t = clip.startSec + localT;
+      const e = envelopeAt(ks, localT);
+      const d = hasDriver ? clamp(driverLevel(a, clip, t) * gain) : 1;
+      env[i] = e;
+      drv[i] = d;
+      strength[i] = clamp(e * d);
+    }
+    const entry = { key, analysis: a, env, drv, strength, n };
+    clipCurveCache.set(clip, entry);
+    return entry;
+  }
+
+  function drawClip(g, layer, layerIndex, clip, curTime = ctx.getTime()) {
     const r = clipRect(layerIndex, clip); if (r.x + r.w < -2 || r.x > canvas.clientWidth + 2) return;
     const rgb = clipUiColor(clip.color), css = a => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`;
     const selected = isSelected({ layerId: layer.id, clipId: clip.id });
@@ -995,12 +1583,11 @@ export function createPlaylist(host, ctx) {
     const expanded = isLayerExpanded(layer.id);
     const radius = 4;
     const a = analysis();
-    const curTime = ctx.getTime();
 
     g.save();
     g.globalAlpha = alpha;
 
-    // In closed pill mode: calculate live LED driving glow
+    // In closed pill mode: calculate live LED driving glow without expensive Gaussian shadowBlur
     if (!expanded) {
       const inLiveWindow = curTime >= clip.startSec && curTime <= clip.startSec + clip.durationSec;
       if (layer.enabled && inLiveWindow) {
@@ -1010,8 +1597,12 @@ export function createPlaylist(host, ctx) {
         const liveStrength = clamp(layer.opacity * envNow * drvNow);
         if (liveStrength > 0.02) {
           g.save();
-          g.shadowColor = css(0.7 * liveStrength);
-          g.shadowBlur = 8 + 14 * liveStrength;
+          g.beginPath();
+          g.roundRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, radius + 2);
+          g.strokeStyle = css(0.28 * liveStrength);
+          g.lineWidth = 5;
+          g.stroke();
+
           g.beginPath();
           g.roundRect(r.x, r.y, r.w, r.h, radius);
           g.strokeStyle = css(0.85 * liveStrength);
@@ -1019,7 +1610,7 @@ export function createPlaylist(host, ctx) {
           g.stroke();
 
           const curPx = xAt(curTime);
-          if (curPx >= r.x && curPx <= r.x + r.w) {
+          if (curPx >= r.x && curPx <= r.x + r.w && g.createRadialGradient) {
             const pulse = g.createRadialGradient(curPx, r.y + r.h / 2, 2, curPx, r.y + r.h / 2, Math.max(25, r.w * 0.35));
             pulse.addColorStop(0, `rgba(255, 255, 255, ${0.32 * liveStrength})`);
             pulse.addColorStop(0.5, css(0.2 * liveStrength));
@@ -1040,6 +1631,10 @@ export function createPlaylist(host, ctx) {
     g.fill();
 
     g.save(); g.clip();
+
+    const stepPx = Math.max(2, Math.min(4, Math.floor(r.w / 90)));
+    const sampleCount = Math.max(2, Math.min(240, Math.ceil(r.w / stepPx) + 1));
+    const curves = getClipCurves(clip, a, sampleCount);
 
     if (expanded) {
       // EXPANDED MODE: full automation workspace
@@ -1074,35 +1669,35 @@ export function createPlaylist(host, ctx) {
 
       // 1. Audio Driver Overlay beneath envelope
       if (clip.driver && clip.driver !== 'none') {
+        const drvSrc = clip.driver === 'band' ? (clip.band?.source || 'master') : clip.driver;
         const drvColors = {
           drums: 'rgba(255, 154, 58, 0.42)',
           bass: 'rgba(178, 92, 255, 0.42)',
           vocals: 'rgba(55, 212, 255, 0.42)',
           other: 'rgba(89, 255, 155, 0.42)',
+          master: 'rgba(255, 215, 138, 0.38)',
           band: 'rgba(47, 213, 199, 0.42)'
         };
-        const drvColor = drvColors[clip.driver] || 'rgba(255, 215, 138, 0.38)';
+        const drvColor = drvColors[drvSrc] || drvColors.master;
         g.fillStyle = drvColor;
-        const stepPx = Math.max(1, Math.min(3, Math.floor(r.w / 120)));
-        for (let px = 0; px < r.w; px += stepPx) {
-          const t = clip.startSec + (px / r.w) * clip.durationSec;
-          const drvVal = clamp(driverLevel(a, clip, t) * (clip.driverGain ?? 1));
+        const barW = Math.max(1, r.w / Math.max(1, curves.n - 1));
+        for (let i = 0; i < curves.n; i++) {
+          const drvVal = curves.drv[i];
           if (drvVal > 0.01) {
+            const px = (i / Math.max(1, curves.n - 1)) * r.w;
             const barH = drvVal * (autoH - 4);
-            g.fillRect(r.x + px, autoY + autoH - barH, stepPx, barH);
+            g.fillRect(r.x + px, autoY + autoH - barH, Math.ceil(barW), barH);
           }
         }
       }
 
       // 2. Eased Envelope Curve & Filled area
       const ks = clip.keyframes;
-      const stepPx = Math.max(1, Math.min(2, Math.floor(r.w / 150)));
       g.beginPath();
       g.moveTo(r.x, autoY + autoH);
-      for (let px = 0; px <= r.w; px += stepPx) {
-        const localT = (px / r.w) * clip.durationSec;
-        const val = envelopeAt(ks, localT);
-        const cy = autoY + autoH * (1 - val);
+      for (let i = 0; i < curves.n; i++) {
+        const px = (i / Math.max(1, curves.n - 1)) * r.w;
+        const cy = autoY + autoH * (1 - curves.env[i]);
         g.lineTo(r.x + px, cy);
       }
       g.lineTo(r.x + r.w, autoY + autoH);
@@ -1112,11 +1707,10 @@ export function createPlaylist(host, ctx) {
 
       // Stroke envelope curve
       g.beginPath();
-      for (let px = 0; px <= r.w; px += stepPx) {
-        const localT = (px / r.w) * clip.durationSec;
-        const val = envelopeAt(ks, localT);
-        const cy = autoY + autoH * (1 - val);
-        if (px === 0) g.moveTo(r.x, cy);
+      for (let i = 0; i < curves.n; i++) {
+        const px = (i / Math.max(1, curves.n - 1)) * r.w;
+        const cy = autoY + autoH * (1 - curves.env[i]);
+        if (i === 0) g.moveTo(r.x, cy);
         else g.lineTo(r.x + px, cy);
       }
       g.strokeStyle = css(.95);
@@ -1179,38 +1773,33 @@ export function createPlaylist(host, ctx) {
       const bodyY = r.y + headH, bodyH = r.h - headH - 2;
       const ks = clip.keyframes;
       const hasDriver = clip.driver && clip.driver !== 'none';
-      const stepPx = Math.max(1, Math.min(2, Math.floor(r.w / 100)));
 
       // High-detail output strength fill: S(t) = envelopeAt(t) * driverLevel(t)
       g.beginPath();
       g.moveTo(r.x, bodyY + bodyH);
-      for (let px = 0; px <= r.w; px += stepPx) {
-        const localT = (px / r.w) * clip.durationSec;
-        const t = clip.startSec + localT;
-        const env = envelopeAt(ks, localT);
-        const drv = hasDriver ? clamp(driverLevel(a, clip, t) * (clip.driverGain ?? 1)) : 1;
-        const strength = clamp(env * drv);
-        const sy = bodyY + bodyH * (1 - strength);
+      for (let i = 0; i < curves.n; i++) {
+        const px = (i / Math.max(1, curves.n - 1)) * r.w;
+        const sy = bodyY + bodyH * (1 - curves.strength[i]);
         g.lineTo(r.x + px, sy);
       }
       g.lineTo(r.x + r.w, bodyY + bodyH);
       g.closePath();
-      const grad = g.createLinearGradient(r.x, bodyY, r.x, bodyY + bodyH);
-      grad.addColorStop(0, css(.55));
-      grad.addColorStop(1, css(.22));
-      g.fillStyle = grad;
+      if (g.createLinearGradient) {
+        const grad = g.createLinearGradient(r.x, bodyY, r.x, bodyY + bodyH);
+        grad.addColorStop(0, css(.55));
+        grad.addColorStop(1, css(.22));
+        g.fillStyle = grad;
+      } else {
+        g.fillStyle = css(.38);
+      }
       g.fill();
 
       // Output strength contour line
       g.beginPath();
-      for (let px = 0; px <= r.w; px += stepPx) {
-        const localT = (px / r.w) * clip.durationSec;
-        const t = clip.startSec + localT;
-        const env = envelopeAt(ks, localT);
-        const drv = hasDriver ? clamp(driverLevel(a, clip, t) * (clip.driverGain ?? 1)) : 1;
-        const strength = clamp(env * drv);
-        const sy = bodyY + bodyH * (1 - strength);
-        if (px === 0) g.moveTo(r.x, sy);
+      for (let i = 0; i < curves.n; i++) {
+        const px = (i / Math.max(1, curves.n - 1)) * r.w;
+        const sy = bodyY + bodyH * (1 - curves.strength[i]);
+        if (i === 0) g.moveTo(r.x, sy);
         else g.lineTo(r.x + px, sy);
       }
       g.strokeStyle = css(.95);
@@ -1220,11 +1809,10 @@ export function createPlaylist(host, ctx) {
       // Faint ceiling envelope line if driver is modulating
       if (hasDriver) {
         g.beginPath();
-        for (let px = 0; px <= r.w; px += stepPx) {
-          const localT = (px / r.w) * clip.durationSec;
-          const env = envelopeAt(ks, localT);
-          const ey = bodyY + bodyH * (1 - env);
-          if (px === 0) g.moveTo(r.x, ey);
+        for (let i = 0; i < curves.n; i++) {
+          const px = (i / Math.max(1, curves.n - 1)) * r.w;
+          const ey = bodyY + bodyH * (1 - curves.env[i]);
+          if (i === 0) g.moveTo(r.x, ey);
           else g.lineTo(r.x + px, ey);
         }
         g.strokeStyle = css(.35);
@@ -1259,7 +1847,11 @@ export function createPlaylist(host, ctx) {
     g.font = '700 9.5px system-ui';
     g.textBaseline = 'middle';
     const speedTag = (clip.speed && Math.abs(clip.speed - 1) > 0.05) ? ` · ${clip.speed}×` : '';
-    const label = `${PRESET_LABELS[clip.preset] || clip.preset}${speedTag}${DRIVER_LABELS[clip.driver] ? ' · ' + DRIVER_LABELS[clip.driver] : ''}${clip.targets !== 'all' ? ` · ${clip.targets.length}/9` : ''}`;
+    const drvSrc = clip.driver === 'band' ? (clip.band?.source || 'master') : clip.driver;
+    const drvTag = clip.driver && clip.driver !== 'none'
+      ? ` · ${clip.driver === 'band' ? (drvSrc !== 'master' ? `${DRIVER_LABELS[drvSrc] || drvSrc} EQ` : 'EQ') : (DRIVER_LABELS[clip.driver] || clip.driver)}`
+      : '';
+    const label = `${PRESET_LABELS[clip.preset] || clip.preset}${speedTag}${drvTag}${clip.targets !== 'all' ? ` · ${clip.targets.length}/9` : ''}`;
     if (r.w > 26) {
       g.save();
       g.beginPath();
@@ -1272,9 +1864,16 @@ export function createPlaylist(host, ctx) {
     // Border and selection handles
     g.beginPath();
     g.roundRect(r.x + .5, r.y + .5, r.w - 1, r.h - 1, radius);
-    g.lineWidth = selected ? 2 : 1;
-    g.strokeStyle = selected ? '#fff' : css(.55);
+    g.lineWidth = selected ? 2 : (clip.recording ? 1.8 : 1);
+    g.strokeStyle = selected ? '#fff' : (clip.recording ? '#ff4d4d' : css(.55));
     g.stroke();
+    if (clip.recording) {
+      const pulse = 0.4 + 0.6 * Math.sin(performance.now() * 0.009);
+      g.fillStyle = `rgba(255, 60, 60, ${pulse})`;
+      g.beginPath();
+      g.arc(r.x + 7, r.y + headH / 2, 3, 0, Math.PI * 2);
+      g.fill();
+    }
     if (selected && r.w > 18) {
       g.fillStyle = '#ffffffcc';
       g.fillRect(r.x + 1, r.y + r.h / 2 - 8, 3, 16);
@@ -1283,9 +1882,133 @@ export function createPlaylist(host, ctx) {
     g.restore();
   }
 
+  function drawShiftMoveGuide(g, width, height, t) {
+    const gest = state.gesture;
+    if (!gest?.items?.length) return;
+    const lineTop = layersTop();
+    const lineBottom = Math.max(height, layerTop(t.layers.length) + (gest.createdLayerId ? 0 : laneH()));
+
+    // 1. Origin footprints for clips that moved to a different track
+    for (const item of gest.items) {
+      const originLane = item.layerIndex;
+      const currentLane = item.layerIndex + (gest.dl ?? 0);
+      if (originLane !== currentLane && originLane >= 0 && originLane < t.layers.length) {
+        const ox = Math.round(xAt(item.startSec));
+        const ow = Math.round((item.endSec - item.startSec) * state.pps);
+        const oy = layerTop(originLane) + 2;
+        const oh = layerHeight(originLane) - 4;
+        if (ox + ow >= 0 && ox <= width) {
+          g.save();
+          g.fillStyle = 'rgba(56, 189, 248, 0.08)';
+          g.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+          g.lineWidth = 1.5;
+          g.setLineDash([4, 3]);
+          g.beginPath();
+          g.roundRect(ox + 0.5, oy + 0.5, Math.max(3, ow - 1), oh - 1, 4);
+          g.fill();
+          g.stroke();
+          if (ow > 50) {
+            g.fillStyle = 'rgba(56, 189, 248, 0.7)';
+            g.font = '600 9px ui-monospace, Menlo, sans-serif';
+            g.textBaseline = 'middle';
+            g.fillText('Izvorna pozicija', ox + 6, oy + oh / 2);
+          }
+          g.restore();
+        }
+      }
+    }
+
+    // 2. Vertical guide lines at unique startSec and endSec
+    const starts = [...new Set(gest.items.map(i => i.startSec))];
+    const ends = [...new Set(gest.items.map(i => i.endSec))];
+
+    for (const sxSec of starts) {
+      const sx = Math.round(xAt(sxSec));
+      if (sx < -10 || sx > width + 10) continue;
+      g.save();
+      // Glow
+      g.fillStyle = 'rgba(56, 189, 248, 0.16)';
+      g.fillRect(sx - 2, lineTop, 5, lineBottom - lineTop);
+
+      // Main vertical snap guide line
+      g.strokeStyle = '#38bdf8';
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(sx + 0.5, lineTop);
+      g.lineTo(sx + 0.5, lineBottom);
+      g.stroke();
+
+      // Top notch / downward arrow
+      g.fillStyle = '#38bdf8';
+      g.beginPath();
+      g.moveTo(sx - 4.5, lineTop);
+      g.lineTo(sx + 5.5, lineTop);
+      g.lineTo(sx + 0.5, lineTop + 6);
+      g.closePath();
+      g.fill();
+
+      // Bottom notch / upward arrow
+      g.beginPath();
+      g.moveTo(sx - 4.5, lineBottom);
+      g.lineTo(sx + 5.5, lineBottom);
+      g.lineTo(sx + 0.5, lineBottom - 6);
+      g.closePath();
+      g.fill();
+      g.restore();
+    }
+
+    for (const exSec of ends) {
+      const ex = Math.round(xAt(exSec));
+      if (ex < -10 || ex > width + 10) continue;
+      g.save();
+      g.fillStyle = 'rgba(56, 189, 248, 0.08)';
+      g.fillRect(ex - 1.5, lineTop, 3, lineBottom - lineTop);
+
+      g.strokeStyle = 'rgba(56, 189, 248, 0.7)';
+      g.lineWidth = 1;
+      g.setLineDash([3, 3]);
+      g.beginPath();
+      g.moveTo(ex + 0.5, lineTop);
+      g.lineTo(ex + 0.5, lineBottom);
+      g.stroke();
+      g.restore();
+    }
+
+    // 3. Floating alignment badge
+    const mainStart = gest.anchor?.startSec ?? gest.items[0]?.startSec;
+    if (mainStart !== undefined) {
+      const mx = Math.round(xAt(mainStart));
+      if (mx >= -10 && mx <= width + 10) {
+        g.save();
+        const badgeText = '⇧ VERTIKALNO ZAKLJUČANO';
+        g.font = '700 9px ui-monospace, Menlo, sans-serif';
+        const textW = g.measureText(badgeText).width;
+        const pad = 7;
+        const bw = textW + pad * 2;
+        const bh = 18;
+        const bx = clamp(mx - bw / 2, 8, width - bw - 8);
+        const by = lineTop + 5;
+        g.fillStyle = '#081524f0';
+        g.strokeStyle = '#38bdf8';
+        g.lineWidth = 1;
+        g.beginPath();
+        g.roundRect(bx, by, bw, bh, 3);
+        g.fill();
+        g.stroke();
+
+        g.fillStyle = '#38bdf8';
+        g.textBaseline = 'middle';
+        g.fillText(badgeText, bx + pad, by + bh / 2 + 0.5);
+        g.restore();
+      }
+    }
+  }
+
   function draw() {
-    const width = stageWidth(), height = bodyHeight(), t = tl(), a = analysis();
+    const height = bodyHeight(), t = tl(), a = analysis(), nowSec = ctx.getTime();
     stageHeightSync(height);
+    syncScrollbarGutter();
+    const width = stageWidth();
     const g = sizeCanvas(canvas, width, height);
     g.fillStyle = '#0d1219'; g.fillRect(0, 0, width, height);
     // lane backgrounds
@@ -1296,6 +2019,40 @@ export function createPlaylist(host, ctx) {
       g.fillStyle = '#05080c';
       g.fillRect(0, layerTop(i) + lh - 1, width, 1);
     });
+
+    // Prospective new track drop guide when moving clips or dragging presets
+    const isMovingClip = state.gesture?.mode === 'move';
+    const isDragPreset = Boolean(state.ghost && state.ghost.tool === 'draw' && state.ghost.layerIndex >= t.layers.length);
+    const baseCount = state.gesture?.baseLayerCount ?? t.layers.length;
+    if ((isMovingClip && !state.gesture?.createdLayerId) || isDragPreset) {
+      const prospectiveY = layerTop(baseCount);
+      const prospectiveH = laneH();
+      g.save();
+      g.strokeStyle = 'rgba(255, 211, 107, 0.35)';
+      g.setLineDash([5, 4]);
+      g.strokeRect(8.5, prospectiveY + 4.5, width - 17, prospectiveH - 9);
+      g.setLineDash([]);
+      g.fillStyle = 'rgba(255, 211, 107, 0.03)';
+      g.fillRect(9, prospectiveY + 5, width - 18, prospectiveH - 10);
+      g.fillStyle = 'rgba(255, 211, 107, 0.45)';
+      g.font = '600 11px ui-monospace, Menlo, sans-serif';
+      g.textBaseline = 'middle';
+      g.fillText('+ NOVA TRAKA (povuci ovdje)', 22, prospectiveY + prospectiveH / 2);
+      g.restore();
+    }
+    if (isMovingClip && state.gesture?.createdLayerId) {
+      const newLayerIndex = t.layers.findIndex(l => l.id === state.gesture.createdLayerId);
+      if (newLayerIndex >= 0) {
+        const ny = layerTop(newLayerIndex);
+        const nh = layerHeight(newLayerIndex);
+        g.save();
+        g.fillStyle = 'rgba(255, 211, 107, 0.16)';
+        g.font = '600 10px ui-monospace, Menlo, sans-serif';
+        g.textBaseline = 'middle';
+        g.fillText('+ NOVA TRAKA', 16, ny + nh / 2);
+        g.restore();
+      }
+    }
     drawWave(g, width, 0, AUDIO_H);
     g.fillStyle = '#0a0e14'; g.fillRect(0, AUDIO_H, width, ANALYSIS_H);
     if (a?.features) {
@@ -1326,19 +2083,24 @@ export function createPlaylist(host, ctx) {
     // loop
     const loop = ctx.getLoop();
     if (loop) { g.fillStyle = ctx.isLoopOn() ? '#f5a52418' : '#8a97a418'; g.fillRect(xAt(loop.start), 0, xAt(loop.end) - xAt(loop.start), height); }
-    t.layers.forEach((layer, i) => layer.clips.forEach(clip => drawClip(g, layer, i, clip)));
+    t.layers.forEach((layer, i) => layer.clips.forEach(clip => drawClip(g, layer, i, clip, nowSec)));
+    if (state.gesture?.mode === 'move' && state.gesture?.shiftLock && state.gesture?.moved) {
+      drawShiftMoveGuide(g, width, height, t);
+    }
     // ghost
-    if (state.ghost && state.ghost.layerIndex >= 0 && state.ghost.layerIndex < t.layers.length) {
+    if (state.ghost && state.ghost.layerIndex >= 0) {
       const gx = xAt(state.ghost.t);
-      const glh = layerHeight(state.ghost.layerIndex);
+      const isNew = state.ghost.layerIndex >= t.layers.length;
+      const glh = isNew ? laneH() : layerHeight(state.ghost.layerIndex);
+      const gy = isNew ? layerTop(t.layers.length) : layerTop(state.ghost.layerIndex);
       if (state.ghost.tool === 'slice') {
-        g.strokeStyle = '#ffd36b'; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(gx + .5, layerTop(state.ghost.layerIndex)); g.lineTo(gx + .5, layerTop(state.ghost.layerIndex) + glh); g.stroke(); g.setLineDash([]);
+        g.strokeStyle = '#ffd36b'; g.setLineDash([4, 3]); g.beginPath(); g.moveTo(gx + .5, gy); g.lineTo(gx + .5, gy + glh); g.stroke(); g.setLineDash([]);
       } else {
-        g.fillStyle = '#ffffff22'; g.fillRect(gx, layerTop(state.ghost.layerIndex) + 4, Math.max(4, barLength(state.ghost.t) * state.pps), glh - 8); g.fillStyle = '#ffd36b'; g.fillRect(gx, layerTop(state.ghost.layerIndex) + 4, 2, glh - 8);
+        g.fillStyle = '#ffffff22'; g.fillRect(gx, gy + 4, Math.max(4, barLength(state.ghost.t) * state.pps), glh - 8); g.fillStyle = '#ffd36b'; g.fillRect(gx, gy + 4, 2, glh - 8);
       }
     }
     if (state.marquee) { const m = state.marquee; g.fillStyle = '#7cc4ff22'; g.strokeStyle = '#7cc4ff'; g.lineWidth = 1; g.fillRect(Math.min(m.x0, m.x1), Math.min(m.y0, m.y1), Math.abs(m.x1 - m.x0), Math.abs(m.y1 - m.y0)); g.strokeRect(Math.min(m.x0, m.x1) + .5, Math.min(m.y0, m.y1) + .5, Math.abs(m.x1 - m.x0), Math.abs(m.y1 - m.y0)); }
-    const px = Math.round(xAt(ctx.getTime()));
+    const px = Math.round(xAt(nowSec));
     if (px >= -10 && px <= width + 10) {
       const isScrub = state.gesture?.mode === 'scrub' || rulerGesture?.mode === 'seek';
       g.fillStyle = isScrub ? 'rgba(255, 211, 107, 0.28)' : 'rgba(255, 211, 107, 0.12)';
@@ -1346,14 +2108,14 @@ export function createPlaylist(host, ctx) {
       g.fillStyle = '#ffd36b';
       g.fillRect(px - 0.5, 0, 1.5, height);
     }
-    drawRuler(width); drawOverview();
+    drawRuler(width, nowSec); drawOverview(width, nowSec);
   }
 
   let lastHeight = 0;
   function stageHeightSync(height) { if (height !== lastHeight) { canvas.style.height = `${height}px`; heads.style.height = `${height}px`; lastHeight = height; } }
 
-  function drawOverview() {
-    const width = overview.clientWidth || 600, height = 30, g = sizeCanvas(overview, width, height), peaks = computePeaks(), d = duration(), a = analysis();
+  function drawOverview(stageW, nowSec = ctx.getTime()) {
+    const width = stageW || overview.clientWidth || 600, height = 30, g = sizeCanvas(overview, width, height), peaks = computePeaks(), d = duration(), a = analysis();
     g.fillStyle = '#0a0e14'; g.fillRect(0, 0, width, height);
     if (a?.sections?.length) {
       for (const s of a.sections) {
@@ -1365,17 +2127,21 @@ export function createPlaylist(host, ctx) {
     tl().layers.forEach((layer, li) => layer.clips.forEach(clip => { const [r, gg, b] = clipUiColor(clip.color); g.fillStyle = `rgba(${r},${gg},${b},.75)`; g.fillRect(clip.startSec / d * width, 4 + (li % 6) * 4, Math.max(1, clip.durationSec / d * width), 3); }));
     const vx = state.scrollSec / d * width, vw = visibleSec() / d * width;
     g.fillStyle = '#ffffff18'; g.fillRect(vx, 0, vw, height); g.strokeStyle = '#ffffffaa'; g.strokeRect(vx + .5, .5, Math.max(2, vw) - 1, height - 1);
-    const ox = Math.round(ctx.getTime() / d * width);
+    const ox = Math.round(nowSec / d * width);
     g.fillStyle = '#ffd36b'; g.fillRect(ox - 0.5, 0, 1.5, height);
   }
 
   /* -------------------------------------------------------------- loop */
-  let lastSize = '';
+  let lastSize = '', lastPlayDrawMs = 0;
   function frame() {
-    const size = `${stageWidth()}x${root.clientHeight}`;
+    syncScrollbarGutter();
+    const size = `${stageWidth()}x${root.clientHeight}x${lastSbW}`;
     if (size !== lastSize) { lastSize = size; clampView(); state.dirty = true; }
-    if (state.dirty || ctx.isPlaying() || state.gesture?.mode === 'scrub' || rulerGesture?.mode === 'seek') {
+    const nowMs = performance.now();
+    const isScrubbing = state.gesture?.mode === 'scrub' || rulerGesture?.mode === 'seek';
+    if (state.dirty || isScrubbing || (ctx.isPlaying() && (nowMs - lastPlayDrawMs >= 22))) {
       state.dirty = false;
+      lastPlayDrawMs = nowMs;
       draw();
     }
     requestAnimationFrame(frame);
@@ -1383,18 +2149,59 @@ export function createPlaylist(host, ctx) {
   requestAnimationFrame(frame);
   new ResizeObserver(() => { state.dirty = true; }).observe(canvas);
 
-  addEventListener('keydown', event => { if (event.code === 'Space' && event.target === canvas && event.altKey) state.spaceDown = true; });
-  addEventListener('keyup', event => { if (event.code === 'Space') state.spaceDown = false; });
+  addEventListener('keydown', event => {
+    if (event.key === 'Shift') {
+      state.shiftDown = true;
+      if (state.gesture?.mode === 'move') {
+        state.gesture.shiftLock = true;
+        if (state.gesture.lastMoveArgs) {
+          applyMove(...state.gesture.lastMoveArgs, true);
+        } else {
+          requestDraw();
+        }
+      }
+    }
+    if (event.code === 'Space' && event.target === canvas && event.altKey) state.spaceDown = true;
+    if (event.key === 'Escape' && state.gesture?.mode && ['move', 'start', 'end', 'draw', 'erase', 'drag-keyframe'].includes(state.gesture.mode)) {
+      event.preventDefault();
+      event.stopPropagation();
+      store.cancel();
+      state.gesture = null;
+      state.marquee = null;
+      canvas.classList.remove('panning');
+      renderHeads();
+      requestDraw();
+    }
+  });
+  addEventListener('keyup', event => {
+    if (event.key === 'Shift') {
+      state.shiftDown = false;
+      if (state.gesture?.mode === 'move') {
+        state.gesture.shiftLock = false;
+        if (state.gesture.lastMoveArgs) {
+          applyMove(...state.gesture.lastMoveArgs, false);
+        } else {
+          requestDraw();
+        }
+      }
+    }
+    if (event.code === 'Space') state.spaceDown = false;
+  });
+  addEventListener('blur', () => {
+    state.shiftDown = false;
+    state.spaceDown = false;
+  });
 
   renderHeads(); clampView();
   return {
-    redraw: requestDraw, renderHeads, updateActiveHead, fit, zoomAround, centerOn, ensureVisible, setSelection, pruneSelection,
+    redraw: requestDraw, draw, computePeaks, renderHeads, updateActiveHead, fit, zoomAround, centerOn, ensureVisible, setSelection, pruneSelection,
     toggleExpandLayer, get expandedLayerId() { return state.expandedLayerId; },
     get selection() { return [...state.selection]; }, get solo() { return state.solo; },
     setLaneSize(size) { state.laneSize = size; renderHeads(); requestDraw(); },
     get laneSize() { return state.laneSize; },
     get view() { return { pps: state.pps, scrollSec: state.scrollSec, visibleSec: visibleSec() }; },
-    hit: (x, y) => hitTest(x, y), canvas, addLayerAction,
+    hit: (x, y) => hitTest(x, y), canvas, ruler, addLayerAction,
+    setSectionType, splitSectionAt, mergeSectionWithNext, regenerateSingleSection,
     clipScreenRect: (layerIndex, clip) => clipRect(layerIndex, clip),
     selectAll() { setSelection(tl().layers.flatMap(l => l.clips.map(c => ({ layerId: l.id, clipId: c.id })))); },
     clearSolo() { state.solo.clear(); renderHeads(); requestDraw(); }

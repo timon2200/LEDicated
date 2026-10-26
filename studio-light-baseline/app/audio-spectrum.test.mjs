@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { computeSpectrum, bandPosition, bandHz, rangeLevel, SPECTRUM_BANDS } from './audio-spectrum.mjs';
+import { computeSpectrum, bandPosition, bandHz, rangeLevel, SPECTRUM_BANDS, stemWeight, getSpectrumForSource } from './audio-spectrum.mjs';
 import { bandLevel, validateTimeline, createAutoShow, renderTimelineFrame, DEFAULT_BAND } from './timeline.mjs';
 
 const SR = 44100;
@@ -61,3 +61,54 @@ test('band clips validate and render through the shared frame function', async (
   delete clip.band;
   assert.equal(validateTimeline(timeline).valid, false);
 });
+
+test('stem weighting filters frequencies according to stem acoustic profile', () => {
+  // Bass: sub-bass is passed, treble is blocked
+  assert.ok(stemWeight('bass', 60) > 0.9);
+  assert.ok(stemWeight('bass', 1200) < 0.01);
+
+  // Vocals: speech band is passed, low sub and high cymbals are attenuated
+  assert.ok(stemWeight('vocals', 1200) > 0.85);
+  assert.ok(stemWeight('vocals', 60) < 0.05);
+  assert.ok(stemWeight('vocals', 12000) < 0.05);
+
+  // Drums: kick and snare are strong
+  assert.ok(stemWeight('drums', 80) > 0.7);
+  assert.ok(stemWeight('drums', 220) > 0.7);
+
+  // Other: highs and cymbals are passed, bass is attenuated
+  assert.ok(stemWeight('other', 8000) > 0.85);
+  assert.ok(stemWeight('other', 100) < 0.01);
+});
+
+test('getSpectrumForSource derives cached stem spectrums and drives bandLevel', async () => {
+  const sp = await computeSpectrum(tone(80, 3, 1, 2), SR, { yieldEvery: 0 });
+  const analysis = {
+    spectrum: sp,
+    features: {
+      drums: [0, 1, 0],
+      bass: [0, 1, 0],
+      vocals: [0, 0, 0],
+      hopSec: 1,
+      startSec: 0
+    }
+  };
+
+  const masterSp = getSpectrumForSource(analysis, 'master');
+  assert.equal(masterSp, sp);
+
+  const drumsSp = getSpectrumForSource(analysis, 'drums');
+  assert.ok(drumsSp && drumsSp !== masterSp);
+  assert.equal(drumsSp.source, 'drums');
+  assert.equal(getSpectrumForSource(analysis, 'drums'), drumsSp, 'cached instance is reused');
+
+  const drumBand = { ...DEFAULT_BAND, source: 'drums', lowHz: 50, highHz: 120, threshold: 0.3, releaseSec: 0 };
+  const vocalBand = { ...DEFAULT_BAND, source: 'vocals', lowHz: 50, highHz: 120, threshold: 0.3, releaseSec: 0 };
+
+  const drumHit = bandLevel(analysis, drumBand, 1.5);
+  const vocalHit = bandLevel(analysis, vocalBand, 1.5);
+
+  assert.ok(drumHit > 0.5, `drum band level should be strong: ${drumHit}`);
+  assert.ok(vocalHit < 0.1, `vocal band level should be rejected: ${vocalHit}`);
+});
+

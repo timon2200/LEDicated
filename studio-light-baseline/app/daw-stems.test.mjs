@@ -68,6 +68,11 @@ test('stems engine maintains solo, mute, volume and clean mix state', () => {
   assert.deepEqual(state.auditionBand, { lowHz: 60, highHz: 250 });
   assert.equal(state.isCleanMix, false);
 
+  // Audition EQ band with stem source
+  engine.setAuditionBand(40, 110, 'drums');
+  state = engine.getState();
+  assert.deepEqual(state.auditionBand, { lowHz: 40, highHz: 110, source: 'drums' });
+
   engine.setAuditionBand(null);
   state = engine.getState();
   assert.equal(state.auditionBand, null);

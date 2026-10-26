@@ -28,7 +28,7 @@ export const DEFAULT_PADS = Object.freeze([
   { preset: 'flash', color: [1, .7, .3, .5], intensity: .9, speed: 1, targets: 'all', mode: 'hit' },
   { preset: 'pulse', color: [.18, .35, 1, 0], intensity: .75, speed: 1, targets: 'all', mode: 'loop' },
   { preset: 'chase', color: [1, .23, .5, 0], intensity: .75, speed: 1, targets: 'all', mode: 'loop' },
-  { preset: 'strobe', color: [.7, .8, 1, .35], intensity: .55, speed: 1, targets: 'all', mode: 'hit' },
+  { preset: 'strobe', color: [1, 1, 1, 1], intensity: 1, speed: 1, targets: 'all', mode: 'hit', params: { rate: '1/8', duty: 'sharp', pattern: 'all' } },
   { preset: 'wash', color: [.12, .35, 1, 0], intensity: .55, speed: 1, targets: 'all', mode: 'loop' },
   { preset: 'spiral', color: [.75, .18, 1, 0], intensity: .7, speed: 1, targets: 'all', mode: 'loop' },
   { preset: 'center', color: [1, .35, .12, .35], intensity: .8, speed: 1, targets: ['C2'], mode: 'loop' },
@@ -39,7 +39,7 @@ const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const DRIVERS = ['none', 'drums', 'bass', 'vocals', 'other', 'band'];
 const DEFAULT_BAND = Object.freeze({ lowHz: 40, highHz: 180, threshold: .12, ceiling: .7, mode: 'follow', releaseSec: .2 });
 const timingBeats = timing => timing === 'half' ? .5 : timing === 'bar' ? 4 : timing === '2bar' ? 8 : timing === '4bar' ? 16 : 1;
-function hitDuration(pad, bpm) {
+export function hitDuration(pad, bpm) {
   const beatSec = 60 / clamp(bpm, 40, 240);
   if (pad.preset === 'chase') return Math.max(.08, beatSec * timingBeats(pad.timing) * ({ quarter: .25, half: .5, full: 1 }[pad.hitTravel] || 1) / pad.speed);
   if (pad.preset === 'spiral') {
@@ -123,7 +123,16 @@ export function createPerformance(initialPads = DEFAULT_PADS) {
       if (pending.has(index)) { pending.delete(index); return 'cancelled'; }
       if (pad.mode === 'loop' && active.has(index)) { active.delete(index); return 'stopped'; }
       if (quantize && playing) { pending.set(index, { songAt: nextBeat(songTime, bpm, beatOffsetSec, beatTimes), clockAt: clockTime }); return 'queued'; }
-      active.set(index, { start: clockTime, until: pad.mode === 'hit' ? clockTime + hitDuration(pad, bpm) : Infinity });
+      if (pad.mode === 'hit') {
+        const until = clockTime + hitDuration(pad, bpm);
+        const existing = active.get(index);
+        const prevShots = existing?.shots ? existing.shots.filter(s => clockTime < s.until) : [];
+        const newShot = { start: clockTime, until, oneShot: false, repeated: false };
+        const shots = [...prevShots.slice(-15), newShot];
+        active.set(index, { start: clockTime, until, shots });
+      } else {
+        active.set(index, { start: clockTime, until: Infinity });
+      }
       return 'started';
     },
     press(index, context = {}) {
@@ -138,12 +147,32 @@ export function createPerformance(initialPads = DEFAULT_PADS) {
       const actualIndex = held.has(index) && held.get(index).sourceIndex === index ? index : [...held].find(([, run]) => run.sourceIndex === index)?.[0];
       if (actualIndex === undefined) return 'ignored';
       const run = held.get(actualIndex); held.delete(actualIndex);
+      const pad = pads[actualIndex];
       const longPress = cancel || clockTime - run.downAt >= HOLD_THRESHOLD_SEC;
       if (run.mode === 'loop') {
         if (longPress || run.wasActive) { active.delete(actualIndex); pending.delete(actualIndex); return 'stopped'; }
         return 'latched';
       }
-      if (longPress) { active.delete(actualIndex); pending.delete(actualIndex); return 'stopped'; }
+      const activeRun = active.get(actualIndex);
+      const latestShot = activeRun?.shots?.at(-1);
+      // For chase hits, allow a single pass to finish its travel unless it already repeated while held or was explicitly cancelled
+      const shouldStopHeldHit = longPress && (cancel || pad?.preset !== 'chase' || Boolean(latestShot?.repeated));
+      if (shouldStopHeldHit) {
+        pending.delete(actualIndex);
+        if (activeRun?.shots?.length > 1) {
+          const remaining = activeRun.shots.slice(0, -1).filter(s => s.oneShot && clockTime < s.until);
+          if (remaining.length) {
+            const last = remaining.at(-1);
+            active.set(actualIndex, { start: last.start, until: last.until, shots: remaining });
+          } else {
+            active.delete(actualIndex);
+          }
+        } else {
+          active.delete(actualIndex);
+        }
+        return 'stopped';
+      }
+      if (latestShot) latestShot.oneShot = true;
       return 'one-shot';
     },
     releaseAll() {
@@ -156,10 +185,38 @@ export function createPerformance(initialPads = DEFAULT_PADS) {
         if (playing && songTime >= cue.songAt - .02) {
           pending.delete(index);
           const pad = pads[index]; if (!pad) continue;
-          active.set(index, { start: clockTime, until: pad.mode === 'hit' ? clockTime + hitDuration(pad, bpm) : Infinity });
+          if (pad.mode === 'hit') {
+            const until = clockTime + hitDuration(pad, bpm);
+            const existing = active.get(index);
+            const prevShots = existing?.shots ? existing.shots.filter(s => clockTime < s.until) : [];
+            const shots = [...prevShots.slice(-15), { start: clockTime, until, oneShot: false, repeated: false }];
+            active.set(index, { start: clockTime, until, shots });
+          } else {
+            active.set(index, { start: clockTime, until: Infinity });
+          }
         }
       }
       for (const [index, run] of active) {
+        if (run.shots && pads[index]?.mode === 'hit') {
+          const lastShot = run.shots.at(-1);
+          if (lastShot && clockTime >= lastShot.until && held.has(index)) {
+            const cycle = hitDuration(pads[index], bpm);
+            const elapsed = Math.max(0, clockTime - lastShot.start);
+            const turns = Math.max(1, Math.floor(elapsed / cycle));
+            lastShot.start += turns * cycle;
+            lastShot.until = lastShot.start + cycle;
+            lastShot.repeated = true;
+          }
+          run.shots = run.shots.filter(s => clockTime < s.until);
+          if (!run.shots.length) {
+            active.delete(index);
+          } else {
+            const latest = run.shots.at(-1);
+            run.start = latest.start;
+            run.until = latest.until;
+          }
+          continue;
+        }
         if (clockTime < run.until) continue;
         if (held.has(index) && pads[index]?.mode === 'hit') {
           const cycle = hitDuration(pads[index], bpm);
@@ -176,15 +233,44 @@ export function createPerformance(initialPads = DEFAULT_PADS) {
       const layers = [];
       for (const [index, run] of active) {
         const pad = pads[index]; if (!pad) continue;
-        if (clockTime < run.start || clockTime >= run.until) continue;
-        const life = run.until === Infinity ? 1 : clamp((run.until - clockTime) / .09, 0, 1);
-        layers.push({ id: `live-${index}`, enabled: true, opacity: pad.intensity * scale * life, blend: 'screen', clips: [{
-          id: `pad-${index}`, preset: pad.preset, startSec: run.start, durationSec: run.until === Infinity ? 86400 : run.until - run.start,
-          targets: pad.targets, color: pad.color, driver: pad.mode === 'loop' ? pad.driver : 'none', driverGain: pad.driverGain, band: pad.band,
-          driverTimeSec: songTime, speed: pad.speed, direction: pad.direction, timing: pad.timing, motionMode: pad.motionMode,
-          params: pad.preset === 'strobe' ? { rate: '1/4', duty: 'sharp', ...pad.params } : pad.params,
-          keyframes: [{ timeSec: 0, value: 1 }]
-        }] });
+        const shots = run.shots?.length ? run.shots : [{ start: run.start, until: run.until }];
+        for (let sIdx = 0; sIdx < shots.length; sIdx++) {
+          const shot = shots[sIdx];
+          if (clockTime < shot.start || clockTime >= shot.until) continue;
+          const isFiniteHit = shot.until !== Infinity;
+          const isHeldLatest = held.has(index) && sIdx === shots.length - 1;
+          const fadeWindow = (pad.preset === 'chase' && isFiniteHit) ? 0.04 : 0.09;
+          const life = !isFiniteHit || isHeldLatest || pad.preset === 'strobe'
+            ? 1
+            : clamp((shot.until - clockTime) / fadeWindow, 0, 1);
+          const clipParams = pad.preset === 'strobe'
+            ? { rate: '1/4', duty: 'sharp', ...pad.params }
+            : (pad.preset === 'chase' && isFiniteHit ? { ...pad.params, oneShot: true } : pad.params);
+          layers.push({
+            id: `live-${index}-${sIdx}`,
+            enabled: true,
+            opacity: pad.intensity * scale * life,
+            blend: 'add',
+            clips: [{
+              id: `pad-${index}-${sIdx}`,
+              preset: pad.preset,
+              startSec: shot.start,
+              durationSec: isFiniteHit ? shot.until - shot.start : 86400,
+              targets: pad.targets,
+              color: pad.color,
+              driver: pad.mode === 'loop' ? pad.driver : 'none',
+              driverGain: pad.driverGain,
+              band: pad.band,
+              driverTimeSec: songTime,
+              speed: pad.speed,
+              direction: pad.direction,
+              timing: pad.timing,
+              motionMode: pad.motionMode,
+              params: clipParams,
+              keyframes: [{ timeSec: 0, value: 1 }]
+            }]
+          });
+        }
       }
       if (!layers.length) return baseFrame;
       return renderTimelineFrame({ version: 1, durationSec: 86400, bpm: clamp(bpm, 40, 240), beatOffsetSec: 0, blackout: false, layers }, analysis, clockTime, baseFrame);

@@ -202,7 +202,25 @@ export function createStemsEngine(audioElement) {
       auditionAn.fftSize = 256;
       auditionAn.smoothingTimeConstant = 0.5;
 
-      sourceNode.connect(auditionBp);
+      // Audition inputs from master and each isolated stem
+      const inMaster = ctx.createGain();
+      const inDrums = ctx.createGain();
+      const inBass = ctx.createGain();
+      const inVocals = ctx.createGain();
+      const inOther = ctx.createGain();
+
+      sourceNode.connect(inMaster);
+      stemNodes.drums.filters.at(-1).connect(inDrums);
+      stemNodes.bass.filters.at(-1).connect(inBass);
+      stemNodes.vocals.filters.at(-1).connect(inVocals);
+      stemNodes.other.filters.at(-1).connect(inOther);
+
+      inMaster.connect(auditionBp);
+      inDrums.connect(auditionBp);
+      inBass.connect(auditionBp);
+      inVocals.connect(auditionBp);
+      inOther.connect(auditionBp);
+
       auditionBp.connect(auditionGain);
       auditionGain.connect(auditionAn);
       auditionGain.connect(masterGain);
@@ -210,6 +228,7 @@ export function createStemsEngine(audioElement) {
       auditionNodes.filter = auditionBp;
       auditionNodes.gain = auditionGain;
       auditionNodes.analyser = auditionAn;
+      auditionNodes.inGains = { master: inMaster, drums: inDrums, bass: inBass, vocals: inVocals, other: inOther };
 
       applyGains();
       return true;
@@ -233,10 +252,17 @@ export function createStemsEngine(audioElement) {
         if (stemNodes[id]?.gain) stemNodes[id].gain.gain.setValueAtTime(0, now);
       }
       if (auditionNodes.gain) auditionNodes.gain.gain.setValueAtTime(1, now);
+      const activeSrc = state.auditionBand.source || 'master';
+      for (const [src, gNode] of Object.entries(auditionNodes.inGains || {})) {
+        if (gNode?.gain) gNode.gain.setValueAtTime(src === activeSrc ? 1 : 0, now);
+      }
       return;
     }
 
     if (auditionNodes.gain) auditionNodes.gain.gain.setValueAtTime(0, now);
+    for (const gNode of Object.values(auditionNodes.inGains || {})) {
+      if (gNode?.gain) gNode.gain.setValueAtTime(0, now);
+    }
 
     if (!anyStemActive) {
       // Bit-perfect transparent dry bypass
@@ -304,17 +330,20 @@ export function createStemsEngine(audioElement) {
       applyGains();
       notify();
     },
-    setAuditionBand(lowHz, highHz) {
+    setAuditionBand(lowHz, highHz, source = 'master') {
       ensureContext();
       if (!lowHz && !highHz) {
         state.auditionBand = null;
       } else {
         const lo = Math.max(20, Math.min(20000, Number(lowHz) || 20));
         const hi = Math.max(lo + 10, Math.min(20000, Number(highHz) || 20000));
-        state.auditionBand = { lowHz: lo, highHz: hi };
+        const cleanSource = ['drums', 'bass', 'vocals', 'other'].includes(source) ? source : 'master';
+        state.auditionBand = cleanSource !== 'master'
+          ? { lowHz: lo, highHz: hi, source: cleanSource }
+          : { lowHz: lo, highHz: hi };
         if (auditionNodes.filter && ctx) {
           const center = Math.sqrt(lo * hi);
-          const bandwidth = hi - lo;
+          const bandwidth = Math.max(10, hi - lo);
           const q = Math.max(0.2, center / bandwidth);
           auditionNodes.filter.frequency.setValueAtTime(center, ctx.currentTime);
           auditionNodes.filter.Q.setValueAtTime(q, ctx.currentTime);

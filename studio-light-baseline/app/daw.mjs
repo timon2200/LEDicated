@@ -5,21 +5,24 @@
  */
 import { BAR_IDS } from './engine.mjs';
 import { createAutoShow, renderTimelineFrame, validateTimeline } from './timeline.mjs';
+import { createShowEngine } from './show-engine.mjs';
 import { createLedPreview } from './led-preview.mjs';
 import { installTooltips } from './tooltips.mjs';
 import {
-  SNAP_MODES, addClip, beatPosition, clamp, clipEnd, copyClips, createStore, deleteClips, duplicateClips, findClip, formatBBT, formatClock, normalizeTimeline,
+  SNAP_MODES, addClip, beatPosition, timeAtBeat, clamp, clipEnd, copyClips, createStore, deleteClips, duplicateClips, findClip, formatBBT, formatClock, normalizeTimeline,
   pasteClips, refKey, snapStepSec, uid
 } from './daw-state.mjs';
+import { applyTimelineOp } from './daw-remote.mjs';
 import { createKnob, createDragNumber, h, hexToRgb, showMenu, toast, closeMenu } from './daw-ui.mjs';
 import { createPlaylist, LANE_HEIGHTS, PRESET_LABELS } from './daw-playlist.mjs';
 import { createClipEditor } from './daw-editor.mjs';
 import { createDriverEditor } from './daw-driver.mjs';
-import { computeSpectrum } from './audio-spectrum.mjs';
+import { computeSpectrum, getSpectrumForSource } from './audio-spectrum.mjs';
 import { createMixer } from './daw-mixer.mjs';
 import { createStemsEngine } from './daw-stems.mjs';
 import { createLive } from './daw-live.mjs';
 import { createPerformancePanel } from './daw-performance.mjs';
+import { createSessionRecorder } from './live-session-recorder.mjs';
 import { PAD_KEYS } from './live-performance-state.mjs';
 import { createOutput } from './daw-output.mjs';
 import { createBrowser, libraryApi } from './daw-browser.mjs';
@@ -28,6 +31,7 @@ import { detectSections } from './audio-sections.mjs';
 const now = () => performance.now() / 1000;
 const ICONS = {
   play: '<path d="M4 2.5v11l9-5.5z"/>', pause: '<path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/>', stop: '<rect x="3.5" y="3.5" width="9" height="9" rx="1"/>',
+  record: '<circle cx="8" cy="8" r="5.2"/>',
   loop: '<path d="M3 9V7a3 3 0 0 1 3-3h6M10 1.5 12.5 4 10 6.5M13 7v2a3 3 0 0 1-3 3H4M6 9.5 3.5 12 6 14.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
   follow: '<path d="M3 2.5v11M6 8h7M10 5l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
   undo: '<path d="M6 3 2.5 6.5 6 10M3 6.5h6.5a3.5 3.5 0 0 1 0 7H6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -53,6 +57,7 @@ const bbtEl = h('div', { id: 'bbt', class: 'lcd-main', 'aria-label': 'Takt:beat:
 const clockEl = h('div', { id: 'clock', class: 'lcd-sub' }, '0:00.000');
 const playBtn = h('button', { type: 'button', id: 'play', class: 'tbtn play', title: 'Reproduciraj / pauziraj (Space)', 'aria-label': 'Reproduciraj', disabled: true }, icon('play'));
 const stopBtn = h('button', { type: 'button', id: 'stop', class: 'tbtn', title: 'Stop: vrati na mjesto starta; drugi put na početak', 'aria-label': 'Stop' }, icon('stop'));
+const recBtn = h('button', { type: 'button', id: 'rec', class: 'tbtn rec', title: 'Snimaj live izvedbu (⇧R). Bilježi padove i promjene postavki na vremensku traku.', 'aria-label': 'Snimaj izvedbu', 'aria-pressed': 'false', disabled: true }, icon('record'));
 const loopBtn = h('button', { type: 'button', id: 'loop', class: 'tbtn', title: 'Loop regije (L). Povuci po donjem pojasu ravnala za regiju.', 'aria-pressed': 'false', 'aria-label': 'Loop' }, icon('loop'));
 const followBtn = h('button', { type: 'button', id: 'follow', class: 'tbtn on', title: 'Prati playhead (F)', 'aria-pressed': 'true', 'aria-label': 'Prati playhead' }, icon('follow'));
 const undoBtn = h('button', { type: 'button', id: 'undo', class: 'tbtn', title: 'Poništi (⌘Z)', 'aria-label': 'Poništi', disabled: true }, icon('undo'));
@@ -61,7 +66,60 @@ const saveBtn = h('button', { type: 'button', id: 'save', class: 'tbtn', title: 
 const snapSelect = h('select', { id: 'snap', 'aria-label': 'Snap', title: 'Preciznost poravnanja na beat' }, Object.entries(SNAP_MODES).map(([value, label]) => h('option', { value, selected: value === '1' }, label)));
 const gridBtn = h('button', { type: 'button', id: 'grid-menu', class: 'txt-btn', title: 'Tempo i mreža pjesme' }, 'Mreža ▾');
 const toolButtons = TOOLS.map(([id, label, key, tip]) => h('button', { type: 'button', class: 'tbtn tool', dataset: { tool: id }, title: `${label} (${key}). ${tip}`, 'aria-label': label, 'aria-pressed': 'false' }, icon(id)));
-const trackTitle = h('div', { id: 'project-title', class: 'track-title' }, 'Nema odabrane pjesme');
+const trackTitleName = h('span', { class: 'tl-name' }, 'Nema odabrane pjesme');
+const trackTitleBpm = h('span', { class: 'tl-bpm-badge', hidden: true }, '');
+const trackTitle = h('button', {
+  type: 'button',
+  id: 'project-title',
+  class: 'track-launcher-pill',
+  title: 'Katalog pjesama i show launcher (⌘O)',
+  'aria-label': 'Katalog pjesama',
+  onClick: () => browser.openLauncher?.()
+},
+  h('span', { class: 'tl-icon' }, '🎵'),
+  trackTitleName,
+  trackTitleBpm,
+  h('span', { class: 'tl-chevron' }, '⊞ ▾')
+);
+function updateTrackTitle(title, bpm = null) {
+  trackTitleName.textContent = title || 'Nema odabrane pjesme';
+  if (bpm && bpm >= 40) {
+    trackTitleBpm.hidden = false;
+    trackTitleBpm.textContent = `${Math.round(bpm)} BPM`;
+  } else {
+    trackTitleBpm.hidden = true;
+  }
+}
+const clientId = (() => {
+  try {
+    let cid = sessionStorage.getItem('ledicated-client-id');
+    if (!cid) {
+      cid = `peer-${uid()}-${Math.random().toString(36).slice(2, 6)}`;
+      sessionStorage.setItem('ledicated-client-id', cid);
+    }
+    return cid;
+  } catch {
+    return `peer-${uid()}`;
+  }
+})();
+let clientName = (() => {
+  try {
+    return localStorage.getItem('ledicated-user-name') || `DJ-${clientId.slice(-4).toUpperCase()}`;
+  } catch {
+    return `DJ-${clientId.slice(-4).toUpperCase()}`;
+  }
+})();
+window.ledicatedClientId = clientId;
+window.ledicatedClientName = clientName;
+window.ledicatedIsStageOwner = true;
+window.ledicatedPeerCount = 1;
+
+const lanBtn = h('button', {
+  type: 'button',
+  id: 'lan-open',
+  class: 'txt-btn lan-btn on-air',
+  title: 'Uredski LAN, Stage kontrola (ON AIR / SOLO) i dijeljenje showova'
+}, '🌐 LAN · ON AIR');
 const blackoutBtn = h('button', { type: 'button', id: 'blackout', class: 'blackout', 'aria-pressed': 'false', title: 'Blackout: sve ugasi i isključi izlaz (Esc)' }, 'BLACKOUT ', h('kbd', {}, 'Esc'));
 const statusEl = h('span', { id: 'status', role: 'status', 'aria-live': 'polite' }, 'Odaberi ili povuci pjesmu za početak.');
 const selectionEl = h('span', { id: 'selection-info' }), saveEl = h('span', { id: 'save-state', class: 'save-ok' }, 'Spremljeno');
@@ -98,18 +156,18 @@ const bpmTapBtn = h('button', {
 }, 'TAP');
 
 const bpmNumber = createDragNumber({ id: 'bpm', label: 'BPM', value: 120, min: 40, max: 240, step: .5, decimals: 1, onChange: v => { if (!hasTrack()) return; store.commit('Tempo', t => { t.bpm = v; t.gridMode = 'manual'; }); updateGridButton(); } });
-const masterKnob = createKnob({ label: 'MASTER', value: 35, min: 0, max: 60, step: 1, size: 40, reset: 35, format: v => `${Math.round(v)}%`, title: 'Master svjetlina; ograničeno na 60. Vizualni limit, ne zaštita napajanja.', onInput: v => { live.setBrightness(v); mixer.setMaster(v); } });
+const masterKnob = createKnob({ label: 'MASTER', value: 70, min: 0, max: 100, step: 1, size: 40, reset: 70, warnAbove: 70, format: v => `${Math.round(v)}%`, title: 'Master svjetlina (0–100%). Crveno iznad 70% označava visoku snagu.', onInput: v => { live.setBrightness(v); mixer.setMaster(v); } });
 
 const header = h('header', { class: 'topbar' },
   h('div', { class: 'brand' }, h('span', { class: 'mark' }, 'L', h('i', {}, '•')), h('div', {}, h('strong', {}, 'LEDicated'), h('small', {}, 'SHOW STUDIO'))),
-  h('div', { class: 'tgroup transport' }, stopBtn, playBtn, loopBtn, followBtn),
+  h('div', { class: 'tgroup transport' }, stopBtn, playBtn, recBtn, loopBtn, followBtn),
   h('div', { class: 'lcd', title: 'Takt:beat:tik i vrijeme' }, bbtEl, clockEl),
   h('div', { class: 'tgroup' }, bpmNumber.element, bpmTapBtn, gridBtn),
   h('div', { class: 'tgroup' }, h('span', { class: 'glabel' }, icon('magnet')), snapSelect),
   h('div', { class: 'tgroup tools', role: 'group', 'aria-label': 'Alati' }, toolButtons),
   h('div', { class: 'tgroup' }, undoBtn, redoBtn, saveBtn),
   trackTitle,
-  h('div', { class: 'tgroup right' }, masterKnob.element, badge, h('button', { type: 'button', id: 'out-open', class: 'txt-btn', title: 'Postavke izlaza i kalibracija' }, 'Izlaz'), h('button', { type: 'button', id: 'help-open', class: 'tbtn', title: 'Prečaci tipkovnice (?)', 'aria-label': 'Prečaci' }, icon('help')), blackoutBtn));
+  h('div', { class: 'tgroup right' }, masterKnob.element, badge, lanBtn, h('button', { type: 'button', id: 'out-open', class: 'txt-btn', title: 'Postavke izlaza i kalibracija' }, 'Izlaz'), h('button', { type: 'button', id: 'help-open', class: 'tbtn', title: 'Prečaci tipkovnice (?)', 'aria-label': 'Prečaci' }, icon('help')), blackoutBtn));
 
 header.addEventListener('wheel', event => {
   if (header.scrollWidth > header.clientWidth) {
@@ -143,7 +201,7 @@ const stageSection = h('div', { class: 'stage-section' }, stage);
 const powerValue = h('span', { class: 'tele-num' }, '8 W');
 const powerPct = h('span', { class: 'tele-pct' }, '2% / 400W');
 const powerBar = h('div', { class: 'tele-fill power' });
-const powerMeter = h('div', { class: 'tele-bar', title: 'Procjena potrošnje WS2814 traka i 5 čvorova' }, powerBar);
+const powerMeter = h('div', { class: 'tele-bar', title: 'Procjena potrošnje 24 V WS2814 traka i kontrolera' }, powerBar);
 
 const vuR = h('div', { class: 'tele-fill r' });
 const vuG = h('div', { class: 'tele-fill g' });
@@ -154,7 +212,7 @@ const meterG = h('div', { class: 'tele-bar mini', title: 'Zeleni kanal (G)' }, v
 const meterB = h('div', { class: 'tele-bar mini', title: 'Plavi kanal (B)' }, vuB);
 const meterW = h('div', { class: 'tele-bar mini', title: 'Topla bijela (W)' }, vuW);
 
-const teleNodes = h('span', { class: 'tele-tag' }, '5 ČVOROVA · 648 LED');
+const teleNodes = h('span', { class: 'tele-tag' }, '1 KONTROLER · 648 LED');
 const teleMode = h('span', { class: 'tele-tag mode' }, 'SIMULACIJA');
 
 const telemetrySection = h('div', { class: 'stage-telemetry' },
@@ -234,6 +292,7 @@ for (const bar of document.querySelectorAll('.splitter')) {
 const audio = new Audio(); audio.preload = 'auto';
 const stemsEngine = createStemsEngine(audio);
 const store = createStore(emptyTimeline());
+const showEngine = createShowEngine({ fps: 60, lookaheadSec: 25, lookbehindSec: 2 });
 const s = { track: null, analysis: null, scrubSec: 0, playFrom: 0, loop: null, loopOn: false, follow: true, tool: 'draw', activeLayer: 0, token: 0, dock: 'clip', audioMuted: false, volume: 1, clipboard: null, brush: { preset: 'pulse', driver: 'none', driverGain: 1, targets: 'all' }, frozenSec: null, iso: { clip: false, bypass: false }, spectrumState: 'none', saveTimer: 0, pendingSave: null, lastLevels: 0, lastActive: 0, mixerStale: true };
 const tl = () => store.timeline;
 const hasTrack = () => Boolean(s.track && s.analysis);
@@ -243,10 +302,40 @@ const snapMode = () => snapSelect.value === 'none' || snapSelect.value === 'bar'
 
 const liveHost = h('div', { class: 'live-grid' }); livePane.append(liveHost);
 const live = createLive(liveHost, { now, status });
+live.setBrightness(masterKnob.value);
 const preview = createLedPreview(stage.querySelector('#bar-grid'), stageSection);
 const outputHost = h('div', { class: 'live-grid' }); outputPane.append(outputHost);
-const output = createOutput(outputHost, { badge, status, isBlackout: () => live.engine.state.blackout, onConfig: config => preview.configure(config) });
-live.setBrightness(35);
+const output = createOutput(outputHost, {
+  badge,
+  status,
+  isBlackout: () => live.engine.state.blackout,
+  onConfig: config => {
+    preview.configure(config);
+    if (config) {
+      const nodeCount = config.nodes?.length || 1;
+      const ledCount = (config.bars || []).reduce((sum, bar) => sum + (bar.physicalLeds || 72), 0) || 648;
+      const nodeWord = nodeCount === 1 ? 'KONTROLER' : 'KONTROLERA';
+      teleNodes.textContent = `${nodeCount} ${nodeWord} · ${ledCount} LED`;
+    }
+  }
+});
+let recorder;
+recorder = createSessionRecorder({
+  store,
+  desk: null,
+  getTime: songTime,
+  getBpm: () => hasTrack() ? tl().bpm : live.engine.clock.bpm,
+  isPlaying: () => !audio.paused && hasTrack(),
+  hasTrack,
+  onStateChange: ({ armed, recording }) => {
+    recBtn.classList.toggle('on', armed);
+    recBtn.classList.toggle('rec-active', recording);
+    recBtn.setAttribute('aria-pressed', String(armed));
+    performDesk?.syncRecState?.({ armed, recording });
+  },
+  status
+});
+
 const performDesk = createPerformancePanel(performancePane, {
   status, songTime, clockTime: now, playing: () => !audio.paused && hasTrack(), hasTrack,
   bpm: () => hasTrack() ? tl().bpm : live.engine.clock.bpm,
@@ -255,35 +344,39 @@ const performDesk = createPerformancePanel(performancePane, {
   analysis: () => s.analysis, duration, trackId: () => s.track?.id || null,
   trackTitle: () => s.track?.title || s.track?.originalName || '',
   seek, commitSeek, setLoop, loop: () => s.loop ? { ...s.loop, on: s.loopOn } : null,
-  blackout: () => live.engine.state.blackout
+  blackout: () => live.engine.state.blackout,
+  recorder,
+  toggleRecord: () => recBtn.click()
 });
+recorder.desk = performDesk.desk;
+
+recBtn.onclick = () => {
+  if (!hasTrack()) return status('Odaberi pjesmu prije snimanja izvedbe.');
+  recorder.toggleArmed();
+  if (recorder.isArmed && audio.paused) {
+    togglePlay();
+  }
+};
 
 /* --------------------------------------------------------------- playhead */
 function syncPlay() {
   const playing = !audio.paused;
   playBtn.replaceChildren(icon(playing ? 'pause' : 'play')); playBtn.classList.toggle('on', playing);
   playBtn.setAttribute('aria-label', playing ? 'Pauziraj' : 'Reproduciraj'); playBtn.disabled = !s.track;
+  recBtn.disabled = !s.track;
 }
 let scrubWasPlaying = false;
+let playPending = false;
 let audioSeekTimer = null;
 
 function seek(sec, isScrubbing = false) {
+  live.clearExternal?.();
+  if (recorder?.isRecording) recorder.handleSeek(sec);
   s.scrubSec = clamp(sec || 0, 0, duration());
   if (isScrubbing && !audio.paused) {
     scrubWasPlaying = true;
     audio.pause();
   }
-  playlist.redraw();
-  if (s.dock === 'clip') editor.draw();
-  const time = songTime();
-  const text = formatBBT(hasTrack() ? Math.max(0, beatPosition(time, tl(), s.analysis)) : 0) + '|' + formatClock(time);
-  if (text !== lastText) {
-    lastText = text;
-    const [bbt, clock] = text.split('|');
-    bbtEl.textContent = bbt;
-    clockEl.textContent = clock;
-  }
-  if (hasTrack()) updateActiveNow(time);
   if (s.track) {
     if (isScrubbing) {
       if (!audioSeekTimer) {
@@ -297,14 +390,26 @@ function seek(sec, isScrubbing = false) {
       try { audio.currentTime = s.scrubSec; } catch {}
     }
   }
-  playlist.ensureVisible(s.scrubSec);
+  playlist.redraw();
+  if (s.dock === 'clip' || s.dock === 'envelope') editor.draw();
+  const time = s.scrubSec;
+  const text = formatBBT(hasTrack() ? Math.max(0, beatPosition(time, tl(), s.analysis)) : 0) + '|' + formatClock(time);
+  if (text !== lastText) {
+    lastText = text;
+    const [bbt, clock] = text.split('|');
+    bbtEl.textContent = bbt;
+    clockEl.textContent = clock;
+  }
+  if (hasTrack()) updateActiveNow(time);
+  if (!isScrubbing) playlist.ensureVisible(s.scrubSec);
 }
 
-function commitSeek() {
+function commitSeek(sec) {
+  if (Number.isFinite(sec)) seek(sec, false);
   if (audioSeekTimer) { clearTimeout(audioSeekTimer); audioSeekTimer = null; }
   if (s.track) { try { audio.currentTime = s.scrubSec; } catch {} }
   playlist.redraw();
-  if (s.dock === 'clip') editor.draw();
+  if (s.dock === 'clip' || s.dock === 'envelope') editor.draw();
   if (scrubWasPlaying) {
     scrubWasPlaying = false;
     audio.play().catch(() => {});
@@ -314,11 +419,18 @@ function commitSeek() {
 
 async function togglePlay() {
   if (!s.track) return;
+  live.clearExternal?.();
   stemsEngine.ensureContext();
   if (audio.paused) {
     s.playFrom = s.scrubSec; audio.currentTime = s.scrubSec;
-    try { await audio.play(); } catch (error) { toast(`Reprodukcija nije uspjela: ${error.message}`, 'error'); }
+    playPending = true;
+    try {
+      await audio.play();
+      if (recorder?.isArmed) recorder.startRecording();
+    } catch (error) { toast(`Reprodukcija nije uspjela: ${error.message}`, 'error'); }
+    finally { playPending = false; }
   } else {
+    if (recorder?.isRecording) recorder.stopRecording();
     audio.pause();
     s.scrubSec = audio.currentTime;
     playlist.redraw();
@@ -326,11 +438,13 @@ async function togglePlay() {
   syncPlay();
 }
 function stop() {
+  live.clearExternal?.();
+  if (recorder?.isRecording) recorder.stopRecording();
   if (!audio.paused) { audio.pause(); seek(s.playFrom); } else seek(0);
   syncPlay();
 }
-audio.onplay = audio.onpause = syncPlay;
-audio.onended = () => { s.scrubSec = 0; syncPlay(); playlist.redraw(); };
+audio.onplay = audio.onpause = () => { syncPlay(); liveSync?.sendLiveState?.(); };
+audio.onended = () => { if (recorder?.isRecording) recorder.stopRecording(); s.scrubSec = 0; syncPlay(); playlist.redraw(); };
 audio.onloadedmetadata = () => { if (audio.paused) audio.currentTime = s.scrubSec; playlist.redraw(); };
 playBtn.onclick = togglePlay; stopBtn.onclick = stop;
 
@@ -359,6 +473,13 @@ const playlist = createPlaylist(playlistHost, {
   isAudioMuted: () => audio.muted, toggleAudioMute: () => { audio.muted = !audio.muted; }, getVolume: () => audio.volume, setVolume: v => { audio.volume = clamp(v, 0, 1); },
   getActiveLayerIndex: () => s.activeLayer, setActiveLayer: index => { if (s.activeLayer !== index) { s.activeLayer = index; playlist.updateActiveHead?.(index); playlist.redraw(); if (s.dock === 'mixer') mixer.render(); } },
   status, newClipSpec, getLoop: () => s.loop, setLoop, isLoopOn: () => s.loopOn,
+  getThemeOptions: () => browser?.getThemeOptions?.() || {},
+  onSectionsChange: sections => {
+    if (s.track?.id && s.analysis) {
+      s.analysis.sections = sections;
+      libraryApi('sections', { id: s.track.id, sections }).catch(err => toast(err.message, 'error'));
+    }
+  },
   onSelect: refs => { editor.render(); selectionInfo(refs); const hit = refs[0] && findClip(tl(), refs[0]); if (hit) s.brush = { preset: hit.clip.preset, driver: hit.clip.driver, driverGain: hit.clip.driverGain, band: hit.clip.band ? { ...hit.clip.band } : null, targets: hit.clip.targets === 'all' ? 'all' : [...hit.clip.targets] }; },
   onStructure: () => structureChanged(), openEditor: () => switchDock('clip'), onSolo: () => { playlist.redraw(); if (s.dock === 'mixer') mixer.render(); }
 });
@@ -382,7 +503,13 @@ const driverEditor = createDriverEditor(driverPane, {
   store, stems: stemsEngine, getSelection: () => playlist.selection, getAnalysis: () => s.analysis, getTime: songTime, duration, status,
   spectrumStatus: () => s.spectrumState === 'error' ? 'Spektar nije dostupan: audio se nije dekodirao.' : s.spectrumState === 'none' ? 'Odaberi pjesmu.' : `Računam spektar pjesme… ${Math.round((s.spectrumProgress || 0) * 100)}%`
 });
-const editor = { render() { clipEditor.render(); driverEditor.render(); }, draw() { clipEditor.draw(); driverEditor.draw(); } };
+const editor = {
+  render() { clipEditor.render(); driverEditor.render(); },
+  draw() {
+    if (!envPane.hidden) clipEditor.draw();
+    if (!driverPane.hidden) driverEditor.draw();
+  }
+};
 const mixer = createMixer(mixerPane, { store, playlist, stems: stemsEngine, getActiveLayerIndex: () => s.activeLayer, setActiveLayer: index => { s.activeLayer = index; playlist.updateActiveHead?.(index); playlist.redraw(); mixer.render(); }, getBrightness: () => masterKnob.value, setBrightness: v => { masterKnob.set(v); live.setBrightness(v); }, onStructure: () => playlist.renderHeads(), onSolo: () => { playlist.renderHeads(); playlist.redraw(); } });
 
 function structureChanged() { s.mixerStale = true; if (s.dock === 'mixer') { mixer.render(); s.mixerStale = false; } }
@@ -404,13 +531,18 @@ async function flushSave() {
   s.pendingSave = null; clearTimeout(s.saveTimer);
   const check = validateTimeline(pending.snapshot);
   if (!check.valid) { setSaveState('Nije spremljeno', 'err'); status(`Show nije valjan: ${check.errors[0]}`); return; }
-  try { await libraryApi('timeline', { id: pending.id, timeline: pending.snapshot }); if (!s.pendingSave) setSaveState('Spremljeno', 'ok'); }
+  try {
+    await libraryApi('timeline', { id: pending.id, timeline: pending.snapshot, clientId, author: clientName });
+    if (!s.pendingSave) setSaveState('Spremljeno', 'ok');
+  }
   catch (error) { setSaveState('Nije spremljeno', 'err'); status(error.message); toast(`Spremanje nije uspjelo: ${error.message}`, 'error'); }
 }
 saveBtn.onclick = () => { flushSave().then(() => toast('Show spremljen.')); };
-addEventListener('pagehide', () => { const p = s.pendingSave; if (p) navigator.sendBeacon('/api/library/timeline', new Blob([JSON.stringify({ id: p.id, timeline: p.snapshot })], { type: 'application/json' })); });
+addEventListener('pagehide', () => { const p = s.pendingSave; if (p) navigator.sendBeacon('/api/library/timeline', new Blob([JSON.stringify({ id: p.id, timeline: p.snapshot, clientId, author: clientName })], { type: 'application/json' })); });
 
+let timelineVersion = 1;
 store.subscribe(kind => {
+  timelineVersion++;
   if (kind === 'transient') { playlist.redraw(); editor.draw(); return; }
   playlist.pruneSelection(); playlist.renderHeads(); editor.render(); structureChanged(); updateHistoryButtons(); updateGridButton(); selectionInfo(); playlist.redraw();
   if (kind === 'change') scheduleSave();
@@ -446,7 +578,7 @@ async function selectTrack(id) {
     store.replace(normalizeTimeline(timeline));
   } else store.replace(emptyTimeline());
   s.activeLayer = 0; playlist.setSelection([], false); playlist.fit(); playlist.renderHeads(); editor.render(); mixer.render(); updateHistoryButtons(); updateGridButton(); selectionInfo();
-  trackTitle.textContent = s.track.title || s.track.originalName || 'Pjesma'; browser.setActive(id); syncPlay(); setSaveState('Spremljeno', 'ok');
+  updateTrackTitle(s.track.title || s.track.originalName || 'Pjesma', s.analysis?.bpm || tl()?.bpm); browser.setActive(id); syncPlay(); setSaveState('Spremljeno', 'ok');
   const initialTime = parseFloat(new URLSearchParams(window.location.search).get('t') || window.location.hash.slice(1));
   if (!isNaN(initialTime) && initialTime > 0) seek(initialTime);
   status(s.analysis ? `Analizirano · ${Math.round(s.analysis.bpm || 0)} BPM · ${s.analysis.sections?.length || 0} dionica · 4 stema.` : 'Pjesma čeka lokalnu analizu.');
@@ -461,14 +593,15 @@ async function analyze(id) {
     s.analysis = result.analysis; ensureSpectrum(); const timeline = normalizeTimeline(createAutoShow(s.analysis));
     await libraryApi('timeline', { id, timeline }); store.replace(timeline);
     playlist.fit(); playlist.renderHeads(); editor.render(); mixer.render(); updateGridButton(); browser.refresh();
+    updateTrackTitle(s.track.title || s.track.originalName || 'Pjesma', s.analysis?.bpm || tl()?.bpm);
     status(`Analiza gotova · ${Math.round(s.analysis.bpm)} BPM. Show je editabilan.`);
   } catch (error) { status(`Analiza nije uspjela: ${error.message}`); toast(`Analiza nije uspjela: ${error.message}`, 'error'); }
 }
-function generateShow({ energy, palette }) {
+function generateShow(opts = {}) {
   if (!hasTrack()) return status('Najprije odaberi analiziranu pjesmu.');
-  const result = store.commit('Auto show', t => { const fresh = normalizeTimeline(createAutoShow(s.analysis, { energy, palette })); t.layers = fresh.layers; });
+  const result = store.commit('Auto show', t => { const fresh = normalizeTimeline(createAutoShow(s.analysis, opts)); t.layers = fresh.layers; });
   if (result.error) return status(result.error);
-  s.activeLayer = 0; playlist.setSelection([]); status('Auto show je generiran. Poništi s ⌘Z ako ti se više sviđao prethodni.');
+  s.activeLayer = 0; playlist.setSelection([]); status('Auto show s temom je generiran. Poništi s ⌘Z ako ti se više sviđao prethodni.');
 }
 function addPreset(preset) {
   if (!hasTrack()) return status('Najprije odaberi pjesmu.');
@@ -485,8 +618,8 @@ const browser = createBrowser(browserHost, {
   isPerforming: () => s.dock === 'perform',
   onToggleCollapse: () => toggleSidePanel('--browser-w', 260),
   reanalyze: async id => { if (s.track?.id !== id) await selectTrack(id); await analyze(id); },
-  onDeleted: id => { if (s.track?.id === id) { s.track = null; s.analysis = null; audio.pause(); audio.removeAttribute('src'); store.replace(emptyTimeline()); trackTitle.textContent = 'Nema odabrane pjesme'; playlist.renderHeads(); editor.render(); syncPlay(); playlist.redraw(); } },
-  onRenamed: id => { if (s.track?.id === id) browser.refresh().then(tracks => { const t = tracks.find(x => x.id === id); if (t) { s.track = { ...s.track, ...t }; trackTitle.textContent = t.title; playlist.renderHeads(); } }); }
+  onDeleted: id => { if (s.track?.id === id) { s.track = null; s.analysis = null; audio.pause(); audio.removeAttribute('src'); store.replace(emptyTimeline()); updateTrackTitle('Nema odabrane pjesme'); playlist.renderHeads(); editor.render(); syncPlay(); playlist.redraw(); } },
+  onRenamed: id => { if (s.track?.id === id) browser.refresh().then(tracks => { const t = tracks.find(x => x.id === id); if (t) { s.track = { ...s.track, ...t }; updateTrackTitle(t.title, s.analysis?.bpm || tl()?.bpm); playlist.renderHeads(); } }); }
 });
 
 /* -------------------------------------------------------------- tempo/grid */
@@ -527,7 +660,14 @@ const spectrumCache = new Map();
 let spectrumDraw = 0;
 async function ensureSpectrum() {
   const id = s.track?.id, analysis = s.analysis; if (!id || !analysis || analysis.spectrum) return;
-  if (spectrumCache.has(id)) { analysis.spectrum = spectrumCache.get(id); s.spectrumState = 'ready'; editor.render(); return; }
+  if (spectrumCache.has(id)) {
+    const cached = spectrumCache.get(id);
+    analysis.spectrum = cached.spectrum;
+    if (cached.stemSpectrums) analysis.stemSpectrums = cached.stemSpectrums;
+    s.spectrumState = 'ready';
+    editor.render();
+    return;
+  }
   s.spectrumState = 'loading'; s.spectrumProgress = 0;
   try {
     const response = await fetch(`/api/library/audio/${id}`); if (!response.ok) throw new Error(`audio ${response.status}`);
@@ -536,10 +676,26 @@ async function ensureSpectrum() {
     if (s.track?.id !== id) return;
     const mono = new Float32Array(decoded.length), channels = decoded.numberOfChannels;
     for (let c = 0; c < channels; c++) { const data = decoded.getChannelData(c); for (let i = 0; i < mono.length; i++) mono[i] += data[i] / channels; }
-    const spectrum = await computeSpectrum(mono, decoded.sampleRate, { onProgress: p => { s.spectrumProgress = p; if (performance.now() - spectrumDraw > 250) { spectrumDraw = performance.now(); driverEditor.draw(); } } });
-    spectrumCache.set(id, spectrum);
+    s.analysis.pcmMono = mono; s.analysis.pcmSampleRate = decoded.sampleRate; playlist.redraw();
+    const spectrum = await computeSpectrum(mono, decoded.sampleRate, { onProgress: p => { s.spectrumProgress = p; if (performance.now() - spectrumDraw > 250) { spectrumDraw = performance.now(); if (!driverPane.hidden) driverEditor.draw(); } } });
     if (s.track?.id !== id) return;
-    s.analysis.spectrum = spectrum; s.spectrumState = 'ready'; editor.render(); playlist.redraw();
+    // Pre-build stem spectrums across macrotask turns BEFORE exposing analysis.spectrum so render frames never stall
+    const tempAnalysis = { ...s.analysis, spectrum, stemSpectrums: {} };
+    for (const stemKey of ['drums', 'bass', 'vocals', 'other']) {
+      await new Promise(r => setTimeout(r, 0));
+      if (s.track?.id !== id) return;
+      getSpectrumForSource(tempAnalysis, stemKey);
+    }
+    if (spectrumCache.size >= 2) {
+      const oldestKey = spectrumCache.keys().next().value;
+      if (oldestKey !== undefined) spectrumCache.delete(oldestKey);
+    }
+    spectrumCache.set(id, { spectrum, stemSpectrums: tempAnalysis.stemSpectrums });
+    s.analysis.stemSpectrums = tempAnalysis.stemSpectrums;
+    s.analysis.spectrum = spectrum;
+    s.spectrumState = 'ready';
+    editor.render();
+    playlist.redraw();
   } catch (error) { console.error(error); s.spectrumState = 'error'; editor.render(); }
 }
 
@@ -588,7 +744,7 @@ function switchDock(id) {
   if (id === 'mixer') { mixer.render(); s.mixerStale = false; }
   if (id === 'clip' || id === 'driver' || id === 'envelope') editor.render();
 }
-document.getElementById('out-open').onclick = () => switchDock('output');
+document.getElementById('out-open').onclick = () => output.openSettings();
 const performOpen = h('button', { type: 'button', id: 'perform-open', class: 'txt-btn', title: 'Otvori izvedbeni board (tipka P)', onClick: () => switchDock('perform') }, 'LIVE BOARD');
 document.getElementById('out-open').before(performOpen);
 switchDock('clip'); setTool('draw'); updateHistoryButtons(); updateGridButton();
@@ -616,12 +772,27 @@ function nudgeSelection(direction) {
 }
 
 /* ---------------------------------------------------------------- blackout */
+let wasArmedBeforeBlackout = false;
 async function blackout() {
   const active = !live.engine.state.blackout; live.setBlackout(active);
-  if (active) performDesk.clear();
+  if (active) {
+    if (recorder?.isRecording) recorder.stopRecording();
+    performDesk.clear();
+  }
   blackoutBtn.setAttribute('aria-pressed', String(active)); blackoutBtn.classList.toggle('on', active);
-  if (active) { output.disarm(); await output.blackout(); toast('Blackout · izlaz je isključen. Za nastavak ponovno uključi izlaz.', 'error'); status('Blackout aktivan.'); }
-  else status('Blackout otpušten.');
+  if (active) {
+    wasArmedBeforeBlackout = output.armed;
+    output.disarm();
+    await output.blackout();
+    status('Blackout aktivan.');
+  } else {
+    if (wasArmedBeforeBlackout) {
+      wasArmedBeforeBlackout = false;
+      await output.setArmed(true).catch(e => toast(e.message, 'error'));
+    }
+    status('Blackout otpušten.');
+  }
+  output.render();
 }
 blackoutBtn.onclick = blackout;
 
@@ -631,17 +802,337 @@ const help = h('dialog', { id: 'gesture-help', class: 'help' },
   h('dl', {}, [
     ['Space', 'Reproduciraj / pauziraj'], ['Home / End', 'Početak / kraj pjesme'], ['← / →', 'Pomakni odabrane clipove za snap korak (bez odabira: kadar playheada); ⇧ = 1 s'], ['1 · 2 · 3 · 4', 'Alati: Crtaj, Odaberi, Podijeli, Briši'],
     ['⌘Z · ⇧⌘Z', 'Poništi / ponovi'], ['⌘C · ⌘X · ⌘V', 'Kopiraj / izreži / zalijepi na playhead'], ['⌘D', 'Dupliciraj odabrano iza sebe'], ['⌘A', 'Odaberi sve clipove'], ['⌫ / Delete', 'Obriši odabrano'], ['⌘S', 'Spremi odmah'],
-    ['L · F', 'Loop uključi/isključi · Prati playhead'], ['P', 'Otvori Live board'], ['Q W E R / A S D F / Z X C V', 'Kratko: udar ili uključi/isključi petlju. Drži: efekt traje do otpuštanja. Radi u svim panelima.'], ['+ / − / 0', 'Zoom · prikaži cijelu pjesmu'], ['Esc', 'Blackout'],
+    ['L · F', 'Loop uključi/isključi · Prati playhead'], ['⇧R', 'Snimaj live izvedbu (toggle recording)'], ['P', 'Otvori Live board'], ['Q W E R / A S D F / Z X C V', 'Kratko: udar ili uključi/isključi petlju. Drži: efekt traje do otpuštanja. Radi u svim panelima.'], ['+ / − / 0', 'Zoom · prikaži cijelu pjesmu'], ['Esc', 'Blackout uključi / isključi'],
     ['Pinch / ⌘ + kotačić', 'Zoom oko pokazivača'], ['Dva prsta lijevo/desno', 'Pomak playlista'], ['⌥ + povuci clip', 'Dupliciraj dok pomičeš'], ['Desni klik na clip', 'Obriši clip'], ['Dvaput klik na clip', 'Otvori u uredniku'], ['Envelope: dvaput klik', 'Nova točka (keyframe)'], ['Envelope: desni klik ili ⌥ + klik', 'Obriši točku'], ['⇧ dok povlačiš točku', 'Fino pomicanje bez snapa']
   ].flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
 document.body.append(help);
 document.getElementById('help-open').onclick = () => help.showModal();
+
+/* ------------------------------------------- LAN & Dijeljenje (Uredski Hub) */
+const lanState = {
+  stageOwnerId: clientId,
+  stageOwnerName: clientName,
+  peers: [],
+  lanUrls: [],
+  hostname: '',
+  peerUrl: (() => {
+    try { return localStorage.getItem('ledicated-peer-url') || ''; } catch { return ''; }
+  })(),
+  remoteTracks: [],
+  remoteStatus: null,
+  syncBusy: false
+};
+
+const lanDialog = h('dialog', { id: 'lan-dialog', class: 'help lan-modal', 'aria-label': 'LAN & Dijeljenje' });
+document.body.append(lanDialog);
+lanDialog.addEventListener('click', e => { if (e.target === lanDialog) lanDialog.close(); });
+
+function updateLanBadge() {
+  const isOwner = !lanState.stageOwnerId || lanState.stageOwnerId === clientId;
+  window.ledicatedIsStageOwner = isOwner;
+  const peerCount = Math.max(1, lanState.peers.length || 1);
+  window.ledicatedPeerCount = peerCount;
+  const countLabel = peerCount > 1 ? ` · ${peerCount} online` : '';
+  if (isOwner) {
+    lanBtn.textContent = `🌐 LAN${countLabel} · ON AIR`;
+    lanBtn.classList.add('on-air');
+    lanBtn.classList.remove('solo-mode');
+    lanBtn.title = `Ti si NA STAGEU (ON AIR)${peerCount > 1 ? ` · ${peerCount} povezanih uređaja na LAN-u` : ''}`;
+  } else {
+    const ownerName = lanState.stageOwnerName || 'Kolega';
+    lanBtn.textContent = `🌐 LAN${countLabel} · SOLO (${ownerName})`;
+    lanBtn.classList.remove('on-air');
+    lanBtn.classList.add('solo-mode');
+    lanBtn.title = `Na stageu je ${ownerName}. Ti si u Solo Preview modu (klikni za preuzimanje stagea).`;
+  }
+}
+
+async function claimStage(release = false) {
+  try {
+    const res = await fetch('/api/lan/claim-stage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, name: clientName, release })
+    }).then(r => r.json());
+    if (res.ok) {
+      applyLanPresence(res);
+      toast(release ? 'Stage prepušten — sada si u Solo Preview modu.' : '🟢 Preuzeo si Stage (ON AIR)! Tvoj izlaz ide na 3×3 barove.', 'ok');
+    }
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function applyLanPresence(data) {
+  if (!data) return;
+  if (Array.isArray(data.peers)) lanState.peers = data.peers;
+  if ('stageOwnerId' in data) lanState.stageOwnerId = data.stageOwnerId;
+  if ('stageOwnerName' in data) lanState.stageOwnerName = data.stageOwnerName;
+  if (Array.isArray(data.lanUrls)) lanState.lanUrls = data.lanUrls;
+  if (data.hostname) lanState.hostname = data.hostname;
+  updateLanBadge();
+  if (lanDialog.open) renderLanDialog();
+}
+
+function renderLanDialog() {
+  const isOwner = !lanState.stageOwnerId || lanState.stageOwnerId === clientId;
+  const nameInput = h('input', {
+    type: 'text',
+    class: 'lan-input',
+    value: clientName,
+    placeholder: 'Tvoje ime / nadimak (npr. Timon, Luka...)',
+    onChange: async e => {
+      const next = e.target.value.trim().slice(0, 40) || `DJ-${clientId.slice(-4).toUpperCase()}`;
+      clientName = next;
+      window.ledicatedClientName = next;
+      try { localStorage.setItem('ledicated-user-name', next); } catch {}
+      try {
+        const res = await fetch('/api/lan/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientId, name: clientName })
+        }).then(r => r.json());
+        if (res.ok) applyLanPresence(res);
+      } catch {}
+    }
+  });
+
+  const stageBanner = h('div', { class: `lan-stage-card ${isOwner ? 'is-owner' : 'is-solo'}` },
+    h('div', { class: 'lan-stage-info' },
+      h('strong', {}, isOwner ? '🟢 TI SI NA STAGEU (ON AIR)' : `🎧 SOLO PREVIEW MOD · Na stageu je: ${lanState.stageOwnerName || 'Kolega'}`),
+      h('small', {}, isOwner
+        ? 'Tvoj timeline, auto-show i live padovi šalju DDP okvire na fizički 3×3 LED zid u uredu.'
+        : 'Slobodno uređuj showove i slušaj pjesme u svom pregledniku bez prekidanja tuđeg izlaza na zidu!')
+    ),
+    isOwner
+      ? h('button', { type: 'button', class: 'txt-btn', onClick: () => claimStage(true) }, 'Prepusti Stage')
+      : h('button', { type: 'button', class: 'primary', onClick: () => claimStage(false) }, '⚡ Preuzmi Stage (ON AIR)')
+  );
+
+  const peersList = h('div', { class: 'lan-peers-list' },
+    ...(lanState.peers.length ? lanState.peers : [{ clientId, name: clientName, isStageOwner: isOwner, trackId: s.track?.id, trackTitle: s.track?.title, isPlaying: !audio.paused }]).map(p => {
+      const isMe = p.clientId === clientId;
+      return h('div', { class: `lan-peer-row${p.isStageOwner ? ' owner' : ''}` },
+        h('span', { class: `lan-peer-dot ${p.isStageOwner ? 'on-air' : 'solo'}` }, p.isStageOwner ? '🟢 ON AIR' : '🎧 SOLO'),
+        h('b', {}, `${p.name || p.clientId}${isMe ? ' (Ti)' : ''}`),
+        h('small', { class: 'lan-peer-track' }, p.trackTitle ? `${p.isPlaying ? '▶ ' : '⏸ '}${p.trackTitle}` : 'Nema odabrane pjesme'),
+        (!isMe && p.trackId && p.trackId !== s.track?.id)
+          ? h('button', { type: 'button', class: 'mini-btn', onClick: () => { lanDialog.close(); selectTrack(p.trackId); } }, 'Otvori istu pjesmu')
+          : null
+      );
+    })
+  );
+
+  const lanUrlsRow = h('div', { class: 'lan-urls-box' },
+    h('small', {}, 'Adresa ovog servera na uredskom Wi-Fi / LAN-u (prijatelji mogu otvoriti u svom pregledniku ili upisati dolje):'),
+    h('div', { class: 'lan-url-chips' },
+      ...(lanState.lanUrls.length ? lanState.lanUrls : [window.location.origin]).map(url =>
+        h('button', {
+          type: 'button',
+          class: 'lan-url-chip',
+          title: 'Klikni za kopiranje LAN adrese',
+          onClick: () => {
+            navigator.clipboard?.writeText(url);
+            toast(`Kopirano: ${url}`, 'ok');
+          }
+        }, `📋 ${url}`)
+      )
+    )
+  );
+
+  const bundleInput = h('input', {
+    type: 'file',
+    accept: '.ledpack,.json,.mp3,.wav',
+    multiple: true,
+    style: { display: 'none' },
+    onChange: async e => {
+      if (e.target.files.length) {
+        await browser.importFiles([...e.target.files]);
+        e.target.value = '';
+        renderLanDialog();
+      }
+    }
+  });
+
+  const shareButtons = h('div', { class: 'lan-actions-row' },
+    h('button', {
+      type: 'button',
+      class: 'primary',
+      disabled: !hasTrack(),
+      onClick: () => browser.exportTrackPack?.(s.track?.id)
+    }, '📦 Izvezi .ledpack (Pjesma + Show)'),
+    h('button', {
+      type: 'button',
+      class: 'txt-btn',
+      disabled: !hasTrack(),
+      onClick: () => browser.exportTrackShow?.(s.track?.id)
+    }, '✦ Izvezi .ledshow.json'),
+    h('button', {
+      type: 'button',
+      class: 'txt-btn',
+      disabled: !hasTrack(),
+      onClick: () => browser.shareTrackToGit?.(s.track?.id, s.track?.title)
+    }, '🌐 Spremi u Git (shared-shows)'),
+    h('button', {
+      type: 'button',
+      class: 'txt-btn',
+      onClick: () => bundleInput.click()
+    }, '📂 Uvezi .ledpack / .ledshow.json', bundleInput)
+  );
+
+  const peerUrlInput = h('input', {
+    type: 'url',
+    class: 'lan-input',
+    placeholder: 'http://192.168.1.50:8787 (LAN IP uredskog Maca ili kolege)',
+    value: lanState.peerUrl,
+    onInput: e => {
+      lanState.peerUrl = e.target.value.trim();
+      try { localStorage.setItem('ledicated-peer-url', lanState.peerUrl); } catch {}
+    }
+  });
+
+  const pushBtn = h('button', {
+    type: 'button',
+    class: 'primary',
+    disabled: !hasTrack() || lanState.syncBusy,
+    onClick: async () => {
+      if (!lanState.peerUrl) return toast('Upiši LAN adresu uredskog servera (npr. http://192.168.1.50:8787).', 'error');
+      lanState.syncBusy = true;
+      renderLanDialog();
+      try {
+        status(`Slanje paketa „${s.track.title}” na ${lanState.peerUrl}…`);
+        const res = await fetch('/api/lan/push-pack', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ peerUrl: lanState.peerUrl, trackId: s.track.id, author: clientName })
+        }).then(r => r.json());
+        if (!res.ok) throw new Error(res.error || 'Slanje nije uspjelo.');
+        toast(`🚀 Pjesma i show „${s.track.title}” poslani na ${lanState.peerUrl}!`, 'ok');
+        status(`Uspješno poslano na ${lanState.peerUrl}.`);
+      } catch (err) {
+        toast(err.message, 'error');
+      } finally {
+        lanState.syncBusy = false;
+        renderLanDialog();
+      }
+    }
+  }, lanState.syncBusy ? '⏳ Slanje…' : '🚀 Pošalji aktivnu pjesmu + show na uredski LAN');
+
+  const fetchPeerBtn = h('button', {
+    type: 'button',
+    class: 'txt-btn',
+    disabled: lanState.syncBusy,
+    onClick: async () => {
+      if (!lanState.peerUrl) return toast('Upiši LAN adresu uredskog servera (npr. http://192.168.1.50:8787).', 'error');
+      lanState.syncBusy = true;
+      renderLanDialog();
+      try {
+        const res = await fetch('/api/lan/peer-tracks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ peerUrl: lanState.peerUrl })
+        }).then(r => r.json());
+        if (!res.ok) throw new Error(res.error || 'Povezivanje nije uspjelo.');
+        lanState.remoteTracks = res.tracks || [];
+        lanState.remoteStatus = res.peerStatus || null;
+        toast(`Pronađeno ${lanState.remoteTracks.length} pjesama na ${lanState.peerUrl}`, 'ok');
+      } catch (err) {
+        toast(err.message, 'error');
+      } finally {
+        lanState.syncBusy = false;
+        renderLanDialog();
+      }
+    }
+  }, '📥 Dohvati katalog s drugog LAN uređaja');
+
+  const remoteTracksBox = lanState.remoteTracks.length
+    ? h('div', { class: 'lan-remote-tracks' },
+        ...lanState.remoteTracks.map(rt =>
+          h('div', { class: 'lan-peer-row' },
+            h('b', {}, rt.title || rt.originalName),
+            h('small', {}, `${(rt.sizeBytes / 1048576).toFixed(1)} MB${rt.author ? ` · 👤 ${rt.author}` : ''}`),
+            h('button', {
+              type: 'button',
+              class: 'mini-btn',
+              disabled: lanState.syncBusy,
+              onClick: async () => {
+                lanState.syncBusy = true;
+                renderLanDialog();
+                try {
+                  const res = await fetch('/api/lan/pull-pack', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ peerUrl: lanState.peerUrl, trackId: rt.id })
+                  }).then(r => r.json());
+                  if (!res.ok) throw new Error(res.error || 'Preuzimanje nije uspjelo.');
+                  await browser.refresh();
+                  toast(`📥 Preuzeta pjesma + show: ${res.track.title}`, 'ok');
+                  if (res.track?.id) await selectTrack(res.track.id);
+                } catch (err) {
+                  toast(err.message, 'error');
+                } finally {
+                  lanState.syncBusy = false;
+                  renderLanDialog();
+                }
+              }
+            }, '📥 Povuci u moj studio')
+          )
+        )
+      )
+    : null;
+
+  lanDialog.replaceChildren(
+    h('div', { class: 'pane-title' },
+      h('b', {}, '🌐 UREDSKI LAN, STAGE KONTROLA & DIJELJENJE SHOWOVA'),
+      h('button', { type: 'button', onClick: () => lanDialog.close() }, 'Zatvori')
+    ),
+    h('div', { class: 'lan-modal-body' },
+      h('div', { class: 'lan-section' },
+        h('label', { class: 'lan-label' }, 'Tvoje ime u studiju (vide ga ostali na LAN-u i potpisuje se u showove):'),
+        nameInput,
+        stageBanner
+      ),
+      h('div', { class: 'lan-section' },
+        h('label', { class: 'lan-label' }, `Povezani uređaji u ovom studiju (${Math.max(1, lanState.peers.length)}):`),
+        peersList,
+        lanUrlsRow
+      ),
+      h('div', { class: 'lan-section' },
+        h('label', { class: 'lan-label' }, 'Dijeljenje aktivne pjesme i showa (Slack / Discord / WhatsApp / GitHub):'),
+        h('small', { class: 'hint' }, '• .ledpack sadrži MP3/WAV + analizu stemova + cijeli show u jednoj datoteci.\n• .ledshow.json i Git shared-shows/ čuvaju lagani show u repozitoriju za git pull.'),
+        shareButtons
+      ),
+      h('div', { class: 'lan-section' },
+        h('label', { class: 'lan-label' }, 'Izravna LAN razmjena između dva laptopa (kad dođeš u ured s vlastitim klonom):'),
+        peerUrlInput,
+        h('div', { class: 'lan-actions-row' }, pushBtn, fetchPeerBtn),
+        remoteTracksBox
+      )
+    )
+  );
+}
+
+lanBtn.onclick = async () => {
+  try {
+    const res = await fetch('/api/lan/status').then(r => r.json());
+    if (res.ok) applyLanPresence(res);
+  } catch {}
+  renderLanDialog();
+  if (!lanDialog.open) lanDialog.showModal();
+};
 
 const typing = el => /^(INPUT|SELECT|TEXTAREA)$/.test(el?.tagName || '') && !(el.type === 'checkbox' || el.type === 'button' || el.type === 'range');
 // Performance keys are global: the lighting instrument keeps playing while
 // any dock, slider, color picker or editable field has focus.
 document.addEventListener('keydown', event => {
   if (event.repeat || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (document.querySelector('dialog[open]')) return;
+  if (event.shiftKey && event.key.toLowerCase() === 'r') {
+    event.preventDefault();
+    recBtn.click();
+    return;
+  }
+  if (event.shiftKey) return;
   const index = PAD_KEYS.indexOf(event.key.toLowerCase());
   if (index < 0) return;
   performDesk.press(index, { select: false });
@@ -654,10 +1145,17 @@ document.addEventListener('keyup', event => {
 window.addEventListener('blur', () => performDesk.releaseAll());
 document.addEventListener('visibilitychange', () => { if (document.hidden) performDesk.releaseAll(); });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape') { if (document.querySelector('dialog[open]') || event.defaultPrevented) return; closeMenu(); if (!live.engine.state.blackout) blackout(); return; }
+  if (event.key === 'Escape') {
+    if (event.repeat || document.querySelector('dialog[open]') || event.defaultPrevented) return;
+    closeMenu();
+    blackout();
+    return;
+  }
   if (typing(event.target) || document.querySelector('dialog[open]')) return;
   const mod = event.metaKey || event.ctrlKey, key = event.key.toLowerCase();
+  if (mod && (key === 'o' || key === 'k')) { event.preventDefault(); browser.openLauncher?.(); return; }
   if (event.code === 'Space') { event.preventDefault(); togglePlay(); return; }
+  if (event.shiftKey && key === 'r') { event.preventDefault(); recBtn.click(); return; }
   if (mod && key === 'z') { event.preventDefault(); event.shiftKey ? redoBtn.click() : undoBtn.click(); return; }
   if (mod && key === 'y') { event.preventDefault(); redoBtn.click(); return; }
   if (mod && key === 's') { event.preventDefault(); saveBtn.click(); return; }
@@ -695,32 +1193,62 @@ addEventListener('dragover', event => { if (hasFiles(event)) event.preventDefaul
 addEventListener('drop', event => { if (!hasFiles(event)) return; event.preventDefault(); dragDepth = 0; dropOverlay.classList.remove('show'); browser.importFiles([...event.dataTransfer.files]); });
 
 /* --------------------------------------------------------------- frame loop */
+let cachedEffTl = null;
+let cachedEffKey = '';
+let effVersionCounter = 1;
 const effectiveTimeline = () => {
   const solo = playlist.solo, sel = playlist.selection, isoClip = s.iso.clip && sel.length > 0;
-  if (!solo.size && !isoClip && !s.iso.bypass) return tl();
-  const keys = new Set(sel.map(refKey));
-  return {
-    ...tl(), layers: tl().layers.map(layer => {
-      const clips = (isoClip ? layer.clips.filter(c => keys.has(`${layer.id}/${c.id}`)) : layer.clips).map(c => s.iso.bypass ? { ...c, driver: 'none' } : c);
-      const enabled = isoClip ? clips.length > 0 : layer.enabled && (!solo.size || solo.has(layer.id));
-      return { ...layer, enabled, clips };
-    })
-  };
+  const recActive = Boolean(recorder?.isRecording);
+  const key = `${timelineVersion}|${solo.size ? [...solo].join(',') : ''}|${isoClip ? sel.map(refKey).join(',') : ''}|${s.iso.bypass ? 1 : 0}|${recActive ? 1 : 0}`;
+  if (cachedEffTl && cachedEffKey === key && !recActive) return cachedEffTl;
+  const baseTl = tl();
+  const hasRecClips = recActive && baseTl.layers.some(l => l.clips.some(c => c.recording));
+  const filteredTimeline = hasRecClips ? {
+    ...baseTl,
+    layers: baseTl.layers.map(layer => ({
+      ...layer,
+      clips: layer.clips.filter(c => !c.recording)
+    }))
+  } : baseTl;
+  let result;
+  if (!solo.size && !isoClip && !s.iso.bypass) {
+    result = { ...filteredTimeline, _v: ++effVersionCounter };
+  } else {
+    const keys = new Set(sel.map(refKey));
+    result = {
+      ...filteredTimeline,
+      _v: ++effVersionCounter,
+      layers: filteredTimeline.layers.map(layer => {
+        const clips = (isoClip ? layer.clips.filter(c => keys.has(`${layer.id}/${c.id}`)) : layer.clips).map(c => s.iso.bypass ? { ...c, driver: 'none' } : c);
+        const enabled = isoClip ? clips.length > 0 : layer.enabled && (!solo.size || solo.has(layer.id));
+        return { ...layer, enabled, clips };
+      })
+    };
+  }
+  cachedEffKey = key;
+  cachedEffTl = result;
+  return result;
 };
-function timelineFrame(t = now()) {
+function timelineFrame(t = now(), timeOverrideSec = null) {
   if (live.frozen) { if (s.frozenSec === null) s.frozenSec = songTime(); } else s.frozenSec = null;
-  const time = clamp((s.frozenSec ?? songTime()) + output.offsetSec, 0, duration());
+  const baseTime = timeOverrideSec !== null ? timeOverrideSec : ((s.frozenSec ?? songTime()) + output.offsetSec);
+  const time = clamp(baseTime, 0, duration());
   const calibration = output.calibrationFrame(masterKnob.value); if (calibration) return calibration;
-  const base = renderTimelineFrame(effectiveTimeline(), s.analysis, time, null), master = clamp(masterKnob.value / 60, 0, 1);
-  const rendered = performDesk.render(base, t, tl().bpm, 1, s.analysis, time);
-  for (const id of BAR_IDS) for (const pixel of rendered.bars[id]) for (let c = 0; c < 4; c++) pixel[c] = Math.round(pixel[c] * master);
-  return rendered;
+  const effTl = effectiveTimeline();
+  return showEngine.renderFrame({
+    timeline: effTl,
+    analysis: s.analysis,
+    songTimeSec: time,
+    clockTimeSec: t,
+    masterBrightness: masterKnob.value,
+    performDesk
+  });
 }
-const frameLevel = frame => { let sum = 0, n = 0; for (const id of BAR_IDS) for (const p of frame.bars[id]) { sum += Math.max(...p); n++; } return n ? Math.sqrt(sum / n / 153) : 0; };
+const frameLevel = frame => { let sum = 0, n = 0; for (const id of BAR_IDS) for (const p of frame.bars[id]) { sum += Math.max(...p); n++; } return n ? Math.sqrt(sum / n / 255) : 0; };
 function updateMeters(time) {
   const levels = {}, solo = playlist.solo;
-  for (const layer of tl().layers) levels[layer.id] = !layer.enabled || (solo.size && !solo.has(layer.id)) ? 0 : frameLevel(renderTimelineFrame({ ...tl(), layers: [{ ...layer, enabled: true }] }, s.analysis, time, null));
-  mixer.levels(levels, hasTrack() ? frameLevel(renderTimelineFrame(effectiveTimeline(), s.analysis, time, null)) * clamp(masterKnob.value / 60, 0, 1) : live.level, stemsEngine.getStemLevels());
+  for (const layer of tl().layers) levels[layer.id] = !layer.enabled || (solo.size && !solo.has(layer.id)) ? 0 : frameLevel(renderTimelineFrame({ ...tl(), layers: [{ ...layer, enabled: true }] }, s.analysis, time, null, true));
+  mixer.levels(levels, hasTrack() ? frameLevel(renderTimelineFrame(effectiveTimeline(), s.analysis, time, null, true)) * clamp(masterKnob.value / 100, 0, 1) : live.level, stemsEngine.getStemLevels());
 }
 function updateTelemetry(frame) {
   if (!frame?.bars) return;
@@ -734,7 +1262,7 @@ function updateTelemetry(frame) {
     }
   }
   if (!totalPixels) return;
-  const maxPossible = totalPixels * 153;
+  const maxPossible = totalPixels * 255;
   const pctR = Math.min(100, Math.round((sumR / maxPossible) * 100));
   const pctG = Math.min(100, Math.round((sumG / maxPossible) * 100));
   const pctB = Math.min(100, Math.round((sumB / maxPossible) * 100));
@@ -758,7 +1286,23 @@ function updateTelemetry(frame) {
   teleMode.classList.toggle('live', isLive);
 }
 
+let lastActiveSig = '';
 function updateActiveNow(time) {
+  let sig = hasTrack() ? 'T:' : 'L:';
+  for (const [index] of performDesk.desk.active) {
+    const pad = performDesk.desk.pads[index];
+    if (pad) sig += `P${index}:${pad.preset};`;
+  }
+  for (const layer of tl().layers) {
+    if (!layer.enabled) continue;
+    for (const clip of layer.clips) {
+      if (time >= clip.startSec && time < clipEnd(clip)) {
+        sig += `C${layer.id}/${clip.id}:${clip.preset};`;
+      }
+    }
+  }
+  if (sig === lastActiveSig && activeNow.firstChild) return;
+  lastActiveSig = sig;
   const cards = [];
   for (const [index] of performDesk.desk.active) {
     const pad = performDesk.desk.pads[index];
@@ -791,11 +1335,44 @@ function updateActiveNow(time) {
   }
 }
 
-let lastText = '', lastPerformSignal = '';
-function tick() {
-  const t = now(); live.tick(t);
-  if (s.loopOn && s.loop && !audio.paused && audio.currentTime >= s.loop.end) audio.currentTime = s.loop.start;
+let lastText = '', lastPerformSignal = '', lastTickTime = 0;
+function currentOutputFrame(t = now()) {
+  const blackoutOn = live.engine.state.blackout;
+  if (blackoutOn) return live.frame(t);
+  if (live.isExternalActive?.(t)) return performDesk.render(live.frame(t), t, live.engine.clock.bpm, clamp(masterKnob.value / 100, 0, 1), null, 0);
+  return hasTrack() ? timelineFrame(t) : performDesk.render(live.frame(t), t, live.engine.clock.bpm, clamp(masterKnob.value / 100, 0, 1), null, 0);
+}
+function currentPreviewFrame(t = now()) {
+  if (output.offsetSec === 0) return currentOutputFrame(t);
+  const blackoutOn = live.engine.state.blackout;
+  if (blackoutOn) return live.frame(t);
+  if (live.isExternalActive?.(t)) return performDesk.render(live.frame(t), t, live.engine.clock.bpm, clamp(masterKnob.value / 100, 0, 1), null, 0);
+  const previewSec = s.frozenSec ?? songTime();
+  return hasTrack() ? timelineFrame(t, previewSec) : performDesk.render(live.frame(t), t, live.engine.clock.bpm, clamp(masterKnob.value / 100, 0, 1), null, 0);
+}
+setInterval(() => {
+  if (!output.armed) return;
+  const t = now();
+  // Stream when document is hidden OR when macOS occludes the window and pauses requestAnimationFrame
+  if (!document.hidden && (t - lastTickTime) < 0.045) return;
   performDesk.tick(t);
+  output.send(currentOutputFrame, t);
+}, 20);
+function tick() {
+  const t = now();
+  lastTickTime = t;
+  live.tick(t);
+  if (s.loopOn && s.loop && !audio.paused && audio.currentTime >= s.loop.end) {
+    if (recorder?.isRecording) recorder.handleLoopWrap(s.loop.start, s.loop.end);
+    audio.currentTime = s.loop.start;
+  }
+  performDesk.tick(t);
+  recorder?.tick(songTime());
+  if (hasTrack() && !live.engine.state.blackout) {
+    const effTl = effectiveTimeline();
+    showEngine.sync(effTl, s.analysis);
+    showEngine.warmLookahead(clamp((s.frozenSec ?? songTime()) + output.offsetSec, 0, duration()), audio.paused ? 24 : 8, 2.5);
+  }
   const performSignal = `${performDesk.desk.active.size}|${performDesk.desk.pending.size}`;
   if (performSignal !== lastPerformSignal) {
     lastPerformSignal = performSignal;
@@ -805,16 +1382,15 @@ function tick() {
     performOpen.classList.toggle('waiting', queuedCount > 0 && !activeCount);
     performOpen.setAttribute('aria-label', activeCount ? `Live board, ${activeCount} aktivnih efekata` : queuedCount ? `Live board, ${queuedCount} efekata čeka beat` : 'Live board');
   }
-  const blackoutOn = live.engine.state.blackout;
-  const frame = blackoutOn ? live.frame(t) : hasTrack() ? timelineFrame(t) : performDesk.render(live.frame(t), t, live.engine.clock.bpm, clamp(masterKnob.value / 60, 0, 1), null, 0);
+  const frame = currentPreviewFrame(t);
   if (output.config) preview.render(frame, output.config);
-  output.send(frame, t);
+  output.send(output.offsetSec === 0 ? frame : currentOutputFrame, t);
   const time = songTime(), text = formatBBT(hasTrack() ? Math.max(0, beatPosition(time, tl(), s.analysis)) : 0) + '|' + formatClock(time);
   if (text !== lastText) { lastText = text; const [bbt, clock] = text.split('|'); bbtEl.textContent = bbt; clockEl.textContent = clock; }
   if (s.follow && !audio.paused) playlist.ensureVisible(time, true);
-  if (s.dock === 'clip' && !audio.paused) editor.draw();
+  if (s.dock === 'envelope' && !audio.paused) clipEditor.draw();
   if (s.dock === 'driver') driverEditor.tick();
-  if (t - s.lastLevels > .066) {
+  if (t - s.lastLevels > .08) {
     s.lastLevels = t;
     if (s.dock === 'mixer') updateMeters(time);
     updateTelemetry(frame);
@@ -827,5 +1403,232 @@ await output.init();
 document.getElementById('render-mode').textContent = `${preview.mode === 'webgl2' ? 'WEBGL2' : 'CANVAS 2D'}`;
 browser.refresh().then(tracks => { if (tracks.length) return selectTrack(tracks[0].id); }).catch(error => status(error.message));
 requestAnimationFrame(tick);
-// Exposed for deterministic browser smoke tests, not a second render path.
-window.studioTest = { engine: live.engine, store, playlist, performance: performDesk, getFrame: () => (live.engine.state.blackout ? live.frame(now()) : hasTrack() ? timelineFrame() : performDesk.render(live.frame(now()), now(), live.engine.clock.bpm, clamp(masterKnob.value / 60, 0, 1), null, 0)), getConfig: () => output.config, state: s, seek, commitSeek, setTool };
+function initLiveSync() {
+  let liveStateInFlight = false;
+  function sendLiveState() {
+    if (liveStateInFlight) return;
+    const time = songTime();
+    const payload = {
+      connected: true,
+      clientId,
+      clientName,
+      trackId: s.track?.id || null,
+      trackTitle: s.track?.title || s.track?.originalName || null,
+      timeSec: time,
+      durationSec: duration(),
+      isPlaying: !audio.paused,
+      isRecording: recorder?.isRecording || false,
+      loop: s.loop ? { ...s.loop, on: s.loopOn } : null,
+      bpm: hasTrack() ? tl().bpm : live.engine.clock.bpm,
+      gridMode: tl().gridMode || 'auto',
+      master: masterKnob.value,
+      blackout: live.engine.state.blackout,
+      armed: output.armed,
+      activePads: [...performDesk.desk.active.keys()],
+      activeClipsCount: tl().layers.reduce((acc, l) => acc + l.clips.filter(c => time >= c.startSec && time < clipEnd(c)).length, 0),
+      layerCount: tl().layers.length,
+      clipCount: tl().layers.reduce((acc, l) => acc + l.clips.length, 0)
+    };
+    liveStateInFlight = true;
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 1500);
+    fetch('/api/live/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    })
+      .then(async res => {
+        const data = await res.json().catch(() => null);
+        if (data && 'stageOwnerId' in data) {
+          lanState.stageOwnerId = data.stageOwnerId;
+          lanState.stageOwnerName = data.stageOwnerName || lanState.stageOwnerName;
+          updateLanBadge();
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(tid);
+        liveStateInFlight = false;
+      });
+  }
+
+  function handleCommand(cmd) {
+    if (!cmd || typeof cmd !== 'object') return;
+    if (cmd.type === 'lan_presence') {
+      applyLanPresence(cmd);
+      return;
+    }
+    if (cmd.type === 'library_updated') {
+      browser.refresh().catch(() => {});
+      return;
+    }
+    if (cmd.type === 'timeline_updated') {
+      if (cmd.trackId && cmd.trackId === s.track?.id && cmd.clientId !== clientId && cmd.timeline) {
+        store.replace(normalizeTimeline(cmd.timeline));
+        playlist.renderHeads();
+        playlist.redraw();
+        editor.render();
+        status(`Show uživo ažuriran od: ${cmd.author || 'LAN kolega'}`);
+      }
+      return;
+    }
+    if (cmd.type === 'transport') {
+      if (cmd.action === 'play') { if (audio.paused) togglePlay(); }
+      else if (cmd.action === 'pause') { if (!audio.paused) togglePlay(); }
+      else if (cmd.action === 'stop') { stop(); }
+      else if (cmd.action === 'seek') {
+        const targetSec = Number.isFinite(cmd.timeSec) ? cmd.timeSec : (Number.isFinite(cmd.beat) ? timeAtBeat(cmd.beat, tl(), s.analysis) : 0);
+        commitSeek(targetSec);
+      }
+      else if (cmd.action === 'loop') {
+        if (Number.isFinite(cmd.startSec) && Number.isFinite(cmd.endSec)) setLoop({ start: cmd.startSec, end: cmd.endSec });
+        if (typeof cmd.enabled === 'boolean') { s.loopOn = cmd.enabled; syncLoop(); playlist.redraw(); }
+      }
+      else if (cmd.action === 'record') {
+        if (cmd.armed !== undefined) { if (recorder.isArmed !== cmd.armed) recBtn.click(); }
+        else recBtn.click();
+      }
+      sendLiveState();
+    }
+    else if (cmd.type === 'select_track') {
+      if (cmd.trackId && cmd.trackId !== s.track?.id) selectTrack(cmd.trackId);
+    }
+    else if (cmd.type === 'timeline_op') {
+      if (cmd.timeline) {
+        store.replace(cmd.timeline);
+        playlist.renderHeads();
+        playlist.redraw();
+        editor.render();
+      } else if (cmd.op) {
+        store.commit(cmd.label || cmd.op, tr => {
+          applyTimelineOp(tr, cmd.op, cmd.args, s.analysis);
+        });
+        playlist.renderHeads();
+        playlist.redraw();
+        editor.render();
+      }
+      sendLiveState();
+    }
+    else if (cmd.type === 'live_pad') {
+      let idx = -1;
+      if (typeof cmd.pad === 'number') idx = cmd.pad;
+      else if (typeof cmd.pad === 'string') {
+        const lower = cmd.pad.toLowerCase();
+        idx = PAD_KEYS.indexOf(lower);
+        if (idx < 0 && !isNaN(Number(cmd.pad))) idx = Number(cmd.pad);
+      }
+      if (idx >= 0 && idx < 12) {
+        if (cmd.action === 'hit' || !cmd.action) performDesk.hit(idx);
+        else if (cmd.action === 'loop') performDesk.toggle(idx);
+        else if (cmd.action === 'release') performDesk.release(idx);
+        else if (cmd.action === 'set' && cmd.effect) {
+          performDesk.desk.pads[idx] = { ...performDesk.desk.pads[idx], ...cmd.effect };
+        }
+      }
+      sendLiveState();
+    }
+    else if (cmd.type === 'master') {
+      if (Number.isFinite(cmd.value)) {
+        masterKnob.set(cmd.value);
+        live.setBrightness(cmd.value);
+        mixer.setMaster(cmd.value);
+      }
+      sendLiveState();
+    }
+    else if (cmd.type === 'blackout') {
+      if (cmd.value !== undefined) {
+        if (live.engine.state.blackout !== Boolean(cmd.value)) blackoutBtn.click();
+      } else blackoutBtn.click();
+      sendLiveState();
+    }
+    else if (cmd.type === 'tempo') {
+      if (Number.isFinite(cmd.bpm)) {
+        store.commit('Tempo', tr => { tr.bpm = cmd.bpm; tr.gridMode = cmd.gridMode || 'manual'; });
+        bpmNumber.set(cmd.bpm);
+        updateGridButton();
+      }
+      sendLiveState();
+    }
+    else if (cmd.type === 'tap_tempo') {
+      bpmTapBtn.click();
+      sendLiveState();
+    }
+    else if (cmd.type === 'hardware_sync') {
+      output.syncServerState?.(cmd.state);
+      sendLiveState();
+    }
+    else if (cmd.type === 'ext_sync') {
+      if (cmd.mode === 'idle' || cmd.liveMode === false || cmd.paused) {
+        live.clearExternal?.();
+        return;
+      }
+      if (!audio.paused || playPending || scrubWasPlaying) return;
+      if (cmd.mode === 'synced') {
+        live.clearExternal?.();
+        if (cmd.trackId && s.track?.id !== cmd.trackId) {
+          browser.refresh().then(() => selectTrack(cmd.trackId)).catch(() => {});
+        } else if (hasTrack() && Number.isFinite(cmd.currentTime)) {
+          s.scrubSec = clamp(cmd.currentTime, 0, duration());
+          playlist.redraw();
+          if (s.follow) playlist.ensureVisible(s.scrubSec, true);
+        }
+      } else if (cmd.mode === 'live_stream') {
+        live.pushExternalStems?.(cmd.stems, cmd.theme, now());
+      }
+    }
+    else if (cmd.type === 'ext_theme') {
+      if (cmd.theme) live.setPalette?.(cmd.theme);
+      if (cmd.regenerate && hasTrack()) {
+        generateShow({ palette: cmd.theme, theme: cmd.theme, allowedPresets: cmd.allowedPresets });
+      }
+      sendLiveState();
+    }
+  }
+
+  let source = null;
+  let reconnectTimer = 0;
+  function connect() {
+    if (typeof EventSource === 'undefined') return;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = 0; }
+    if (source) { try { source.close(); } catch {} source = null; }
+    try {
+      const es = new EventSource(`/api/live/stream?clientId=${encodeURIComponent(clientId)}&name=${encodeURIComponent(clientName)}`);
+      source = es;
+      es.addEventListener('command', e => {
+        try { handleCommand(JSON.parse(e.data)); } catch (err) { console.error('SSE command error', err); }
+      });
+      es.onerror = () => {
+        if (source === es) {
+          try { es.close(); } catch {}
+          source = null;
+        }
+        if (!reconnectTimer) reconnectTimer = setTimeout(connect, 3000);
+      };
+    } catch {}
+  }
+  connect();
+  addEventListener('pagehide', () => {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = 0; }
+    if (source) { try { source.close(); } catch {} source = null; }
+  });
+
+  let lastReport = 0;
+  setInterval(() => {
+    const t = performance.now();
+    const interval = (!audio.paused || performDesk.desk.active.size > 0) ? 300 : 2000;
+    if (t - lastReport > interval) {
+      lastReport = t;
+      sendLiveState();
+    }
+  }, 250);
+
+  return { handleCommand, sendLiveState };
+}
+
+const liveSync = initLiveSync();
+
+// Exposed for deterministic browser smoke tests and remote control.
+window.studioTest = { engine: live.engine, showEngine, store, playlist, performance: performDesk, getFrame: () => (live.engine.state.blackout ? live.frame(now()) : hasTrack() ? timelineFrame() : performDesk.render(live.frame(now()), now(), live.engine.clock.bpm, clamp(masterKnob.value / 100, 0, 1), null, 0)), getConfig: () => output.config, state: s, seek, commitSeek, setTool };
+window.studioRemote = { executeCommand: liveSync.handleCommand, sendLiveState: liveSync.sendLiveState };
+

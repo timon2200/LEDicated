@@ -50,7 +50,18 @@ test('local analysis finds 120 BPM pulses and keeps bounded waveform/features', 
     assert.ok(Math.abs(result.bpm - 120) < 8, `BPM ${result.bpm}`);
     assert.ok(result.beatsSec.length >= 14);
     assert.ok(result.waveform.peaks.length <= 129);
-    assert.equal(result.waveform.peaks.length, result.waveform.rms.length);
+    const nBins = result.waveform.peaks.length;
+    assert.equal(nBins, result.waveform.rms.length);
+    assert.equal(nBins, result.waveform.min.length);
+    assert.equal(nBins, result.waveform.max.length);
+    assert.equal(nBins, result.waveform.low.length);
+    assert.equal(nBins, result.waveform.mid.length);
+    assert.equal(nBins, result.waveform.high.length);
+    assert.ok(result.waveform.min.some(v => v < 0));
+    assert.ok(result.waveform.max.some(v => v > 0));
+    assert.ok(result.waveform.low.every(v => v >= 0 && v <= 1));
+    assert.ok(result.waveform.mid.every(v => v >= 0 && v <= 1));
+    assert.ok(result.waveform.high.every(v => v >= 0 && v <= 1));
     assert.equal(result.features.kind, 'frequency-band-estimates');
     assert.equal(result.features.drums.length, result.features.bass.length);
     assert.equal(result.features.vocals.length, result.features.drums.length);
@@ -63,12 +74,35 @@ test('local analysis finds 120 BPM pulses and keeps bounded waveform/features', 
   });
 });
 
+test('high-resolution waveform extraction uses 64-sample min bin size and supports >2048 bins by default', async () => {
+  await withAudio((t) => {
+    return 0.4 * Math.sin(2 * Math.PI * 90 * t) + 0.25 * Math.sin(2 * Math.PI * 1200 * t) + 0.15 * Math.sin(2 * Math.PI * 3800 * t);
+  }, 16, async filename => {
+    const result = await analyzeAudio(filename);
+    // 16s * 11025 / 64 = 2756.25 -> >2048 high-res bins with default maxWaveformBins=8192
+    assert.ok(result.waveform.peaks.length > 2048, `Expected >2048 bins, got ${result.waveform.peaks.length}`);
+    assert.ok(result.waveform.peaks.length <= 8192);
+    assert.ok(result.waveform.binSec < 0.01, `Expected binSec < 0.01s, got ${result.waveform.binSec}`);
+    assert.ok(result.waveform.low.some(v => v > 0.5));
+    assert.ok(result.waveform.mid.some(v => v > 0.5));
+    assert.ok(result.waveform.high.some(v => v > 0.5));
+
+    // Also allow maxWaveformBins up to 32768
+    const hiRes = await analyzeAudio(filename, { maxWaveformBins: 32768 });
+    assert.equal(hiRes.waveform.peaks.length, result.waveform.peaks.length);
+    await assert.rejects(analyzeAudio(filename, { maxWaveformBins: 40000 }), RangeError);
+  });
+});
+
 test('silence has no fabricated beat and zero-valued features', async () => {
   await withAudio(() => 0, 2, async filename => {
     const result = await analyzeAudio(filename);
     assert.equal(result.bpm, null);
     assert.deepEqual(result.beatsSec, []);
     assert.ok(result.waveform.peaks.every(value => value === 0));
+    assert.ok(result.waveform.low.every(value => value === 0));
+    assert.ok(result.waveform.mid.every(value => value === 0));
+    assert.ok(result.waveform.high.every(value => value === 0));
     assert.ok(result.features.drums.every(value => value === 0));
     assert.ok(result.features.bass.every(value => value === 0));
   });

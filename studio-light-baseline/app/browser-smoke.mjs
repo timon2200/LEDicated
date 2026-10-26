@@ -32,8 +32,10 @@ try{
   await page.locator('#auto-tempo').check();await page.locator('#half').click();
   assert.equal(await page.locator('#auto-tempo').isChecked(),false,'manual half must remain manual');
   await page.keyboard.press('Escape');
-  assert(await page.evaluate(()=>Object.values(window.studioTest.getFrame().bars).flat(2).every(x=>x===0)));
-  await page.locator('#blackout').click();await page.locator('#freeze').click();
+  assert(await page.evaluate(()=>Object.values(window.studioTest.getFrame().bars).flat(2).every(x=>x===0)), 'blackout on zeros bars');
+  await page.keyboard.press('Escape');
+  assert(await page.evaluate(()=>Object.values(window.studioTest.getFrame().bars).flat(2).some(x=>x>0)), 'blackout toggle lights up bars again');
+  await page.locator('#freeze').click();
   await page.locator('#settings-open').click();
   await page.locator('#arm').click();
   await page.waitForFunction(()=>document.getElementById('settings-status').textContent.includes('IP'));

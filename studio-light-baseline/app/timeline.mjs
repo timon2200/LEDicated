@@ -1,10 +1,10 @@
 /** Editable song timeline. All times are song seconds, colors are normalized RGBW,
- * and output channels are bytes limited to 153. The limit is visual, not electrical.
+ * and output channels are bytes 0–255.
  * This module is pure: one saved timeline and one analysis produce the same frame
  * for a given song time, regardless of playback or scrub order.
  */
 import { BAR_IDS, PIXELS_PER_BAR } from './engine.mjs';
-import { SPECTRUM_MAX_HZ, SPECTRUM_MIN_HZ, rangeLevel } from './audio-spectrum.mjs';
+import { SPECTRUM_MAX_HZ, SPECTRUM_MIN_HZ, rangeLevel, getSpectrumForSource } from './audio-spectrum.mjs';
 import { detectSections } from './audio-sections.mjs';
 
 export const TIMELINE_PRESETS = Object.freeze([
@@ -14,20 +14,162 @@ export const TIMELINE_PRESETS = Object.freeze([
 export const TIMELINE_BLENDS = Object.freeze(['add', 'screen', 'multiply', 'max', 'replace']);
 const DRIVERS = ['none', 'drums', 'bass', 'vocals', 'other', 'band'];
 
+export const PALETTES = Object.freeze({
+  club: Object.freeze([[0.04, 0.06, 0.72, 0], [0.58, 0.04, 0.85, 0], [0.02, 0.72, 0.95, 0], [0.15, 0.25, 0.85, 0.55]]),
+  ember: Object.freeze([[0.85, 0.06, 0.02, 0], [0.96, 0.36, 0.02, 0], [0.98, 0.68, 0.04, 0], [0.45, 0.18, 0.02, 0.50]]),
+  midnight: Object.freeze([[0.04, 0.06, 0.72, 0], [0.58, 0.04, 0.85, 0], [0.02, 0.72, 0.95, 0], [0.15, 0.25, 0.85, 0.55]]),
+  cyber: Object.freeze([[0.95, 0.02, 0.62, 0], [0.02, 0.88, 0.96, 0], [0.18, 0.12, 0.98, 0], [0.45, 0.05, 0.85, 0.50]]),
+  sunset: Object.freeze([[0.85, 0.06, 0.02, 0], [0.96, 0.36, 0.02, 0], [0.98, 0.68, 0.04, 0], [0.45, 0.18, 0.02, 0.50]]),
+  rave: Object.freeze([[0.02, 0.85, 0.28, 0], [0.52, 0.98, 0.04, 0], [0.02, 0.88, 0.82, 0], [0.20, 0.65, 0.15, 0.65]]),
+  inferno: Object.freeze([[0.92, 0.01, 0.02, 0], [0.98, 0.24, 0.01, 0], [0.98, 0.55, 0.02, 0], [0.65, 0.22, 0.02, 0.65]]),
+  ice: Object.freeze([[0.02, 0.28, 0.75, 0], [0.02, 0.68, 0.92, 0], [0.22, 0.48, 0.98, 0], [0.18, 0.42, 0.75, 0.65]]),
+  royal: Object.freeze([[0.42, 0.02, 0.78, 0], [0.88, 0.02, 0.28, 0], [0.95, 0.65, 0.06, 0], [0.45, 0.12, 0.35, 0.55]]),
+  mono: Object.freeze([[0.35, 0.42, 0.55, 0], [0.65, 0.72, 0.85, 0], [0.85, 0.88, 0.95, 0], [0.55, 0.55, 0.55, 0.85]])
+});
+
+const THEME_LIST = [
+  {
+    id: 'midnight',
+    name: 'Klupska ponoć',
+    description: 'Plava / Cijan / Ljubičasta',
+    colors: PALETTES.midnight,
+    defaultPresets: Object.freeze(['pulse', 'chase', 'sweep', 'strobe', 'flash', 'ripple', 'rain', 'spiral', 'alternate', 'bounce'])
+  },
+  {
+    id: 'cyber',
+    name: 'Cyber Neon',
+    description: 'Magenta / Cijan / Električna plava',
+    colors: PALETTES.cyber,
+    defaultPresets: Object.freeze(['chase', 'sweep', 'strobe', 'flash', 'columns', 'alternate', 'spiral', 'pulse', 'bounce'])
+  },
+  {
+    id: 'sunset',
+    name: 'Topli zalazak',
+    description: 'Crvena / Jantar / Zlatna',
+    colors: PALETTES.sunset,
+    defaultPresets: Object.freeze(['wash', 'pulse', 'wave', 'sweep', 'fire', 'sparkle', 'ripple', 'flash', 'center'])
+  },
+  {
+    id: 'rave',
+    name: 'Acid Rave',
+    description: 'Smaragdna / Limeta / Cijan / Bijela',
+    colors: PALETTES.rave,
+    defaultPresets: Object.freeze(['strobe', 'chase', 'alternate', 'flash', 'pulse', 'spiral', 'bounce', 'columns', 'sweep'])
+  },
+  {
+    id: 'inferno',
+    name: 'Inferno',
+    description: 'Krvavo crvena / Narančasta / Zlatni bljesak',
+    colors: PALETTES.inferno,
+    defaultPresets: Object.freeze(['fire', 'pulse', 'strobe', 'flash', 'chase', 'sweep', 'columns', 'alternate', 'center'])
+  },
+  {
+    id: 'ice',
+    name: 'Arktički kristal',
+    description: 'Ledeno plava / Tirkiz / Hladna bijela',
+    colors: PALETTES.ice,
+    defaultPresets: Object.freeze(['sparkle', 'rain', 'ripple', 'sweep', 'pulse', 'chase', 'strobe', 'flash', 'wave'])
+  },
+  {
+    id: 'royal',
+    name: 'Kraljevski baršun',
+    description: 'Duboka ljubičasta / Grimizna / Zlatna',
+    colors: PALETTES.royal,
+    defaultPresets: Object.freeze(['pulse', 'wave', 'center', 'sweep', 'sparkle', 'columns', 'ripple', 'flash', 'chase'])
+  },
+  {
+    id: 'mono',
+    name: 'Čisti stroboskop',
+    description: 'Topla i hladna bijela',
+    colors: PALETTES.mono,
+    defaultPresets: Object.freeze(['strobe', 'flash', 'pulse', 'chase', 'alternate', 'columns', 'sweep'])
+  }
+];
+for (const theme of THEME_LIST) {
+  Object.freeze(theme);
+  Object.defineProperty(THEME_LIST, theme.id, { value: theme, enumerable: false, configurable: false, writable: false });
+}
+Object.defineProperty(THEME_LIST, 'club', { value: THEME_LIST[0], enumerable: false, configurable: false, writable: false });
+Object.defineProperty(THEME_LIST, 'ember', { value: THEME_LIST[2], enumerable: false, configurable: false, writable: false });
+export const SHOW_THEMES = Object.freeze(THEME_LIST);
+
+export function normalizeColor(color) {
+  if (typeof color === 'string') {
+    const raw = color.trim().replace(/^#/, '');
+    if (raw.length === 3) {
+      const [r, g, b] = raw.split('').map(c => parseInt(c + c, 16) / 255);
+      if ([r, g, b].every(Number.isFinite)) return [clamp(r), clamp(g), clamp(b), 0];
+    }
+    if (raw.length === 6) {
+      const r = parseInt(raw.slice(0, 2), 16) / 255;
+      const g = parseInt(raw.slice(2, 4), 16) / 255;
+      const b = parseInt(raw.slice(4, 6), 16) / 255;
+      if ([r, g, b].every(Number.isFinite)) return [clamp(r), clamp(g), clamp(b), 0];
+    }
+    if (raw.length === 8) {
+      const r = parseInt(raw.slice(0, 2), 16) / 255;
+      const g = parseInt(raw.slice(2, 4), 16) / 255;
+      const b = parseInt(raw.slice(4, 6), 16) / 255;
+      const w = parseInt(raw.slice(6, 8), 16) / 255;
+      if ([r, g, b, w].every(Number.isFinite)) return [clamp(r), clamp(g), clamp(b), clamp(w)];
+    }
+    return [1, 1, 1, 0];
+  }
+  if (Array.isArray(color)) {
+    return [
+      clamp(number(color[0], 1)),
+      clamp(number(color[1], 1)),
+      clamp(number(color[2], 1)),
+      clamp(number(color[3], 0))
+    ];
+  }
+  return [1, 1, 1, 0];
+}
+
 /** Frequency-band driver (like an audio-reactive EQ): the clip is driven by the
  * peak level inside [lowHz, highHz]. Level below `threshold` gives 0, level at
  * `ceiling` gives 1. mode 'gate' snaps to 1 above the threshold (a trigger).
  * `releaseSec` is how long the driver takes to fall back after a peak.
+ * `source` can be 'master' or an isolated stem ('drums', 'bass', 'vocals', 'other').
  */
-export const DEFAULT_BAND = Object.freeze({ lowHz: 40, highHz: 120, threshold: 0.5, ceiling: 1, mode: 'follow', releaseSec: 0.12 });
+export const DEFAULT_BAND = Object.freeze({ source: 'master', lowHz: 40, highHz: 120, threshold: 0.5, ceiling: 1, mode: 'follow', releaseSec: 0.12 });
 export const BAND_PRESETS = Object.freeze([
-  ['Kick', { lowHz: 40, highHz: 110, threshold: 0.6, ceiling: 1, mode: 'gate', releaseSec: 0.14 }],
-  ['Bas', { lowHz: 30, highHz: 180, threshold: 0.4, ceiling: 0.95, mode: 'follow', releaseSec: 0.2 }],
-  ['Snare', { lowHz: 160, highHz: 400, threshold: 0.6, ceiling: 1, mode: 'gate', releaseSec: 0.12 }],
-  ['Vokal', { lowHz: 300, highHz: 3000, threshold: 0.45, ceiling: 1, mode: 'follow', releaseSec: 0.15 }],
-  ['Hi-hat', { lowHz: 6000, highHz: 16000, threshold: 0.5, ceiling: 1, mode: 'gate', releaseSec: 0.06 }],
-  ['Sve', { lowHz: 25, highHz: 18000, threshold: 0.4, ceiling: 1, mode: 'follow', releaseSec: 0.1 }]
+  ['Kick', { source: 'master', lowHz: 40, highHz: 110, threshold: 0.6, ceiling: 1, mode: 'gate', releaseSec: 0.14 }],
+  ['Bas', { source: 'master', lowHz: 30, highHz: 180, threshold: 0.4, ceiling: 0.95, mode: 'follow', releaseSec: 0.2 }],
+  ['Snare', { source: 'master', lowHz: 160, highHz: 400, threshold: 0.6, ceiling: 1, mode: 'gate', releaseSec: 0.12 }],
+  ['Vokal', { source: 'master', lowHz: 300, highHz: 3000, threshold: 0.45, ceiling: 1, mode: 'follow', releaseSec: 0.15 }],
+  ['Hi-hat', { source: 'master', lowHz: 6000, highHz: 16000, threshold: 0.5, ceiling: 1, mode: 'gate', releaseSec: 0.06 }],
+  ['Sve', { source: 'master', lowHz: 25, highHz: 18000, threshold: 0.4, ceiling: 1, mode: 'follow', releaseSec: 0.1 }]
 ]);
+
+export const STEM_BAND_PRESETS = Object.freeze({
+  master: BAND_PRESETS,
+  drums: Object.freeze([
+    ['Kick', { source: 'drums', lowHz: 40, highHz: 110, threshold: 0.55, ceiling: 1, mode: 'gate', releaseSec: 0.14 }],
+    ['Snare', { source: 'drums', lowHz: 160, highHz: 450, threshold: 0.55, ceiling: 1, mode: 'gate', releaseSec: 0.12 }],
+    ['Hi-hat', { source: 'drums', lowHz: 5000, highHz: 16000, threshold: 0.45, ceiling: 1, mode: 'gate', releaseSec: 0.07 }],
+    ['Cijeli bubanj', { source: 'drums', lowHz: 25, highHz: 18000, threshold: 0.35, ceiling: 1, mode: 'follow', releaseSec: 0.12 }],
+    ['Top kick', { source: 'drums', lowHz: 70, highHz: 160, threshold: 0.5, ceiling: 1, mode: 'gate', releaseSec: 0.1 }],
+    ['Sub kick', { source: 'drums', lowHz: 35, highHz: 75, threshold: 0.6, ceiling: 1, mode: 'gate', releaseSec: 0.16 }]
+  ]),
+  bass: Object.freeze([
+    ['Sub bas', { source: 'bass', lowHz: 25, highHz: 75, threshold: 0.45, ceiling: 1, mode: 'follow', releaseSec: 0.2 }],
+    ['Bas linija', { source: 'bass', lowHz: 40, highHz: 180, threshold: 0.4, ceiling: 0.95, mode: 'follow', releaseSec: 0.18 }],
+    ['Slap / Attack', { source: 'bass', lowHz: 600, highHz: 2500, threshold: 0.5, ceiling: 1, mode: 'gate', releaseSec: 0.1 }],
+    ['Cijeli bas', { source: 'bass', lowHz: 25, highHz: 18000, threshold: 0.35, ceiling: 1, mode: 'follow', releaseSec: 0.2 }]
+  ]),
+  vocals: Object.freeze([
+    ['Tijelo vokala', { source: 'vocals', lowHz: 280, highHz: 1100, threshold: 0.4, ceiling: 1, mode: 'follow', releaseSec: 0.15 }],
+    ['Prisutnost', { source: 'vocals', lowHz: 1100, highHz: 3500, threshold: 0.45, ceiling: 1, mode: 'follow', releaseSec: 0.15 }],
+    ['Sibilanti', { source: 'vocals', lowHz: 4000, highHz: 9000, threshold: 0.5, ceiling: 1, mode: 'gate', releaseSec: 0.08 }],
+    ['Cijeli vokal', { source: 'vocals', lowHz: 25, highHz: 18000, threshold: 0.35, ceiling: 1, mode: 'follow', releaseSec: 0.15 }]
+  ]),
+  other: Object.freeze([
+    ['Zrak / Činele', { source: 'other', lowHz: 5000, highHz: 16000, threshold: 0.4, ceiling: 1, mode: 'gate', releaseSec: 0.08 }],
+    ['Sintesajzer', { source: 'other', lowHz: 1000, highHz: 6000, threshold: 0.4, ceiling: 1, mode: 'follow', releaseSec: 0.18 }],
+    ['Cijeli stem', { source: 'other', lowHz: 25, highHz: 18000, threshold: 0.35, ceiling: 1, mode: 'follow', releaseSec: 0.12 }]
+  ])
+});
 
 export function bandErrors(band, path) {
   if (!band || typeof band !== 'object') return [`${path} must be an object`];
@@ -37,19 +179,55 @@ export function bandErrors(band, path) {
   if (!ok(band.threshold, 0, 1) || !ok(band.ceiling, 0, 1) || band.ceiling <= band.threshold) errors.push(`${path} needs 0 ≤ threshold < ceiling ≤ 1`);
   if (!['follow', 'gate'].includes(band.mode)) errors.push(`${path}.mode must be follow or gate`);
   if (!ok(band.releaseSec, 0, 2)) errors.push(`${path}.releaseSec must be 0–2`);
+  if (band.source !== undefined && !['master', 'drums', 'bass', 'vocals', 'other'].includes(band.source)) {
+    errors.push(`${path}.source must be master, drums, bass, vocals or other`);
+  }
   return errors;
 }
 
+const bandHopCache = new WeakMap();
+
 /** Driver level 0–1 of a band at one song time (stateless, so scrubbing is exact). */
 export function bandLevel(analysis, band, timeSec) {
-  const sp = analysis?.spectrum;
-  if (!sp || !band) return 0;
+  const sp = getSpectrumForSource(analysis, band?.source);
+  if (!sp || !band) {
+    if (band && (analysis?.features || analysis?.envelopes)) {
+      const src = (band.source && band.source !== 'master') ? band.source : 'drums';
+      const x = featureAt(analysis, src, timeSec);
+      const span = Math.max(1e-6, band.ceiling - band.threshold);
+      return band.mode === 'gate' ? (x >= band.threshold ? 1 : 0) : clamp((x - band.threshold) / span);
+    }
+    return 0;
+  }
   const hop = sp.hopSec, position = (timeSec - sp.startSec) / hop, base = Math.floor(position), frac = position - base;
   const span = Math.max(1e-6, band.ceiling - band.threshold);
-  const mapped = frame => {
-    const x = rangeLevel(sp, frame, band.lowHz, band.highHz);
-    return band.mode === 'gate' ? (x >= band.threshold ? 1 : 0) : clamp((x - band.threshold) / span);
-  };
+  const totalFrames = sp.frames || 0;
+  let mapped;
+  if (totalFrames > 0) {
+    let byKey = bandHopCache.get(sp);
+    if (!byKey) {
+      byKey = new Map();
+      bandHopCache.set(sp, byKey);
+    }
+    const cacheKey = `${band.lowHz}|${band.highHz}|${band.threshold}|${band.ceiling}|${band.mode}`;
+    let mappedArr = byKey.get(cacheKey);
+    if (!mappedArr) {
+      mappedArr = new Float64Array(totalFrames);
+      const isGate = band.mode === 'gate';
+      const thresh = band.threshold;
+      for (let f = 0; f < totalFrames; f++) {
+        const x = rangeLevel(sp, f, band.lowHz, band.highHz);
+        mappedArr[f] = isGate ? (x >= thresh ? 1 : 0) : clamp((x - thresh) / span);
+      }
+      byKey.set(cacheKey, mappedArr);
+    }
+    mapped = frame => mappedArr[Math.max(0, Math.min(totalFrames - 1, frame))];
+  } else {
+    mapped = frame => {
+      const x = rangeLevel(sp, frame, band.lowHz, band.highHz);
+      return band.mode === 'gate' ? (x >= band.threshold ? 1 : 0) : clamp((x - band.threshold) / span);
+    };
+  }
   const current = mapped(base) * (1 - frac) + mapped(base + 1) * frac;
   if (!(band.releaseSec > 0)) return clamp(current);
   let best = current;
@@ -58,9 +236,17 @@ export function bandLevel(analysis, band, timeSec) {
   return clamp(best);
 }
 
+function hasAudioFeatures(analysis) {
+  if (!analysis || typeof analysis !== 'object') return false;
+  if (analysis.spectrum || analysis.features || analysis.envelopes) return true;
+  if (analysis.drums || analysis.bass || analysis.vocals || analysis.other) return true;
+  return false;
+}
+
 /** 0–1 level of whichever driver the clip uses, without gain; 1 for no driver. */
 export function driverLevel(analysis, clip, timeSec) {
   if (clip.driver === 'none') return 1;
+  if (!hasAudioFeatures(analysis)) return 0.85;
   if (clip.driver === 'band') return bandLevel(analysis, clip.band, timeSec);
   return featureAt(analysis, clip.driver, timeSec);
 }
@@ -160,9 +346,16 @@ function envelope(clip, localTime) {
 function featureAt(analysis, driver, timeSec) {
   if (driver === 'none') return 1;
   const features = analysis?.features;
-  const samples = features?.[driver] ?? analysis?.envelopes?.[driver] ?? analysis?.[driver];
+  let samples = features?.[driver] ?? features?.stems?.[driver] ?? analysis?.envelopes?.[driver] ?? analysis?.[driver];
+  if (!(Array.isArray(samples) || ArrayBuffer.isView(samples)) || !samples.length) {
+    if (driver === 'vocals' && features && !features.vocals && !features.stems?.vocals) {
+      samples = analysis?.waveform?.mid ?? features.drums ?? features.bass;
+    } else if (driver === 'other' && features && !features.other && !features.stems?.other) {
+      samples = analysis?.waveform?.high ?? features.drums ?? features.bass;
+    }
+  }
   if (!(Array.isArray(samples) || ArrayBuffer.isView(samples)) || !samples.length) return 0;
-  const hop = number(features?.hopSec, number(analysis?.hopSec, 0));
+  const hop = number(features?.hopSec, number(analysis?.hopSec, number(analysis?.waveform?.binSec, 0)));
   if (typeof samples[0] === 'number') {
     if (hop <= 0) return clamp(number(samples[0]));
     const startSec = number(features?.startSec, 0);
@@ -216,7 +409,9 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
 
       if (dir === 'ttb' || dir === 'btt') {
         const barRow = id => (id[1] === '1' ? 0 : (id[1] === '2' ? 1 : 2));
-        let activeRows = [...new Set(activeBars.map(barRow))].sort((a, b) => a - b);
+        const hasOuterTop = activeBars.includes('L1') || activeBars.includes('R1');
+        const effectiveBars = hasOuterTop ? activeBars : activeBars.filter(id => id !== 'C1');
+        let activeRows = [...new Set(effectiveBars.map(barRow))].sort((a, b) => a - b);
         if (!activeRows.length) activeRows = [0, 1, 2];
         if (dir === 'btt') activeRows = [...activeRows].reverse();
         const stepIndex = Math.floor(localTime / stepSec) % activeRows.length;
@@ -248,13 +443,6 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
         : BAR_IDS.filter(id => clip.targets.includes(id));
       if (!activeBars.length) return 0;
 
-      // Support direction and motionMode, backward compatible with legacy chaseMode
-      let dir = clip?.direction || (clip?.chaseMode === 'col' ? 'ttb' : 'ltr');
-      let motion = clip?.motionMode || (clip?.chaseMode === 'syncRow' ? 'sync' : 'serial');
-
-      let position = 0;
-      let pathLen = 0;
-
       const barCol = id => (id[0] === 'L' ? 0 : (id[0] === 'C' ? 1 : 2));
       const barRow = id => (id[1] === '1' ? 0 : (id[1] === '2' ? 1 : 2));
 
@@ -262,8 +450,29 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       const hasLeft = targetList.some(id => id.startsWith('L'));
       const hasRight = targetList.some(id => id.startsWith('R'));
       const hasCenter = targetList.some(id => id.startsWith('C'));
+      const activeColCount = new Set(targetList.map(id => id[0])).size;
       const hasMultipleRows = new Set(targetList.map(id => id[1])).size > 1;
       const isDualFlank = hasLeft && hasRight && !hasCenter && hasMultipleRows;
+      const isSingleColumn = activeColCount === 1 && hasMultipleRows;
+
+      // Support direction and motionMode, backward compatible with legacy chaseMode.
+      // If only a single vertical column (e.g. L1-L3) is targeted and no explicit vertical direction is set, default to ttb.
+      let dir = clip?.direction || (clip?.chaseMode === 'col' || isSingleColumn ? 'ttb' : 'ltr');
+      if (isSingleColumn && (dir === 'ltr' || dir === 'rtl')) {
+        dir = dir === 'rtl' ? 'btt' : 'ttb';
+      }
+      let motion = clip?.motionMode || (clip?.chaseMode === 'syncRow' ? 'sync' : 'serial');
+      if (isSingleColumn) motion = 'serial';
+
+      // Physical inter-bar gap compensation:
+      // Each bar is 120 cm (12 pixels -> 10 cm/pixel). Between L1 and L2 (and L2 and L3)
+      // there is ~55–60 cm (5.8 pixels) of empty physical space.
+      const gapMode = p.gap || 'physical';
+      const verticalGapPx = gapMode === 'none' ? 0 : (gapMode === 'tight' ? 3.0 : (gapMode === 'wide' ? 9.0 : (Number.isFinite(p.gapCm) ? p.gapCm / 10 : 5.8)));
+      const horizGapPx = gapMode === 'wide' ? 4.0 : (gapMode === 'tight' ? 1.5 : 0);
+
+      let position = 0;
+      let pathLen = 0;
 
       if (isDualFlank) {
         const isRev = dir === 'btt' || dir === 'rtl';
@@ -277,38 +486,53 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
         const idx = sideBars.indexOf(targetId);
         if (idx === -1) return 0;
 
-        pathLen = sideBars.length * PIXELS_PER_BAR;
+        const n = sideBars.length;
+        const gap = n > 1 ? verticalGapPx : 0;
+        const endFlyout = gap > 0 ? Math.min(3.4, gap * 0.6) : 0;
         const px = isRev ? (PIXELS_PER_BAR - 1 - pixel) : pixel;
-        position = idx * PIXELS_PER_BAR + px;
+        position = idx * (PIXELS_PER_BAR + gap) + px;
+        pathLen = n * PIXELS_PER_BAR + Math.max(0, n - 1) * gap + endFlyout;
       } else if (motion === 'sync') {
+        const hasOuterTop = activeBars.includes('L1') || activeBars.includes('R1');
+        const effectiveSyncBars = hasOuterTop ? activeBars : activeBars.filter(id => id !== 'C1');
         if (dir === 'ttb') {
-          let activeRows = [...new Set(activeBars.map(barRow))].sort((a, b) => a - b);
+          let activeRows = [...new Set(effectiveSyncBars.map(barRow))].sort((a, b) => a - b);
           if (!activeRows.length) activeRows = [0, 1, 2];
           const rowIdx = activeRows.indexOf(row);
           if (rowIdx === -1) return 0;
-          pathLen = activeRows.length * PIXELS_PER_BAR;
-          position = rowIdx * PIXELS_PER_BAR + pixel;
+          const n = activeRows.length;
+          const gap = n > 1 ? verticalGapPx : 0;
+          const endFlyout = gap > 0 ? Math.min(3.4, gap * 0.6) : 0;
+          position = rowIdx * (PIXELS_PER_BAR + gap) + pixel;
+          pathLen = n * PIXELS_PER_BAR + Math.max(0, n - 1) * gap + endFlyout;
         } else if (dir === 'btt') {
-          let activeRows = [...new Set(activeBars.map(barRow))].sort((a, b) => b - a);
+          let activeRows = [...new Set(effectiveSyncBars.map(barRow))].sort((a, b) => b - a);
           if (!activeRows.length) activeRows = [2, 1, 0];
           const rowIdx = activeRows.indexOf(row);
           if (rowIdx === -1) return 0;
-          pathLen = activeRows.length * PIXELS_PER_BAR;
-          position = rowIdx * PIXELS_PER_BAR + ((PIXELS_PER_BAR - 1) - pixel);
+          const n = activeRows.length;
+          const gap = n > 1 ? verticalGapPx : 0;
+          const endFlyout = gap > 0 ? Math.min(3.4, gap * 0.6) : 0;
+          position = rowIdx * (PIXELS_PER_BAR + gap) + ((PIXELS_PER_BAR - 1) - pixel);
+          pathLen = n * PIXELS_PER_BAR + Math.max(0, n - 1) * gap + endFlyout;
         } else if (dir === 'rtl') {
           let activeCols = [...new Set(activeBars.map(barCol))].sort((a, b) => b - a);
           if (!activeCols.length) activeCols = [2, 1, 0];
           const colIdx = activeCols.indexOf(col);
           if (colIdx === -1) return 0;
-          pathLen = activeCols.length * PIXELS_PER_BAR;
-          position = colIdx * PIXELS_PER_BAR + ((PIXELS_PER_BAR - 1) - pixel);
+          const n = activeCols.length;
+          const gap = n > 1 ? horizGapPx : 0;
+          position = colIdx * (PIXELS_PER_BAR + gap) + ((PIXELS_PER_BAR - 1) - pixel);
+          pathLen = n * PIXELS_PER_BAR + Math.max(0, n - 1) * gap;
         } else { // 'ltr'
           let activeCols = [...new Set(activeBars.map(barCol))].sort((a, b) => a - b);
           if (!activeCols.length) activeCols = [0, 1, 2];
           const colIdx = activeCols.indexOf(col);
           if (colIdx === -1) return 0;
-          pathLen = activeCols.length * PIXELS_PER_BAR;
-          position = colIdx * PIXELS_PER_BAR + pixel;
+          const n = activeCols.length;
+          const gap = n > 1 ? horizGapPx : 0;
+          position = colIdx * (PIXELS_PER_BAR + gap) + pixel;
+          pathLen = n * PIXELS_PER_BAR + Math.max(0, n - 1) * gap;
         }
       } else {
         // 'serial' mode: single beam traversing through active panels in directional sequence
@@ -328,22 +552,50 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
           revPixel = false;
         }
 
-        const pathBars = ORDER.filter(id => activeBars.includes(id));
+        const serialBars = hasMultipleRows ? activeBars.filter(id => id !== 'C1') : activeBars;
+        const pathBars = ORDER.filter(id => serialBars.includes(id));
         const idx = pathBars.indexOf(targetId);
         if (idx === -1) return 0;
 
-        pathLen = pathBars.length * PIXELS_PER_BAR;
+        // Accumulate physical distance along pathBars including the 55-60 cm vertical gap
+        // whenever consecutive bars step across vertical rows (e.g. L1 -> L2 -> L3).
+        let cursor = 0;
+        let targetBarStart = 0;
+        let totalGapAdded = 0;
+        for (let i = 0; i < pathBars.length; i++) {
+          if (i > 0) {
+            const prevId = pathBars[i - 1];
+            const curId = pathBars[i];
+            const rowStep = Math.abs(barRow(curId) - barRow(prevId));
+            const sameCol = barCol(curId) === barCol(prevId);
+            const stepGap = (sameCol && rowStep > 0)
+              ? verticalGapPx * rowStep
+              : (rowStep > 0 ? verticalGapPx * 0.5 : horizGapPx);
+            cursor += stepGap;
+            totalGapAdded += stepGap;
+          }
+          if (i === idx) targetBarStart = cursor;
+          cursor += PIXELS_PER_BAR;
+        }
+        const endFlyout = totalGapAdded > 0 ? Math.min(3.4, verticalGapPx * 0.6) : 0;
+        pathLen = cursor + endFlyout;
         const px = revPixel ? (PIXELS_PER_BAR - 1 - pixel) : pixel;
-        position = idx * PIXELS_PER_BAR + px;
+        position = targetBarStart + px;
       }
 
       if (pathLen <= 0) return 0;
 
-      // Sweep rate: one full loop of active path in stepSec
-      const head = ((localTime / stepSec) * pathLen) % pathLen;
+      // Sweep rate: constant physical velocity (cm/s) across both bars and 58 cm gaps.
+      // When p.oneShot is true (Live Board hit shots), each runner travels once from start
+      // to end and exits off the last bar without wrapping around modulo pathLen.
+      const head = p.oneShot
+        ? (localTime / stepSec) * pathLen
+        : ((localTime / stepSec) * pathLen) % pathLen;
       let d = head - position;
-      if (d < -pathLen / 2) d += pathLen;
-      if (d > pathLen / 2) d -= pathLen;
+      if (!p.oneShot) {
+        if (d < -pathLen / 2) d += pathLen;
+        if (d > pathLen / 2) d -= pathLen;
+      }
 
       // Beam profile: needle (1.0), razor (2.2), beam (4.2), comet (7.5)
       let tail;
@@ -354,10 +606,24 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       else tail = speed >= 8 ? 2.0 : (speed >= 4 ? 2.8 : (speed >= 2 ? 3.8 : 5.0));
 
       const glow = Number.isFinite(p.glow) ? p.glow : 0;
-      if (d < -0.8 || d > tail * 2.8) return glow * 0.15;
+      const baseGlow = glow * 0.15;
 
-      const dist = d < 0 ? Math.abs(d) * 1.8 : d;
-      return clamp(glow * 0.15 + (1 - glow * 0.15) * Math.exp(-dist / tail));
+      // Smooth sub-pixel Gaussian leading wavefront (prevents abrupt 1-frame step pop when entering a bar after a gap)
+      const lead = Math.min(1.6, Math.max(0.75, tail * 0.34));
+      const maxLead = lead * 2.1;
+      const maxTail = tail * 3.1;
+      if (d < -maxLead || d > maxTail) return baseGlow;
+
+      let beamVal = 0;
+      if (d < 0) {
+        const u = -d / lead;
+        const taper = 1 - (-d / maxLead);
+        beamVal = Math.exp(-u * u * 1.15) * taper;
+      } else {
+        const taper = 1 - Math.pow(d / maxTail, 2.2);
+        beamVal = Math.exp(-d / tail) * Math.max(0, taper);
+      }
+      return clamp(baseGlow + (1 - baseGlow) * beamVal);
     }
     case 'flash': {
       if (p.focus || p.decay) {
@@ -376,10 +642,12 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       const angle = p.angle || 'diag';
       const density = p.density || 'med';
       const freqMult = density === 'low' ? 0.5 : (density === 'high' ? 2.5 : 1.0);
+      // 1.4833 accounts for 120 cm bar + 58 cm physical vertical gap between rows
+      const physY = row * 1.4833 + y;
 
-      let spatialPos = (col + row * 0.65 + y);
+      let spatialPos = (col + physY * 0.45);
       if (angle === 'horiz') spatialPos = col * 1.3 + y * 0.15;
-      else if (angle === 'vert') spatialPos = row + y;
+      else if (angle === 'vert') spatialPos = physY;
 
       const phase = (spatialPos * freqMult * Math.PI - timeSec * Math.PI / beatSec);
       let w = 0;
@@ -394,8 +662,8 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       return clamp(.15 + .85 * w);
     }
     case 'strobe': {
-      const rate = p.rate || '1/4';
-      const duty = p.duty || 'normal';
+      const rate = p.rate || p.division || '1/4';
+      const duty = p.duty || p.shutter || 'normal';
       const pat = p.pattern || 'all';
 
       let div = 4;
@@ -405,7 +673,17 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       else if (rate === '1/32') div = 32;
       else if (rate === 'chaos') div = 11.3;
 
-      const dutyCut = duty === 'sharp' ? 0.16 : (duty === 'wide' ? 0.55 : 0.35);
+      let dutyCut = (duty === 'sharp' || duty === 'razor') ? 0.16 : (duty === 'wide' ? 0.55 : 0.35);
+
+      // Protection against DDP/WLED aliasing at 40 FPS (25ms frame boundary):
+      // Ensure strobe on-time does not fall below 25 ms (0.025s) even at high BPMs.
+      const periodSec = beatSec / div;
+      const effPeriodSec = speed > 0 ? (periodSec / speed) : periodSec;
+      if (effPeriodSec > 0) {
+        const minDuty = Math.min(0.85, 0.025 / effPeriodSec);
+        if (dutyCut < minDuty) dutyCut = minDuty;
+      }
+
       let offset = 0;
       if (pat === 'checker') offset = ((row + col) % 2 === 0) ? 0 : 0.5;
       else if (pat === 'chaos') offset = ((row * 7 + col * 13) % 10) / 10;
@@ -429,7 +707,7 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       return clamp(Math.pow((raw - thresh) / (1 - thresh || 1), power));
     }
     case 'spiral': {
-      const dir = p.direction || 'cw';
+      const dir = p.direction || p.dir || 'cw';
       const tailMode = p.tail || 'med';
       const centerMode = p.center || 'pulse';
 
@@ -458,7 +736,7 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
     }
     case 'ripple': {
       const origin = p.origin || 'center';
-      const dir = p.direction || 'out';
+      const dir = p.direction || p.dir || 'out';
       const width = p.width || 'sharp';
 
       let oCol = 1, oRow = 1;
@@ -473,17 +751,18 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       return Math.exp(-rPhase * decayPower);
     }
     case 'rain': {
-      const streak = p.streak || 'streak';
+      const streak = p.streak || p.style || 'streak';
       const spread = p.spread || 'random';
       const colShift = spread === 'sync' ? 0 : (col * 0.28);
-      const vert = row + y;
-      const phase = ((localTime / (beatSec * 1.5) - vert * 0.35 + colShift) % 1 + 1) % 1;
-      const dropPower = streak === 'drops' ? 9.0 : (streak === 'beam' ? 2.5 : 5.0);
+      // 1.4833 accounts for 120 cm bar + 58 cm physical vertical gap between rows
+      const vert = row * 1.4833 + y;
+      const phase = ((localTime / (beatSec * 1.5) - vert * 0.26 + colShift) % 1 + 1) % 1;
+      const dropPower = streak === 'drops' ? 9.0 : ((streak === 'beam' || streak === 'heavy') ? 2.5 : 5.0);
       return Math.exp(-phase * dropPower);
     }
     case 'bounce': {
       const axis = p.axis || 'horiz';
-      const curve = p.curve || 'pendulum';
+      const curve = p.curve || p.physics || 'pendulum';
       const rawPos = (localTime / beatSec) % 2;
       let sweep = 0;
       if (curve === 'elastic') {
@@ -574,21 +853,26 @@ function blend(dst, src, mode) {
 /** Render the final RGBW frame. baseFrame may be {bars} from LightingEngine or
  * a bare bars map. Explicit timeline.blackout or baseFrame.blackout forces zero.
  */
-export function renderTimelineFrame(timeline, analysis, timeSec, baseFrame = null) {
-  const check = validateTimeline(timeline);
-  if (!check.valid) throw new TypeError(`Invalid timeline: ${check.errors.join('; ')}`);
+export function renderTimelineFrame(timeline, analysis, timeSec, baseFrame = null, skipValidation = false) {
+  if (!skipValidation) {
+    const check = validateTimeline(timeline);
+    if (!check.valid) throw new TypeError(`Invalid timeline: ${check.errors.join('; ')}`);
+  }
   if (!Number.isFinite(timeSec)) throw new TypeError('timeSec must be finite');
   const out = zeroBars();
   if (timeline.blackout || baseFrame?.blackout) return { bars: out };
   const input = baseFrame?.bars ?? baseFrame;
-  for (const id of BAR_IDS) for (let p = 0; p < PIXELS_PER_BAR; p++) for (let c = 0; c < 4; c++) out[id][p][c] = clamp(number(input?.[id]?.[p]?.[c]), 0, 153) / 153;
+  if (input) {
+    for (const id of BAR_IDS) for (let p = 0; p < PIXELS_PER_BAR; p++) for (let c = 0; c < 4; c++) out[id][p][c] = clamp(number(input?.[id]?.[p]?.[c]), 0, 255) / 255;
+  }
   const beatSec = 60 / timeline.bpm;
   for (const layer of timeline.layers) {
     if (!layer.enabled || layer.opacity === 0) continue;
     for (const clip of layer.clips) {
       const localTime = timeSec - clip.startSec;
       if (localTime < 0 || localTime >= clip.durationSec) continue;
-      const strength = clamp(layer.opacity * envelope(clip, localTime) * (clip.driver === 'none' ? 1 : driverLevel(analysis, clip, Number.isFinite(clip.driverTimeSec) ? clip.driverTimeSec : timeSec) * clip.driverGain));
+      const gain = Number.isFinite(clip.driverGain) ? clip.driverGain : 1;
+      const strength = clamp(layer.opacity * envelope(clip, localTime) * (clip.driver === 'none' ? 1 : driverLevel(analysis, clip, Number.isFinite(clip.driverTimeSec) ? clip.driverTimeSec : timeSec) * gain));
       if (strength <= 0) continue;
       const speed = (Number.isFinite(clip.speed) && clip.speed > 0) ? clip.speed : 1;
       const animLocalTime = localTime * speed;
@@ -603,14 +887,14 @@ export function renderTimelineFrame(timeline, analysis, timeSec, baseFrame = nul
       }
     }
   }
-  for (const id of BAR_IDS) for (const pixel of out[id]) for (let c = 0; c < 4; c++) pixel[c] = Math.round(clamp(pixel[c]) * 153);
+  for (const id of BAR_IDS) for (const pixel of out[id]) for (let c = 0; c < 4; c++) pixel[c] = Math.round(clamp(pixel[c]) * 255);
   return { bars: out };
 }
 
 /** Build an editable energetic first pass; uses structural track sections when
  * available to produce dynamic, section-tailored lighting arrangements.
  */
-export function createAutoShow(analysis, options = {}) {
+export function createAutoShow(analysis = {}, options = {}) {
   const durationSec = number(analysis?.durationSec, number(analysis?.duration, 0));
   if (durationSec <= 0) throw new RangeError('analysis.durationSec must be positive');
   const bpm = clamp(number(analysis?.bpm, 120), 40, 240);
@@ -618,17 +902,113 @@ export function createAutoShow(analysis, options = {}) {
   const beatOffsetSec = number(analysis?.beatOffsetSec, typeof beats?.[0] === 'number' ? beats[0] : number(beats?.[0]?.timeSec, 0));
   const energy = clamp(number(options.energy, .8));
   const division = options.snapSubdivision ?? 1;
-  const palette = {
-    club: [[.03, .02, .42, 0], [.62, .01, .46, 0], [.02, .62, .85, 0], [0, 0, 0, .48]],
-    ember: [[.45, .02, 0, 0], [.9, .18, .01, 0], [.95, .04, .12, 0], [0, 0, 0, .35]],
-    ice: [[0, .18, .55, 0], [0, .52, .8, 0], [.15, .3, .9, 0], [0, 0, 0, .5]]
-  }[options.palette ?? 'club'];
-  if (!palette) throw new RangeError('unknown palette');
 
-  const makeClip = (id, preset, color, driver = 'none', targets = 'all', startSec = 0, length = durationSec, gain = 1, speed = 1) => ({
-    id, startSec, durationSec: length, preset, targets, color, driver, driverGain: gain, speed,
-    keyframes: [{ timeSec: 0, value: 0 }, { timeSec: Math.min(.4, length / 3), value: 1 }, { timeSec: length - Math.min(.4, length / 3), value: 1 }, { timeSec: length, value: 0 }]
-  });
+  let palette;
+  if (Array.isArray(options.customColors) && options.customColors.length > 0) {
+    const normalized = options.customColors.map(normalizeColor);
+    palette = [0, 1, 2, 3].map(i => normalized[i % normalized.length]);
+  } else {
+    const paletteKey = options.palette ?? options.theme ?? options.style ?? 'club';
+    palette = PALETTES[paletteKey];
+    if (!palette) throw new RangeError('unknown palette');
+  }
+
+  let allowedSet = null;
+  if (options.allowedPresets instanceof Set || Array.isArray(options.allowedPresets)) {
+    const valid = [...options.allowedPresets].filter(p => TIMELINE_PRESETS.includes(p));
+    if (valid.length > 0) allowedSet = new Set(valid);
+  }
+
+  const pickPreset = (preferred, fallbacks = [], set = allowedSet) => {
+    if (!set || set.size === 0) return preferred;
+    if (set.has(preferred)) return preferred;
+    for (const fb of fallbacks) {
+      if (set.has(fb)) return fb;
+    }
+    return set.values().next().value;
+  };
+
+  const sanitizeKeyframes = (keys, len) => {
+    if (!Array.isArray(keys) || !keys.length) return [{ timeSec: 0, value: 1 }];
+    const sorted = keys
+      .map(k => ({ timeSec: clamp(number(k.timeSec, 0), 0, len), value: clamp(number(k.value, 1), 0, 1), ...(k.ease ? { ease: k.ease } : {}) }))
+      .sort((a, b) => a.timeSec - b.timeSec);
+    const out = [];
+    for (const k of sorted) {
+      if (!out.length || k.timeSec > out.at(-1).timeSec + 1e-6) {
+        out.push(k);
+      } else {
+        out[out.length - 1] = k;
+      }
+    }
+    return out.length ? out : [{ timeSec: 0, value: 1 }];
+  };
+
+  const makeClip = (id, preset, color, driver = 'other', targets = 'all', startSec = 0, length = durationSec, gain = 1, speed = 1, params = null, keyframes = null, band = null, timing = 'beat') => {
+    const finalPreset = pickPreset(preset);
+    const defaultKeys = [{ timeSec: 0, value: 0 }, { timeSec: Math.min(.4, length / 3), value: 1 }, { timeSec: length - Math.min(.4, length / 3), value: 1 }, { timeSec: length, value: 0 }];
+    return {
+      id,
+      startSec,
+      durationSec: length,
+      preset: finalPreset,
+      targets,
+      color: normalizeColor(color),
+      driver,
+      driverGain: gain,
+      speed,
+      timing,
+      ...(params ? { params } : {}),
+      ...(band ? { band } : {}),
+      keyframes: sanitizeKeyframes(keyframes || defaultKeys, length)
+    };
+  };
+
+  // Strip warm white (W) channel on non-drop sections so drops own the full RGBW punch
+  const rgbOnly = (c, scale = 1) => {
+    let [r = 0, g = 0, b = 0, w = 0] = normalizeColor(c);
+    if (r + g + b < 0.05 && w > 0) {
+      r = w * 0.55;
+      g = w * 0.58;
+      b = w * 0.65;
+    }
+    return [clamp(r * scale), clamp(g * scale), clamp(b * scale), 0];
+  };
+
+  // Boost RGB and warm white (W) channel for maximum drop punch
+  const dropColor = (c, minW = 0.35, boost = 1.25) => {
+    let [r = 0, g = 0, b = 0, w = 0] = normalizeColor(c);
+    if (r + g + b < 0.05 && w > 0) {
+      r = w * 0.85;
+      g = w * 0.85;
+      b = w * 0.90;
+    }
+    const maxCh = Math.max(r, g, b, 0.01);
+    const s = maxCh < 0.75 ? Math.min(boost, 0.96 / maxCh) : boost;
+    return [clamp(r * s), clamp(g * s), clamp(b * s), clamp(Math.max(w, minW))];
+  };
+
+  const ceilKeys = (len, ceiling = 0.5, isPreDrop = false) => {
+    const fadeIn = Math.min(0.35, len * 0.18);
+    const fadeOut = Math.min(0.35, len * 0.18);
+    return sanitizeKeyframes([
+      { timeSec: 0, value: clamp(ceiling * 0.45) },
+      { timeSec: fadeIn, value: clamp(ceiling) },
+      { timeSec: Math.max(fadeIn + 0.01, len - fadeOut), value: clamp(ceiling) },
+      { timeSec: len, value: isPreDrop ? clamp(ceiling * 0.85) : clamp(ceiling * 0.35) }
+    ], len);
+  };
+
+  const buildRampKeys = (len, startVal = 0.45, endVal = 0.88) => sanitizeKeyframes([
+    { timeSec: 0, value: clamp(startVal) },
+    { timeSec: len, value: clamp(endVal) }
+  ], len);
+
+  const dropKeys = (len) => sanitizeKeyframes([
+    { timeSec: 0, value: 1 },
+    { timeSec: Math.max(0.01, len - Math.min(0.18, len * 0.1)), value: 1 },
+    { timeSec: len, value: 0.9 }
+  ], len);
 
   const sections = (Array.isArray(analysis?.sections) && analysis.sections.length)
     ? analysis.sections
@@ -642,102 +1022,213 @@ export function createAutoShow(analysis, options = {}) {
     const synthClips = [];
     const accentClips = [];
 
-    const whiteBlinder = [0.1, 0.15, 0.25, 0.95];
-    const perimeter = ['L1', 'C1', 'R1', 'R2', 'R3', 'C3', 'L3', 'L2'];
-    const cross = ['C1', 'L2', 'C2', 'R2', 'C3'];
-    const corners = ['L1', 'R1', 'L3', 'R3'];
-    const bottomRow = ['L3', 'C3', 'R3'];
+    const whiteBlinder = [1, 0.98, 0.92, 1];
+    const wings = ['L1', 'R1', 'L2', 'R2', 'L3', 'R3'];
     const centerCol = ['C1', 'C2', 'C3'];
+    const leftCol = ['L1', 'L2', 'L3'];
+    const rightCol = ['R1', 'R2', 'R3'];
+    const cross = ['C1', 'L2', 'C2', 'R2', 'C3'];
+    const upperCross = ['C1', 'L2', 'C2', 'R2'];
+    const crossNoCenter = ['C1', 'L2', 'R2', 'C3'];
+    const bottomRow = ['L3', 'C3', 'R3'];
+    const perimeter = ['L1', 'C1', 'R1', 'R2', 'R3', 'C3', 'L3', 'L2'];
+    const corners = ['L1', 'R1', 'L3', 'R3'];
+
+    const beatSec = 60 / bpm;
+    const barSec = 4 * beatSec;
+
+    const hasVocals = Boolean(analysis?.features?.vocals || analysis?.features?.stems?.vocals);
+
+    // Tuned frequency-band gates directly modeled on user's curated Sounds project
+    const kickGate = {
+      source: analysis?.features?.drums ? 'drums' : 'master',
+      lowHz: 40, highHz: 110, threshold: 0.55, ceiling: 1, mode: 'gate', releaseSec: 0.14
+    };
+    const snareGate = {
+      source: analysis?.features?.drums ? 'drums' : 'master',
+      lowHz: 180, highHz: 450, threshold: 0.60, ceiling: 1, mode: 'gate', releaseSec: 0.12
+    };
+    const vocalFollow = {
+      source: hasVocals ? 'vocals' : 'other',
+      lowHz: 350, highHz: 3400, threshold: 0.38, ceiling: 0.95, mode: 'follow', releaseSec: 0.15
+    };
 
     let dropIdx = 0;
     let buildIdx = 0;
     let verseIdx = 0;
 
+    const dropSections = sections.filter(s => s.type === 'drop');
+
     sections.forEach((sec, idx) => {
       const start = Math.max(0, sec.startSec);
-      const len = Math.max(0.1, Math.min(sec.durationSec, durationSec - start));
+      const rawLen = Math.max(0.1, Math.min(sec.durationSec ?? ((sec.endSec ?? durationSec) - start), durationSec - start));
+      if (rawLen <= 0.05) return;
+
+      const nextSec = sections[idx + 1];
+      const isPreDrop = nextSec && nextSec.type === 'drop';
+      let blackoutSec = 0;
+      if (isPreDrop) {
+        const dropNumber = dropSections.indexOf(nextSec) + 1;
+        let targetSec;
+        if (Number.isFinite(options.preDropBlackoutSec)) {
+          targetSec = options.preDropBlackoutSec;
+        } else if (Number.isFinite(options.preDropBlackoutBeats)) {
+          targetSec = options.preDropBlackoutBeats * beatSec;
+        } else {
+          // Drop 1: 1 beat; Drop 2 and later: 2 beats (half bar)
+          const blackoutBeats = dropNumber <= 1 ? 1 : 2;
+          targetSec = blackoutBeats * beatSec;
+        }
+        blackoutSec = Math.min(rawLen * 0.5, Math.max(0.05, targetSec));
+      }
+      const len = rawLen - blackoutSec;
       if (len <= 0.05) return;
 
       if (sec.type === 'intro') {
-        washClips.push(makeClip(`wash-intro-${idx}`, 'wave', palette[0], 'none', 'all', start, len));
-        synthClips.push(makeClip(`syn-intro-${idx}`, 'sparkle', [0.1, 0.3, 0.6, 0.08], 'none', perimeter, start, len));
-        if (len >= 6) {
-          const pStart = start + len / 2, pLen = len / 2;
-          rhythmClips.push(makeClip(`rhy-intro-${idx}`, 'pulse', palette[1], 'drums', centerCol, pStart, pLen, 1.1));
-        }
-        if (len >= 2) {
-          accentClips.push(makeClip(`acc-intro-${idx}`, 'flash', whiteBlinder, 'none', ['C2'], start + len - Math.min(1.6, len / 2), Math.min(1.6, len / 2), 1));
+        // Intro: controlled 0.38–0.52 ceiling, deep RGB without W, stem-driven
+        washClips.push(makeClip(`wash-intro-${idx}`, pickPreset('pulse', ['wash', 'wave']), rgbOnly(palette[0], 0.85), 'other', wings, start, len, 0.98, 1, { floor: 0.2, curve: 'breath' }, ceilKeys(len, 0.44, isPreDrop), null, 'beat'));
+        synthClips.push(makeClip(`syn-intro-${idx}`, pickPreset('pulse', ['center', 'wave', 'wash']), rgbOnly(palette[1], 0.85), 'vocals', centerCol, start, len, 1.0, 1, { floor: 0.18, curve: 'swell' }, ceilKeys(len, 0.46, isPreDrop), null, 'bar'));
+        // Final 1-2 bars of intro: transition sweeps driven by drums
+        if (len >= barSec) {
+          const swLen = Math.min(barSec, len / 2);
+          const swStart = start + len - swLen;
+          accentClips.push(makeClip(`acc-intro-sw1-${idx}`, pickPreset('sweep', ['chase', 'wave', 'pulse']), rgbOnly(palette[2], 0.9), 'drums', wings, swStart, swLen, 1.02, 1, null, ceilKeys(swLen, 0.48, isPreDrop), null, 'beat'));
+          if (swLen >= 2 * beatSec) {
+            accentClips.push(makeClip(`acc-intro-sw2-${idx}`, pickPreset('sweep', ['flash', 'chase', 'pulse']), rgbOnly(palette[2], 1.0), 'drums', centerCol, swStart + swLen - beatSec, beatSec, 1.05, 1, null, ceilKeys(beatSec, 0.52, isPreDrop), null, 'beat'));
+          }
         }
       } else if (sec.type === 'build') {
         buildIdx++;
-        washClips.push(makeClip(`wash-bld-${idx}`, 'rain', palette[0], 'none', 'all', start, len));
-        synthClips.push(makeClip(`syn-bld-${idx}`, 'sweep', palette[2], 'none', 'all', start, len));
-        rhythmClips.push(makeClip(`rhythm-bld-${idx}`, 'pulse', palette[1], 'drums', 'all', start, len, 1.3));
-        accentClips.push(makeClip(`acc-bld-${idx}`, 'spiral', palette[2], 'none', perimeter, start, len));
-        const preDropLen = Math.min(3.16, Math.max(0.8, len / 3));
-        if (len > preDropLen + 0.5) {
-          accentClips.push(makeClip(`acc-bld-strobe-${idx}`, 'strobe', whiteBlinder, 'drums', cross, start + len - preDropLen, preDropLen, 1.4));
+        // Build-up: ramp 0.45 -> 0.88, accelerating speed 1 -> 2 -> 4 -> 8 -> 16, cutting to pre-drop blackout
+        const climaxLen = Math.min(len * 0.65, Math.max(4 * beatSec, 2 * barSec));
+        const firstLen = len - climaxLen;
+        if (firstLen > 0.5) {
+          synthClips.push(makeClip(`syn-bld-bnc-${idx}`, pickPreset('bounce', ['pulse', 'chase', 'wave']), rgbOnly(palette[1], 0.95), 'other', crossNoCenter, start, firstLen, 1.1, 1, { physics: 'elastic', axis: 'horiz' }, buildRampKeys(firstLen, 0.45, 0.64)));
+          rhythmClips.push(makeClip(`rhy-bld-open-${idx}`, pickPreset('chase', ['columns', 'pulse', 'alternate']), rgbOnly(palette[0], 0.95), 'drums', wings, start, firstLen, 1.1, 1, null, buildRampKeys(firstLen, 0.45, 0.64), null, 'beat'));
         }
+
+        const climaxStart = start + firstLen;
+        // Dual column chase speed 16 on kick gate
+        bassClips.push(makeClip(`bass-bld-chL-${idx}`, pickPreset('chase', ['columns', 'pulse', 'sweep']), rgbOnly(palette[2], 1.0), 'band', leftCol, climaxStart, climaxLen, 1.25, 16, null, buildRampKeys(climaxLen, 0.60, 0.88), kickGate, '4bar'));
+        rhythmClips.push(makeClip(`rhy-bld-chR-${idx}`, pickPreset('chase', ['columns', 'pulse', 'sweep']), rgbOnly(palette[2], 1.0), 'band', rightCol, climaxStart, climaxLen, 1.25, 16, null, buildRampKeys(climaxLen, 0.60, 0.88), kickGate, '4bar'));
+        // Snare gate flash on all
+        accentClips.push(makeClip(`acc-bld-fl-${idx}`, pickPreset('flash', ['strobe', 'pulse']), rgbOnly(palette[3], 1.0), 'band', 'all', climaxStart, climaxLen, 1.3, 0.5, null, buildRampKeys(climaxLen, 0.55, 0.88), snareGate, 'beat'));
+
+        // Accelerating spiral (2 -> 4 -> 8 -> 16) on perimeter in the final 2-4 bars
+        const spiralPhase = Math.min(climaxLen, 4 * barSec);
+        const spStart = climaxStart + climaxLen - spiralPhase;
+        const barChunk = Math.max(0.05, spiralPhase / 4);
+        const spPreset = pickPreset('spiral', ['chase', 'sweep', 'pulse']);
+        washClips.push(makeClip(`wash-bld-sp1-${idx}`, spPreset, rgbOnly(palette[2], 0.95), 'band', perimeter, spStart, barChunk, 1.1, 2, null, buildRampKeys(barChunk, 0.52, 0.62), vocalFollow));
+        washClips.push(makeClip(`wash-bld-sp2-${idx}`, spPreset, rgbOnly(palette[2], 0.98), 'band', perimeter, spStart + barChunk, barChunk, 1.15, 4, null, buildRampKeys(barChunk, 0.62, 0.72), vocalFollow));
+        washClips.push(makeClip(`wash-bld-sp3-${idx}`, spPreset, rgbOnly(palette[2], 1.0), 'band', perimeter, spStart + 2 * barChunk, barChunk, 1.2, 8, null, buildRampKeys(barChunk, 0.72, 0.80), vocalFollow));
+        washClips.push(makeClip(`wash-bld-sp4-${idx}`, spPreset, rgbOnly(palette[2], 1.0), 'band', perimeter, spStart + 3 * barChunk, barChunk, 1.25, 16, null, buildRampKeys(barChunk, 0.80, 0.88), vocalFollow));
       } else if (sec.type === 'drop') {
         dropIdx++;
         const dropMod = dropIdx % 3;
-        washClips.push(makeClip(`wash-drop-${idx}`, dropMod === 2 ? 'wave' : 'wash', palette[0], 'none', 'all', start, len));
 
+        // 1. Core Kick Rhythm: full rig or perimeter kick-gated punch at max brightness
+        if (dropMod === 1) {
+          rhythmClips.push(makeClip(`rhy-drop-kick-${idx}`, pickPreset('pulse', ['alternate', 'columns', 'flash']), dropColor(palette[0], 0.42), 'band', 'all', start, len, 1.45, 1, { floor: 0.25, curve: 'punch' }, dropKeys(len), kickGate, 'beat'));
+        } else {
+          const chunkSec = 2 * beatSec;
+          let cCount = 0;
+          for (let t = start; t < start + len; t += chunkSec) {
+            const cLen = Math.min(chunkSec, start + len - t);
+            if (cLen > 0.05) {
+              const isEven = (cCount % 2 === 0);
+              const preset = isEven
+                ? pickPreset('alternate', ['columns', 'pulse', 'chase'])
+                : pickPreset('columns', ['pulse', 'alternate', 'chase']);
+              const targets = isEven ? perimeter : 'all';
+              const col = isEven ? dropColor(palette[1], 0.42) : dropColor(palette[0], 0.40);
+              rhythmClips.push(makeClip(`rhy-drop-alt-${idx}-${cCount}`, preset, col, 'band', targets, t, cLen, 1.42, 2, null, dropKeys(cLen), kickGate, 'beat'));
+              cCount++;
+            }
+          }
+        }
+
+        // 2. Bas layer: heavy sub-bass punch on bottomRow ['L3', 'C3', 'R3']
+        bassClips.push(makeClip(`bass-drop-${idx}`, pickPreset('pulse', ['fire', 'wash', 'columns']), dropColor(palette[1], 0.45), 'bass', bottomRow, start, len, 1.45, 1, { floor: 0.2, curve: 'punch' }, dropKeys(len)));
+
+        // 3. Wings high-speed stem-driven motion ['L1','R1','L2','R2','L3','R3']
         if (len > 32) {
           const mid = start + Math.round(len / 2);
-          const len1 = mid - start;
-          const len2 = start + len - mid;
-          bassClips.push(makeClip(`bass-drop-p1-${idx}`, 'ripple', palette[1], 'bass', 'all', start, len1, 1.35));
-          rhythmClips.push(makeClip(`rhy-drop-p1-${idx}`, 'alternate', palette[2], 'drums', 'all', start, len1, 1.35));
-          synthClips.push(makeClip(`syn-drop-p1-${idx}`, 'bounce', palette[1], 'none', 'all', start, len1, 1.1));
-
-          bassClips.push(makeClip(`bass-drop-p2-${idx}`, 'fire', palette[1], 'bass', [...bottomRow, 'C2'], mid, len2, 1.3));
-          rhythmClips.push(makeClip(`rhy-drop-p2-${idx}`, 'spiral', palette[2], 'drums', perimeter, mid, len2, 1.3));
-          synthClips.push(makeClip(`syn-drop-p2-${idx}`, 'columns', palette[0], 'none', 'all', mid, len2, 1.1));
-        } else if (dropMod === 1) {
-          bassClips.push(makeClip(`bass-drop-${idx}`, 'ripple', palette[1], 'bass', 'all', start, len, 1.35));
-          rhythmClips.push(makeClip(`rhythm-drop-${idx}`, 'alternate', palette[1], 'drums', 'all', start, len, 1.4));
-          synthClips.push(makeClip(`syn-drop-${idx}`, 'bounce', palette[2], 'vocals', 'all', start, len, 1.2));
-        } else if (dropMod === 2) {
-          bassClips.push(makeClip(`bass-drop-${idx}`, 'fire', palette[1], 'bass', [...bottomRow, 'C2'], start, len, 1.3));
-          rhythmClips.push(makeClip(`rhythm-drop-${idx}`, 'spiral', palette[2], 'drums', perimeter, start, len, 1.3));
-          synthClips.push(makeClip(`syn-drop-${idx}`, 'sweep', palette[0], 'none', 'all', start, len, 1.1));
+          synthClips.push(makeClip(`syn-drop-rn1-${idx}`, pickPreset('chase', ['rain', 'sweep', 'wave', 'pulse']), dropColor(palette[2], 0.38), 'other', wings, start, mid - start, 1.30, 4, null, dropKeys(mid - start)));
+          synthClips.push(makeClip(`syn-drop-sw2-${idx}`, pickPreset('sweep', ['chase', 'wave', 'rain', 'pulse']), dropColor(palette[0], 0.38), 'drums', wings, mid, start + len - mid, 1.30, 4, null, dropKeys(start + len - mid)));
         } else {
-          bassClips.push(makeClip(`bass-drop-${idx}`, 'ripple', palette[2], 'bass', 'all', start, len, 1.4));
-          rhythmClips.push(makeClip(`rhythm-drop-${idx}`, 'alternate', palette[1], 'drums', cross, start, len, 1.4));
-          synthClips.push(makeClip(`syn-drop-${idx}`, 'center', palette[2], 'vocals', ['C2'], start, len, 1.3));
+          synthClips.push(makeClip(`syn-drop-rn-${idx}`, pickPreset('chase', ['rain', 'sweep', 'wave', 'pulse']), dropColor(palette[2], 0.38), 'other', wings, start, len, 1.30, 4, null, dropKeys(len)));
         }
+
+        // 4. Center Cross: ripple / bounce / spiral driven by drums
+        washClips.push(makeClip(`wash-drop-rip-${idx}`, pickPreset('ripple', ['bounce', 'spiral', 'pulse', 'wash']), dropColor(palette[1], 0.40), 'drums', cross, start, len, 1.35, 2, { width: 'wide' }, dropKeys(len)));
+
+        // 5. Accents: instant beat-1 blinder + strobe on upperCross (never C3) + corner snare flashes
+        const hitLen = Math.min(0.06, beatSec * 0.25);
+        accentClips.push(makeClip(`acc-drop-hit-${idx}`, pickPreset('flash', ['strobe', 'pulse']), whiteBlinder, 'drums', 'all', start, hitLen, 1.50, 1, { decay: 'instant', focus: 'all' }, dropKeys(hitLen)));
 
         const strobeLen = Math.min(6.32, Math.max(0.8, len / 2));
-        accentClips.push(makeClip(`acc-drop-str-${idx}`, 'strobe', whiteBlinder, 'drums', cross, start, strobeLen, 1.4));
-        if (len > strobeLen + 4) {
-          accentClips.push(makeClip(`acc-drop-fl-${idx}`, 'flash', palette[3], 'drums', corners, start + strobeLen, len - strobeLen, 1.2));
+        accentClips.push(makeClip(`acc-drop-str-${idx}`, pickPreset('strobe', ['flash', 'pulse']), whiteBlinder, 'drums', upperCross, start, strobeLen, 1.45, 1, { duty: 'sharp', rate: '1/4' }, dropKeys(strobeLen)));
+        if (len > strobeLen + 0.5) {
+          accentClips.push(makeClip(`acc-drop-fl-${idx}`, pickPreset('flash', ['strobe', 'pulse']), whiteBlinder, 'band', corners, start + strobeLen, len - strobeLen, 1.45, 1, { decay: 'fast', focus: 'all' }, dropKeys(len - strobeLen), snareGate));
         }
       } else if (sec.type === 'breakdown') {
-        washClips.push(makeClip(`wash-brk-${idx}`, 'sparkle', palette[3], 'none', 'all', start, len));
-        synthClips.push(makeClip(`syn-brk-${idx}`, 'center', palette[2], 'vocals', ['C2'], start, len, 1.4));
-        accentClips.push(makeClip(`acc-brk-${idx}`, 'wave', palette[0], 'none', corners, start, len, 1.0));
+        // Breakdown: controlled 0.35–0.50 ceiling, intimate center spine vocal pulse + soft wing movement
+        synthClips.push(makeClip(`syn-brk-vox-${idx}`, pickPreset('pulse', ['center', 'wave', 'wash']), rgbOnly(palette[2], 0.88), 'vocals', centerCol, start, len, 1.05, 1, { floor: 0.2, curve: 'breath' }, ceilKeys(len, 0.46, isPreDrop), null, 'bar'));
+
+        // 1-bar cycling textures on wings driven by 'other'
+        const fxCycle = ['wave', 'rain', 'sparkle', 'sweep'];
+        let cycleIdx = 0;
+        for (let t = start; t < start + len; t += barSec) {
+          const bLen = Math.min(barSec, start + len - t);
+          if (bLen <= 0.05) continue;
+          const rawFx = fxCycle[cycleIdx % fxCycle.length];
+          const fx = pickPreset(rawFx, ['wave', 'wash', 'pulse', 'sweep']);
+          const isEnd = (t + bLen >= start + len - 1e-4);
+          washClips.push(makeClip(`wash-brk-${rawFx}-${idx}-${cycleIdx}`, fx, rgbOnly(palette[0], 0.85), 'other', wings, t, bLen, 0.98, 1, null, ceilKeys(bLen, 0.40, isPreDrop && isEnd)));
+          cycleIdx++;
+        }
+        // 2-beat chunks of alternate on perimeter driven by 'drums'
+        const chunkSec = 2 * beatSec;
+        let cCount = 0;
+        for (let t = start; t < start + len; t += chunkSec * 2) {
+          const cLen = Math.min(chunkSec, start + len - t);
+          if (cLen > 0.05) {
+            const isEnd = (t + cLen >= start + len - 1e-4);
+            rhythmClips.push(makeClip(`rhy-brk-alt-${idx}-${cCount}`, pickPreset('alternate', ['pulse', 'columns', 'chase']), rgbOnly(palette[3], 0.82), 'drums', perimeter, t, cLen, 0.98, 1, null, ceilKeys(cLen, 0.38, isPreDrop && isEnd)));
+            cCount++;
+          }
+        }
       } else if (sec.type === 'outro') {
-        washClips.push(makeClip(`wash-out-${idx}`, 'wave', palette[0], 'none', 'all', start, len));
-        synthClips.push(makeClip(`syn-out-${idx}`, 'rain', palette[2], 'none', centerCol, start, len));
+        const outroKeys = (l) => sanitizeKeyframes([
+          { timeSec: 0, value: 0.50 },
+          { timeSec: Math.max(0.01, l * 0.85), value: 0.22 },
+          { timeSec: l, value: isPreDrop ? 0.22 : 0.15 }
+        ], l);
+        washClips.push(makeClip(`wash-out-${idx}`, pickPreset('wave', ['wash', 'pulse']), rgbOnly(palette[0], 0.85), 'other', wings, start, len, 0.95, 1, null, outroKeys(len)));
+        synthClips.push(makeClip(`syn-out-${idx}`, pickPreset('rain', ['wave', 'wash', 'pulse']), rgbOnly(palette[2], 0.85), 'vocals', centerCol, start, len, 0.95, 1, null, outroKeys(len)));
       } else {
+        // Verse: controlled 0.50–0.65 ceiling, deep RGB without W, stem-driven
         verseIdx++;
-        washClips.push(makeClip(`wash-vrs-${idx}`, verseIdx % 2 === 0 ? 'wave' : 'wash', palette[0], 'none', 'all', start, len));
-        bassClips.push(makeClip(`bass-vrs-${idx}`, 'columns', palette[1], 'bass', 'all', start, len, 1.2));
-        synthClips.push(makeClip(`syn-vrs-${idx}`, 'center', palette[2], 'vocals', ['C2'], start, len, 1.35));
-        rhythmClips.push(makeClip(`rhythm-vrs-${idx}`, 'bounce', palette[1], 'drums', 'all', start, len, 1.1));
-        accentClips.push(makeClip(`acc-vrs-${idx}`, 'sparkle', [0.1, 0.3, 0.8, 0.25], 'other', corners, start, len, 1.1));
+        const hasStrongBass = (analysis?.features?.bass || []).some(v => v > 0.25);
+        washClips.push(makeClip(`wash-vrs-${idx}`, pickPreset('rain', ['wave', 'wash', 'chase', 'pulse']), rgbOnly(palette[0], 0.92), 'other', wings, start, len, 1.05, 2, null, ceilKeys(len, 0.56, isPreDrop)));
+        if (hasStrongBass) {
+          bassClips.push(makeClip(`bass-vrs-${idx}`, pickPreset('pulse', ['columns', 'wash']), rgbOnly(palette[1], 0.92), 'bass', bottomRow, start, len, 1.12, 1, { floor: 0.15, curve: 'punch' }, ceilKeys(len, 0.58, isPreDrop), null, 'beat'));
+        }
+        synthClips.push(makeClip(`syn-vrs-${idx}`, pickPreset('pulse', ['wave', 'center', 'wash']), rgbOnly(palette[2], 0.92), 'vocals', centerCol, start, len, 1.15, 1, { floor: 0.2, curve: 'breath' }, ceilKeys(len, 0.62, isPreDrop), null, 'half'));
+        rhythmClips.push(makeClip(`rhy-vrs-${idx}`, pickPreset('bounce', ['chase', 'columns', 'alternate', 'pulse']), rgbOnly(palette[1], 0.92), 'drums', crossNoCenter, start, len, 1.10, 2, { physics: 'elastic', axis: 'horiz' }, ceilKeys(len, 0.58, isPreDrop)));
+        accentClips.push(makeClip(`acc-vrs-${idx}`, pickPreset('sparkle', ['flash', 'pulse', 'strobe']), rgbOnly(palette[2], 0.88), 'drums', corners, start, len, 1.08, 1, null, ceilKeys(len, 0.52, isPreDrop)));
       }
     });
 
     const timeline = {
       version: 1, durationSec, bpm, beatOffsetSec, blackout: options.blackout === true,
       layers: [
-        { id: 'base-wash', name: 'Atmosfera', color: '#3aa0ff', enabled: true, blend: 'screen', opacity: .35 + energy * .2, clips: washClips },
-        { id: 'bass', name: 'Sub i bas', color: '#b25cff', enabled: true, blend: 'add', opacity: .45 + energy * .25, clips: bassClips },
-        { id: 'synth', name: 'Sint i vokal', color: '#00d2ff', enabled: true, blend: 'screen', opacity: .4 + energy * .25, clips: synthClips },
-        { id: 'motion', name: 'Ritam i kretanje', color: '#ffb23a', enabled: true, blend: 'screen', opacity: .4 + energy * .3, clips: rhythmClips },
-        { id: 'drums', name: 'Akcenti i stroboskop', color: '#ff5c8a', enabled: true, blend: 'add', opacity: .35 + energy * .3, clips: accentClips }
+        { id: 'base-wash', name: 'Atmosfera i baza', color: '#3aa0ff', enabled: true, blend: 'screen', opacity: .72, clips: washClips },
+        { id: 'bass', name: 'Sub i bas', color: '#b25cff', enabled: true, blend: 'add', opacity: .82, clips: bassClips },
+        { id: 'synth', name: 'Sint i vokal', color: '#00d2ff', enabled: true, blend: 'screen', opacity: .72, clips: synthClips },
+        { id: 'motion', name: 'Ritam i kretanje', color: '#ffb23a', enabled: true, blend: 'add', opacity: .82, clips: rhythmClips },
+        { id: 'drums', name: 'Akcenti i stroboskop', color: '#ff5c8a', enabled: true, blend: 'add', opacity: .88, clips: accentClips }
       ]
     };
     const check = validateTimeline(timeline);
@@ -752,18 +1243,117 @@ export function createAutoShow(analysis, options = {}) {
     const start = snapTimeToBeat(Math.max(0, target), bpm, beatOffsetSec, division, beats);
     if (start >= durationSec) break;
     const length = Math.min(phraseSec, durationSec - start);
-    if (length > 0) chaseClips.push(makeClip(`chase-${chaseClips.length + 1}`, 'chase', palette[2], 'none', 'all', start, length));
+    if (length > 0) chaseClips.push(makeClip(`chase-${chaseClips.length + 1}`, pickPreset('chase', ['sweep', 'pulse', 'alternate']), palette[2], 'drums', 'all', start, length, 1.15));
   }
   const timeline = {
     version: 1, durationSec, bpm, beatOffsetSec, blackout: options.blackout === true,
     layers: [
-      { id: 'base-wash', enabled: true, blend: 'screen', opacity: .3 + energy * .22, clips: [makeClip('wash', 'wash', palette[0])] },
-      { id: 'bass', enabled: true, blend: 'add', opacity: .5 + energy * .22, clips: [makeClip('bass-columns', 'columns', palette[1], 'bass', 'all', 0, durationSec, 1.2)] },
+      { id: 'base-wash', enabled: true, blend: 'screen', opacity: .3 + energy * .22, clips: [makeClip('wash', pickPreset('wash', ['pulse', 'wave']), palette[0], 'other', 'all', 0, durationSec, 1.0)] },
+      { id: 'bass', enabled: true, blend: 'add', opacity: .5 + energy * .22, clips: [makeClip('bass-columns', pickPreset('columns', ['pulse', 'wash']), palette[1], 'bass', 'all', 0, durationSec, 1.2)] },
       { id: 'motion', enabled: true, blend: 'screen', opacity: .35 + energy * .3, clips: chaseClips },
-      { id: 'drums', enabled: true, blend: 'add', opacity: .3 + energy * .28, clips: [makeClip('drum-accents', 'flash', palette[3], 'drums', ['C1', 'L2', 'C2', 'R2', 'C3'], 0, durationSec, 1.3)] }
+      { id: 'drums', enabled: true, blend: 'add', opacity: .3 + energy * .28, clips: [makeClip('drum-accents', pickPreset('flash', ['strobe', 'pulse']), palette[3], 'drums', ['C1', 'L2', 'C2', 'R2', 'C3'], 0, durationSec, 1.3)] }
     ]
   };
   const check = validateTimeline(timeline);
   if (!check.valid) throw new TypeError(`Auto show generation failed: ${check.errors.join('; ')}`);
+  return timeline;
+}
+
+/** Replace clips within [section.startSec, section.endSec) across timeline layers
+ * with newly generated clips for that section's type and selected theme/options.
+ */
+export function regenerateSectionClips(timeline, analysis, sectionIndex, options = {}) {
+  if (!timeline || typeof timeline !== 'object' || !Array.isArray(timeline.layers)) {
+    throw new TypeError('timeline must be a valid timeline object');
+  }
+  const durationSec = number(timeline.durationSec, number(analysis?.durationSec, 0));
+  const rawSections = (Array.isArray(analysis?.sections) && analysis.sections.length)
+    ? analysis.sections
+    : detectSections(analysis);
+
+  let idx = -1;
+  if (typeof sectionIndex === 'number' && Number.isInteger(sectionIndex)) {
+    idx = sectionIndex;
+  } else if (typeof sectionIndex === 'string') {
+    idx = rawSections.findIndex(s => s.id === sectionIndex);
+  } else if (sectionIndex && typeof sectionIndex === 'object') {
+    idx = rawSections.findIndex(s => s === sectionIndex || (s.id && s.id === sectionIndex.id) || (Math.abs((s.startSec ?? -1) - (sectionIndex.startSec ?? -2)) < 1e-3));
+  }
+  if (idx < 0 || idx >= rawSections.length) {
+    throw new RangeError(`Invalid sectionIndex: ${sectionIndex}`);
+  }
+
+  const effectiveSections = rawSections.map((sec, i) => {
+    if (i !== idx) return { ...sec };
+    const overrideType = options.sectionType || options.type || sec.type;
+    return { ...sec, type: overrideType };
+  });
+
+  const targetSec = effectiveSections[idx];
+  const secStart = Math.max(0, number(targetSec.startSec, 0));
+  const secDur = Math.max(0.1, number(targetSec.durationSec, number(targetSec.endSec, durationSec) - secStart));
+  const secEnd = Math.min(durationSec, Number.isFinite(targetSec.endSec) ? targetSec.endSec : (secStart + secDur));
+
+  const effectiveAnalysis = {
+    ...(analysis || {}),
+    durationSec: Math.max(20, durationSec),
+    bpm: number(analysis?.bpm, number(timeline.bpm, 120)),
+    beatOffsetSec: number(analysis?.beatOffsetSec, number(timeline.beatOffsetSec, 0)),
+    sections: effectiveSections.length >= 2 ? effectiveSections : [
+      targetSec,
+      { id: 'sec-pad', type: 'outro', startSec: secEnd, durationSec: Math.max(0.5, Math.max(20, durationSec) - secEnd) }
+    ]
+  };
+
+  const generated = createAutoShow(effectiveAnalysis, options);
+
+  for (const genLayer of generated.layers) {
+    let targetLayer = timeline.layers.find(l => l.id === genLayer.id);
+    if (!targetLayer) {
+      targetLayer = { ...genLayer, clips: [] };
+      timeline.layers.push(targetLayer);
+    }
+
+    // Remove or trim existing clips that overlap [secStart, secEnd)
+    const keptClips = [];
+    for (const c of targetLayer.clips) {
+      const cStart = c.startSec;
+      const cEnd = c.startSec + c.durationSec;
+      if (cStart >= secStart - 1e-4 && cStart < secEnd - 1e-4) {
+        continue;
+      }
+      if (cStart < secStart - 1e-4 && cEnd > secStart + 1e-4) {
+        const newDur = Math.max(0.05, secStart - cStart);
+        const trimmedKeys = (c.keyframes || [{ timeSec: 0, value: 1 }])
+          .map(k => ({ ...k, timeSec: clamp(k.timeSec, 0, newDur) }))
+          .filter((k, ki, arr) => ki === 0 || k.timeSec > arr[ki - 1].timeSec + 1e-6);
+        keptClips.push({ ...c, durationSec: newDur, keyframes: trimmedKeys.length ? trimmedKeys : [{ timeSec: 0, value: 1 }] });
+        continue;
+      }
+      keptClips.push(c);
+    }
+
+    const usedIds = new Set(keptClips.map(c => c.id));
+    const sectionNewClips = genLayer.clips
+      .filter(c => c.startSec >= secStart - 1e-4 && c.startSec < secEnd - 1e-4 && c.startSec < durationSec)
+      .map(c => {
+        let clipId = c.id;
+        let suffix = 1;
+        while (usedIds.has(clipId)) {
+          clipId = `${c.id}-r${suffix++}`;
+        }
+        usedIds.add(clipId);
+        const clampedDur = Math.min(c.durationSec, Math.max(0.05, durationSec - c.startSec));
+        return {
+          ...c,
+          id: clipId,
+          durationSec: clampedDur,
+          keyframes: c.keyframes.map(k => ({ ...k, timeSec: clamp(k.timeSec, 0, clampedDur) }))
+        };
+      });
+
+    targetLayer.clips = [...keptClips, ...sectionNewClips].sort((a, b) => a.startSec - b.startSec);
+  }
+
   return timeline;
 }

@@ -1,0 +1,17 @@
+{
+  "name": "ledicated",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LEDicated — 3×3 RGBW LED Show Studio, LAN Collaboration & WLED/DDP Controller",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node studio-light-baseline/app/server.mjs",
+    "open": "node studio-light-baseline/app/server.mjs --open",
+    "local": "node studio-light-baseline/app/server.mjs --local-only",
+    "test": "npm --prefix studio-light-baseline/app test",
+    "build": "npm --prefix studio-light-baseline/app run build"
+  }
+}

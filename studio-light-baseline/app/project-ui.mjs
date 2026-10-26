@@ -277,12 +277,12 @@ export function initProjectUI() {
       if (freeze) { if (frozenSec === null) frozenSec = songTime(); } else frozenSec = null;
       const time = clamp((frozenSec ?? songTime()) + offsetSec, 0, duration());
       if (performance.now() >= calibrateFrom && performance.now() < calibrateUntil) {
-        const white = Math.round(100 * clamp(Number($('brightness').value) / 60, 0, 1));
+        const white = Math.round(100 * clamp(Number($('brightness').value) / 100, 0, 1));
         return { bars: Object.fromEntries(BAR_IDS.map(id => [id, Array.from({ length: 12 }, () => [0, 0, 0, white])])) };
       }
       const black = { bars: Object.fromEntries(BAR_IDS.map(id => [id, Array.from({ length: 12 }, () => [0, 0, 0, 0])])) };
       const rendered = renderTimelineFrame(timeline, analysis, time, black);
-      const master = clamp(Number($('brightness').value) / 60, 0, 1);
+      const master = clamp(Number($('brightness').value) / 100, 0, 1);
       for (const id of BAR_IDS) for (const pixel of rendered.bars[id]) for (let channel = 0; channel < 4; channel++) pixel[channel] = Math.round(pixel[channel] * master);
       return rendered;
     },

@@ -41,7 +41,7 @@ const explanations = {
   offset: 'Ručni vremenski pomak svjetla za live scene.',
   'auto-show': 'Automatski mijenjaj live scene nakon izabranog broja taktova.',
   freeze: 'Zadrži trenutni svjetlosni kadar.',
-  blackout: 'Odmah ugasi svjetla i zaustavi izlaz. Esc aktivira blackout.',
+  blackout: 'Odmah ugasi ili vrati svjetla. Tipka Esc radi kao prekidač (toggle).',
   'set-save': 'Spremi označene pjesme u lokalni set.',
   'set-update': 'Ažuriraj naziv i pjesme odabranog seta.',
   'set-delete': 'Ukloni odabrani set; pjesme ostaju u biblioteci.'

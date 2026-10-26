@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BAR_IDS, PIXELS_PER_BAR } from './engine.mjs';
-import { createAutoShow, renderTimelineFrame, snapTimeToBeat, validateTimeline, TIMELINE_PRESETS } from './timeline.mjs';
+import {
+  createAutoShow,
+  regenerateSectionClips,
+  renderTimelineFrame,
+  snapTimeToBeat,
+  validateTimeline,
+  TIMELINE_PRESETS,
+  PALETTES,
+  SHOW_THEMES
+} from './timeline.mjs';
 
 const empty = () => ({ bars: Object.fromEntries(BAR_IDS.map(id => [id, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])])) });
 const clip = (overrides = {}) => ({
@@ -56,13 +65,13 @@ test('beat snap follows tempo or supplied irregular beat grid', () => {
   assert.ok(show.layers.find(layer => layer.id === 'motion').clips.every(item => item.startSec >= 0));
 });
 
-test('all channels cap at 153, and explicit blackout overrides clips', () => {
+test('all channels cap at 255, and explicit blackout overrides clips', () => {
   const base = empty();
   base.bars.C2[0] = [255, 300, 999, 160];
   const show = timeline([clip({ color: [1, 1, 1, 1] })]);
   const lit = renderTimelineFrame(show, null, 1, base);
-  for (const id of BAR_IDS) for (const pixel of lit.bars[id]) for (const channel of pixel) assert.ok(Number.isInteger(channel) && channel >= 0 && channel <= 153);
-  assert.deepEqual(lit.bars.C2[0], [153, 153, 153, 153]);
+  for (const id of BAR_IDS) for (const pixel of lit.bars[id]) for (const channel of pixel) assert.ok(Number.isInteger(channel) && channel >= 0 && channel <= 255);
+  assert.deepEqual(lit.bars.C2[0], [255, 255, 255, 255]);
   assert.ok(renderTimelineFrame({ ...show, blackout: true }, null, 1, base).bars.C2.every(pixel => pixel.every(v => v === 0)));
   assert.ok(renderTimelineFrame(show, null, 1, { ...base, blackout: true }).bars.C2.every(pixel => pixel.every(v => v === 0)));
 });
@@ -87,7 +96,7 @@ test('audio driver samples align with features.startSec', () => {
   const atSecond = renderTimelineFrame(show, analysis, .75).bars.C2[0][3];
   assert.equal(atFirst, 0);
   assert.ok(between > 0 && between < atSecond);
-  assert.equal(atSecond, 153);
+  assert.equal(atSecond, 255);
 });
 
 test('all 16 presets render valid bounded RGBW frames without throwing', () => {
@@ -99,7 +108,7 @@ test('all 16 presets render valid bounded RGBW frames without throwing', () => {
       assert.equal(frame.bars[id].length, 12);
       for (const px of frame.bars[id]) {
         for (let c = 0; c < 4; c++) {
-          assert.ok(px[c] >= 0 && px[c] <= 153, `${preset} channel ${c} out of bounds: ${px[c]}`);
+          assert.ok(px[c] >= 0 && px[c] <= 255, `${preset} channel ${c} out of bounds: ${px[c]}`);
         }
       }
     }
@@ -308,6 +317,178 @@ test('chase with rub targets plays both sides simultaneously (L and R columns in
   assert.equal(maxL3, maxR3, 'L3 and R3 must match');
   assert.deepEqual(fLate.bars.L3, fLate.bars.R3, 'L3 and R3 pixels must match exactly');
 });
+
+test('SHOW_THEMES exports all rich themes and createAutoShow honors palette, customColors, and allowedPresets', () => {
+  const expectedThemeIds = ['midnight', 'cyber', 'sunset', 'rave', 'inferno', 'ice', 'royal', 'mono'];
+  for (const id of expectedThemeIds) {
+    assert.ok(PALETTES[id], `PALETTES missing ${id}`);
+    assert.equal(PALETTES[id].length, 4);
+    const theme = SHOW_THEMES.find(t => t.id === id);
+    assert.ok(theme, `SHOW_THEMES missing ${id}`);
+    assert.equal(SHOW_THEMES[id], theme, `SHOW_THEMES.${id} property matches entry`);
+    assert.ok(theme.name && theme.description);
+    assert.equal(theme.colors, PALETTES[id]);
+    assert.ok(Array.isArray(theme.defaultPresets) && theme.defaultPresets.length >= 4);
+    assert.ok(theme.defaultPresets.every(p => TIMELINE_PRESETS.includes(p)));
+  }
+
+  const analysis = {
+    durationSec: 90,
+    bpm: 128,
+    sections: [
+      { id: 's1', type: 'intro', startSec: 0, durationSec: 12 },
+      { id: 's2', type: 'build', startSec: 12, durationSec: 12 },
+      { id: 's3', type: 'drop', startSec: 24, durationSec: 24 },
+      { id: 's4', type: 'breakdown', startSec: 48, durationSec: 12 },
+      { id: 's5', type: 'verse', startSec: 60, durationSec: 16 },
+      { id: 's6', type: 'outro', startSec: 76, durationSec: 14 }
+    ]
+  };
+
+  for (const id of expectedThemeIds) {
+    const show = createAutoShow(analysis, { palette: id });
+    assert.equal(validateTimeline(show).valid, true, `Theme ${id} produced invalid timeline`);
+  }
+
+  // Test customColors (hex strings and RGBW arrays) + allowedPresets restriction
+  const customShow = createAutoShow(analysis, {
+    customColors: ['#ff0055', '#00ffcc', [0.2, 0.4, 1, 0], '#ffffff80'],
+    allowedPresets: ['pulse', 'strobe']
+  });
+  assert.equal(validateTimeline(customShow).valid, true);
+  const allClips = customShow.layers.flatMap(l => l.clips);
+  assert.ok(allClips.length > 0);
+  for (const c of allClips) {
+    assert.ok(
+      c.preset === 'pulse' || c.preset === 'strobe',
+      `Clip ${c.id} used disallowed preset ${c.preset}`
+    );
+  }
+
+  // Short fallback track also honors allowedPresets
+  const shortShow = createAutoShow({ durationSec: 10, bpm: 120 }, { allowedPresets: new Set(['pulse', 'strobe']) });
+  assert.equal(validateTimeline(shortShow).valid, true);
+  for (const c of shortShow.layers.flatMap(l => l.clips)) {
+    assert.ok(c.preset === 'pulse' || c.preset === 'strobe');
+  }
+});
+
+test('every clip generated by createAutoShow uses an active audio stem or band driver', () => {
+  const analysis = {
+    durationSec: 100,
+    bpm: 130,
+    features: {
+      hopSec: 0.5,
+      drums: [0.8, 0.4, 0.9, 0.3],
+      bass: [0.7, 0.5, 0.85, 0.4],
+      vocals: [0.6, 0.7, 0.5, 0.4],
+      other: [0.5, 0.6, 0.7, 0.5]
+    },
+    sections: [
+      { id: 's1', type: 'intro', startSec: 0, durationSec: 15 },
+      { id: 's2', type: 'verse', startSec: 15, durationSec: 15 },
+      { id: 's3', type: 'build', startSec: 30, durationSec: 15 },
+      { id: 's4', type: 'drop', startSec: 45, durationSec: 25 },
+      { id: 's5', type: 'breakdown', startSec: 70, durationSec: 15 },
+      { id: 's6', type: 'outro', startSec: 85, durationSec: 15 }
+    ]
+  };
+
+  const show = createAutoShow(analysis, { palette: 'cyber' });
+  const clips = show.layers.flatMap(l => l.clips);
+  assert.ok(clips.length >= 15);
+  for (const c of clips) {
+    assert.ok(
+      c.driver !== 'none' || c.durationSec <= 0.08,
+      `Clip ${c.id} has static driver='none' with duration ${c.durationSec}s`
+    );
+    assert.notEqual(c.driver, 'none', `Clip ${c.id} should be stem or band driven`);
+  }
+});
+
+test('drop sections render with significantly higher average and peak brightness than intro, verse, and breakdown', () => {
+  const analysis = {
+    durationSec: 80,
+    bpm: 120,
+    sections: [
+      { id: 's1', type: 'intro', startSec: 0, durationSec: 16 },
+      { id: 's2', type: 'verse', startSec: 16, durationSec: 16 },
+      { id: 's3', type: 'breakdown', startSec: 32, durationSec: 16 },
+      { id: 's4', type: 'drop', startSec: 48, durationSec: 20 },
+      { id: 's5', type: 'outro', startSec: 68, durationSec: 12 }
+    ]
+  };
+
+  const show = createAutoShow(analysis, { palette: 'rave' });
+
+  const sectionStats = (startSec, endSec) => {
+    let sum = 0;
+    let peak = 0;
+    let count = 0;
+    for (let t = startSec + 0.1; t < endSec - 1.2; t += 0.1) {
+      const frame = renderTimelineFrame(show, analysis, t);
+      let frameSum = 0;
+      for (const id of BAR_IDS) {
+        for (const px of frame.bars[id]) {
+          frameSum += (px[0] + px[1] + px[2] + px[3]) / (4 * 255);
+        }
+      }
+      const frameAvg = frameSum / (BAR_IDS.length * PIXELS_PER_BAR);
+      sum += frameAvg;
+      if (frameAvg > peak) peak = frameAvg;
+      count++;
+    }
+    return { avg: sum / Math.max(1, count), peak };
+  };
+
+  const intro = sectionStats(0, 16);
+  const verse = sectionStats(16, 32);
+  const breakdown = sectionStats(32, 48);
+  const drop = sectionStats(48, 68);
+
+  assert.ok(drop.avg > intro.avg * 1.8, `Drop avg (${drop.avg.toFixed(3)}) must be much brighter than Intro avg (${intro.avg.toFixed(3)})`);
+  assert.ok(drop.avg > verse.avg * 1.4, `Drop avg (${drop.avg.toFixed(3)}) must be significantly brighter than Verse avg (${verse.avg.toFixed(3)})`);
+  assert.ok(drop.avg > breakdown.avg * 1.8, `Drop avg (${drop.avg.toFixed(3)}) must be much brighter than Breakdown avg (${breakdown.avg.toFixed(3)})`);
+  assert.ok(drop.peak > intro.peak && drop.peak > verse.peak && drop.peak > breakdown.peak, 'Drop peak brightness must exceed all non-drop sections');
+});
+
+test('regenerateSectionClips cleanly replaces clips for a single section', () => {
+  const analysis = {
+    durationSec: 60,
+    bpm: 120,
+    sections: [
+      { id: 's1', type: 'intro', startSec: 0, endSec: 15, durationSec: 15 },
+      { id: 's2', type: 'verse', startSec: 15, endSec: 40, durationSec: 25 },
+      { id: 's3', type: 'outro', startSec: 40, endSec: 60, durationSec: 20 }
+    ]
+  };
+
+  const show = createAutoShow(analysis, { palette: 'midnight' });
+  const introClipsBefore = show.layers.flatMap(l => l.clips.filter(c => c.startSec < 15)).map(c => c.id);
+  const outroClipsBefore = show.layers.flatMap(l => l.clips.filter(c => c.startSec >= 40)).map(c => c.id);
+
+  // Regenerate section index 1 ('verse' -> 'drop') with allowedPresets
+  regenerateSectionClips(show, analysis, 1, {
+    type: 'drop',
+    palette: 'inferno',
+    allowedPresets: ['pulse', 'strobe']
+  });
+
+  assert.equal(validateTimeline(show).valid, true);
+
+  const introClipsAfter = show.layers.flatMap(l => l.clips.filter(c => c.startSec < 15)).map(c => c.id);
+  const outroClipsAfter = show.layers.flatMap(l => l.clips.filter(c => c.startSec >= 40)).map(c => c.id);
+  assert.deepEqual(introClipsAfter, introClipsBefore, 'Intro clips must remain untouched');
+  assert.deepEqual(outroClipsAfter, outroClipsBefore, 'Outro clips must remain untouched');
+
+  const midSectionClips = show.layers.flatMap(l => l.clips.filter(c => c.startSec >= 15 && c.startSec < 40));
+  assert.ok(midSectionClips.length > 0);
+  assert.ok(midSectionClips.some(c => c.id.includes('drop')), 'Regenerated section should contain drop clips');
+  for (const c of midSectionClips) {
+    assert.ok(c.preset === 'pulse' || c.preset === 'strobe', `Regenerated clip ${c.id} must honor allowedPresets`);
+  }
+});
+
 
 
 

@@ -103,3 +103,84 @@ export function averageSpectrum(spectrum, t0, t1) {
   if (n) for (let b = 0; b < spectrum.bands; b++) out[b] /= n;
   return out;
 }
+
+/** Frequency response weighting for each stem (0–1). */
+export function stemWeight(source, hz) {
+  if (!source || source === 'master') return 1;
+  const f = Math.max(1, hz);
+  if (source === 'bass') {
+    return 1 / (1 + Math.pow(f / 200, 4));
+  }
+  if (source === 'vocals') {
+    const lo = 1 / (1 + Math.pow(260 / f, 3));
+    const hi = 1 / (1 + Math.pow(f / 3600, 3));
+    return lo * hi;
+  }
+  if (source === 'drums') {
+    const lo = 1 / (1 + Math.pow(40 / f, 3));
+    const hi = 1 / (1 + Math.pow(f / 5200, 3));
+    const midDip = 1 - 0.45 / (1 + Math.pow(Math.abs(Math.log2(f / 1400)), 2));
+    return lo * hi * midDip;
+  }
+  if (source === 'other') {
+    return 1 / (1 + Math.pow(3400 / f, 3));
+  }
+  return 1;
+}
+
+/** Get master spectrum or derived cached per-stem spectrum. */
+export function getSpectrumForSource(analysis, source = 'master') {
+  if (!analysis?.spectrum) return null;
+  const cleanSource = ['drums', 'bass', 'vocals', 'other'].includes(source) ? source : 'master';
+  if (cleanSource === 'master') return analysis.spectrum;
+  const master = analysis.spectrum;
+  if (!analysis._stemSpectrums) analysis._stemSpectrums = new Map();
+  if (analysis._stemSpectrums.has(cleanSource)) return analysis._stemSpectrums.get(cleanSource);
+
+  const bands = master.bands;
+  const frames = master.frames;
+  const weights = new Float32Array(bands);
+  for (let b = 0; b < bands; b++) {
+    const centerHz = Math.sqrt(bandHz(b) * bandHz(b + 1));
+    weights[b] = stemWeight(cleanSource, centerHz);
+  }
+
+  const features = analysis.features;
+  const stemEnv = features?.[cleanSource] || features?.stems?.[cleanSource];
+  const hop = features?.hopSec || master.hopSec;
+  const start = features?.startSec || master.startSec;
+
+  const data = new Uint8Array(master.data.length);
+  for (let f = 0; f < frames; f++) {
+    const offset = f * bands;
+    let timeScale = 1;
+    if (stemEnv && stemEnv.length > 0) {
+      const t = master.startSec + f * master.hopSec;
+      const pos = Math.max(0, (t - start) / hop);
+      const idxA = Math.min(stemEnv.length - 1, Math.floor(pos));
+      const idxB = Math.min(stemEnv.length - 1, idxA + 1);
+      const frac = pos - idxA;
+      const rawLevel = (stemEnv[idxA] || 0) * (1 - frac) + (stemEnv[idxB] || 0) * frac;
+      timeScale = Math.min(1.25, Math.max(0.04, Math.sqrt(rawLevel)));
+    }
+    for (let b = 0; b < bands; b++) {
+      const orig = master.data[offset + b];
+      const val = Math.round(orig * weights[b] * timeScale);
+      data[offset + b] = Math.max(0, Math.min(255, val));
+    }
+  }
+
+  const stemSp = {
+    bands: master.bands,
+    minHz: master.minHz,
+    maxHz: master.maxHz,
+    hopSec: master.hopSec,
+    startSec: master.startSec,
+    frames,
+    data,
+    source: cleanSource
+  };
+  analysis._stemSpectrums.set(cleanSource, stemSp);
+  return stemSp;
+}
+

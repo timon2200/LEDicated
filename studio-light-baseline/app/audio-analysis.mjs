@@ -161,9 +161,9 @@ export async function analyzeAudio(input, options = {}) {
   }
   const info = await stat(input);
   if (!info.isFile()) throw new TypeError('Audio input must be a file');
-  const maxWaveformBins = options.maxWaveformBins ?? 2048;
-  if (!Number.isInteger(maxWaveformBins) || maxWaveformBins < 16 || maxWaveformBins > 8192) {
-    throw new RangeError('maxWaveformBins must be an integer from 16 to 8192');
+  const maxWaveformBins = options.maxWaveformBins ?? 8192;
+  if (!Number.isInteger(maxWaveformBins) || maxWaveformBins < 16 || maxWaveformBins > 32768) {
+    throw new RangeError('maxWaveformBins must be an integer from 16 to 32768');
   }
   const { stdout } = await execFileAsync('ffprobe', [
     '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'format=duration',
@@ -173,10 +173,19 @@ export async function analyzeAudio(input, options = {}) {
   if (!Number.isFinite(probedDuration) || probedDuration <= 0) {
     throw new Error('Audio duration is unavailable');
   }
-  const samplesPerBin = Math.max(256, Math.ceil(probedDuration * SAMPLE_RATE / maxWaveformBins));
+  const samplesPerBin = Math.max(64, Math.ceil(probedDuration * SAMPLE_RATE / maxWaveformBins));
   const waveformPeak = [];
+  const waveformMin = [];
+  const waveformMax = [];
   const waveformSumSquares = [];
+  const waveformLowSumSquares = [];
+  const waveformMidSumSquares = [];
+  const waveformHighSumSquares = [];
   const waveformCount = [];
+  const alphaLow = 1 - Math.exp(-2 * Math.PI * 250 / SAMPLE_RATE);
+  const alphaMid = 1 - Math.exp(-2 * Math.PI * 2500 / SAMPLE_RATE);
+  let lpLow = 0;
+  let lpMid = 0;
   const ring = new Float64Array(FFT_SIZE);
   const real = new Float64Array(FFT_SIZE);
   const imag = new Float64Array(FFT_SIZE);
@@ -257,8 +266,13 @@ export async function analyzeAudio(input, options = {}) {
   if (!samples) throw new Error('Audio contains no decoded samples');
   const durationSec = Math.round(samples / SAMPLE_RATE * 1000) / 1000;
   const peaks = waveformPeak.map(value => Math.round(value * 1000) / 1000);
+  const min = waveformMin.map(value => Math.round((value ?? 0) * 1000) / 1000);
+  const max = waveformMax.map(value => Math.round((value ?? 0) * 1000) / 1000);
   const rms = waveformSumSquares.map((sum, i) =>
     Math.round(Math.sqrt(sum / waveformCount[i]) * 1000) / 1000);
+  const low = normalize(waveformLowSumSquares.map((sum, i) => Math.sqrt((sum || 0) / waveformCount[i])));
+  const mid = normalize(waveformMidSumSquares.map((sum, i) => Math.sqrt((sum || 0) / waveformCount[i])));
+  const high = normalize(waveformHighSumSquares.map((sum, i) => Math.sqrt((sum || 0) / waveformCount[i])));
   const drums = normalize(drumTransient);
   const bass = normalize(bassEnergy);
   const vocals = normalize(vocalEnergy);
@@ -266,7 +280,7 @@ export async function analyzeAudio(input, options = {}) {
   const result = {
     durationSec,
     ...estimateBeats(drums, durationSec),
-    waveform: { binSec: samplesPerBin / SAMPLE_RATE, peaks, rms },
+    waveform: { binSec: samplesPerBin / SAMPLE_RATE, peaks, rms, min, max, low, mid, high },
     features: {
       kind: 'frequency-band-estimates',
       startSec: FFT_SIZE / (2 * SAMPLE_RATE),
@@ -283,8 +297,18 @@ export async function analyzeAudio(input, options = {}) {
 
   function processSample(value) {
     const bin = Math.floor(samples / samplesPerBin);
+    lpLow += alphaLow * (value - lpLow);
+    lpMid += alphaMid * (value - lpMid);
+    const lowVal = lpLow;
+    const midVal = lpMid - lpLow;
+    const highVal = value - lpMid;
     waveformPeak[bin] = Math.max(waveformPeak[bin] || 0, Math.abs(value));
+    waveformMin[bin] = waveformMin[bin] === undefined ? value : Math.min(waveformMin[bin], value);
+    waveformMax[bin] = waveformMax[bin] === undefined ? value : Math.max(waveformMax[bin], value);
     waveformSumSquares[bin] = (waveformSumSquares[bin] || 0) + value * value;
+    waveformLowSumSquares[bin] = (waveformLowSumSquares[bin] || 0) + lowVal * lowVal;
+    waveformMidSumSquares[bin] = (waveformMidSumSquares[bin] || 0) + midVal * midVal;
+    waveformHighSumSquares[bin] = (waveformHighSumSquares[bin] || 0) + highVal * highVal;
     waveformCount[bin] = (waveformCount[bin] || 0) + 1;
     ring[samples % FFT_SIZE] = value;
     samples++;

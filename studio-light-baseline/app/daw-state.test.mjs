@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAutoShow, validateTimeline, renderTimelineFrame } from './timeline.mjs';
 import {
-  addClip, addKeyframe, addLayer, beatPosition, clipEnd, clipsInRect, copyClips, createStore, deleteClips, duplicateClips, duplicateLayer, envelopeAt,
+  addClip, addKeyframe, addLayer, beatPosition, clampBand, clipEnd, clipsInRect, copyClips, createStore, deleteClips, duplicateClips, duplicateLayer, envelopeAt,
   findClip, formatBBT, formatClock, gridBeats, moveClip, moveKeyframe, moveKeyframes, normalizeTimeline, pasteClips, patchClips, removeKeyframe, removeKeyframes, resizeClip, snapStepSec,
   snapTime, splitClip, timeAtBeat, toggleTarget, trimKeyframes
 } from './daw-state.mjs';
@@ -181,6 +181,22 @@ test('patchClips applies preset, colour, driver, targets, speed, chaseMode, dire
   assert.deepEqual([clip.preset, clip.driver, clip.driverGain, clip.targets, clip.speed, clip.chaseMode, clip.direction, clip.timing, clip.motionMode], ['chase', 'bass', 2, ['C1'], 8, 'syncRow', 'rtl', 'bar', 'sync']);
   assert.deepEqual(clip.color, [1, 0, 0, .5]);
   assert.equal(validateTimeline(t).valid, true);
+});
+
+test('clampBand normalises frequency boundaries, thresholds and stem source', () => {
+  const clampedDrums = clampBand({ source: 'drums', lowHz: 40, highHz: 120, threshold: 0.1, ceiling: 0.8, mode: 'follow', releaseSec: 0.15 });
+  assert.equal(clampedDrums.source, 'drums');
+  assert.equal(clampedDrums.lowHz, 40);
+  assert.equal(clampedDrums.highHz, 120);
+
+  const fallbackSource = clampBand({ source: 'invalid_source', lowHz: 10, highHz: 5, threshold: 0.99, ceiling: 0.1, mode: 'unknown', releaseSec: 5 });
+  assert.equal(fallbackSource.source, 'master');
+  assert(fallbackSource.lowHz >= 20);
+  assert(fallbackSource.highHz > fallbackSource.lowHz);
+  assert(fallbackSource.threshold <= 0.98);
+  assert(fallbackSource.ceiling > fallbackSource.threshold);
+  assert.equal(fallbackSource.mode, 'follow');
+  assert.equal(fallbackSource.releaseSec, 2);
 });
 
 test('layer duplicate keeps unique ids', () => {

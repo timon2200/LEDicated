@@ -1,20 +1,22 @@
 # Studio Light — aplikacija za devet barova
 
-Lokalna aplikacija za naš raspored 3×3, s bibliotekom pjesama, editabilnim showom, MacBook audio ulazom i pet WLED ESP32-C3 kontrolera. Softverska simulacija radi; konačna fizička instalacija još nije potvrđena.
+Lokalna aplikacija za naš raspored 3×3, s bibliotekom pjesama, editabilnim showom, MacBook audio ulazom i WLED izlazom. Podržava dva softverska rasporeda kontrolera: pet ESP32-C3 čvorova ili E8-WiFi Plus V1.01 s jednim C3 za deveti bar. Konačna fizička instalacija još nije potvrđena.
+
+**Naručeni kontroler:** [E8-WiFi Plus V1.01](../E8_WIFI_PLUS_V1_01.md). Gumb **Izlaz** otvara vodič: automatski traži WLED kontrolere na Macovoj lokalnoj mreži, dopušta jednokratnu dodjelu E8/C3 uloga i pokazuje stanje svih devet barova. IP adrese, GPIO, DDP počeci i ručna dijagnostika ostaju u **Napredno**. E8 + C3 profil je simulacijski testiran; dijagnostika ne može potvrditi da su trake fizički spojene.
 
 ## Pokretanje
 
 Potreban je Node.js 20 ili noviji. Za samu aplikaciju nema npm paketa. Za lokalnu analizu uvezenih pjesama trebaju `ffmpeg` i `ffprobe` u `PATH`.
 
-U ovoj mapi pokreni:
+U ovoj mapi (ili iz korijena repozitorija) pokreni:
 
 ```sh
 npm start
 ```
 
-Otvori [Studio Light](http://127.0.0.1:8787). Server sluša samo lokalno. Početno je uključena simulacija: demo ritam, bez audio snimanja i bez slanja na trake. IP adrese kontrolera početno su prazne.
+Otvori [LEDicated Studio](http://127.0.0.1:8787). Poslužitelj prema zadanim postavkama sluša na `0.0.0.0:8787` (svim lokalnim LAN adresama u uredu) i u terminalu ispisuje detektirane LAN URL-ove (npr. `http://192.168.x.x:8787`). Ako želiš isključivo lokalni loopback, pokreni `npm run local` (`node server.mjs --local-only`).
 
-Na Macu možeš dvaput kliknuti `Start Studio Light.command` u ovoj mapi. Pokreće lokalni server i otvara sučelje kroz njegovu `--open` opciju. Node.js 20+ i dalje mora biti instaliran.
+Na Macu možeš dvaput kliknuti `Start Studio Light.command` u ovoj mapi. Pokreće server i otvara sučelje kroz njegovu `--open` opciju. Node.js 20+ i dalje mora biti instaliran.
 
 ```sh
 npm test
@@ -22,6 +24,13 @@ npm run build
 ```
 
 `build` je provjera sintakse svih izvršnih modula. Browser koristi native JavaScript module, pa nije potreban bundler.
+
+## Višekorisnički LAN rad u uredu i dijeljenje showova
+
+- **🌐 LAN & Stage kontrola (`ON AIR` / `SOLO`):** Više korisnika na lokalnoj mreži može istovremeno otvoriti aplikaciju. Kako se DDP UDP paketi prema WLED kontrolerima ne bi sudarali iz više kartica/laptopa, poslužitelj održava **Stage Owner (`🟢 ON AIR`)** zaključavanje: samo aktivni Stage Owner šalje `/api/frame` prema fizičkim barovima, dok su ostali u **`🎧 SOLO PREVIEW`** modu (vide puni 3×3 WebGL2 simulator u svom pregledniku i mogu neometano programirati showove). Bilo koji korisnik može u 1 kliku preuzeti stage putem **🌐 LAN → ⚡ Preuzmi Stage (ON AIR)**.
+- **📦 `.ledpack` i `✦ .ledshow.json` paketi:** Svaka pjesma može se izvesti kao prijenosni `.ledpack` (binarni `LPK1` kontejner koji sadrži audio + analizu + timeline u jednoj datoteci) ili lagani `.ledshow.json` (samo timeline i sažeta analiza). Obje datoteke uvoze se jednostavnim povlačenjem (drag-and-drop) u prozor preglednika.
+- **🌐 Git `shared-shows/`:** Mapa `studio-light-baseline/app/shared-shows/` prati se u Gitu i sadrži dijeljene `.ledshow.json` datoteke. U **Galerija & Launcher (`⌘O`) → 🌐 Dijeljeni showovi (Git)** prijatelji mogu jednim klikom preuzeti i sinkronizirati sve dijeljene showove.
+- **🚀 Izravni LAN Push / Pull:** Prijatelji koji su doma programirali pjesme na vlastitom klonu repozitorija mogu u prozoru **🌐 LAN** upisati LAN IP uredskog poslužitelja i jednim klikom poslati cijeli `.ledpack` u uredsku biblioteku (ili povući pjesme s uredskog poslužitelja).
 
 ## Projekti pjesama i setovi
 
@@ -66,16 +75,16 @@ RGBW frame od 12 logičkih uzoraka po baru
         ├── zajednički mapping grupa → svaka fizička LED → WebGL2/Canvas pregled
         └── lokalni HTTP → server → isti mapping grupa → DDP RGBW/RGB UDP 4048
                                                      ↓
-                                               5 WLED kontrolera
+                                               2 ili 5 WLED kontrolera
 ```
 
 `engine.mjs` je zajednički deterministički renderer. `ui.mjs` obrađuje audio i upravlja prikazom; `server.mjs` sprema konfiguraciju i šalje DDP. Server sam ne izračunava nove efekte bez aktivnog browsera.
 
 Vizualizacija i transport koriste isti izvorni frame te jednak resampling i reverse. Za svaku fizičku diodu pregled ponavlja boju pripadne adresabilne grupe; time ne izmišlja neovisnu kontrolu unutar grupe. Na ekranu se bijeli emiter aproksimira RGB bojom uz približnu monitor gamma korekciju 2,2; u RGBW transportu njegov se kanal šalje neovisno, a izlazni bajtovi ne dobivaju tu display korekciju. Pregled nije kalibrirana procjena fizičke boje ni svjetline u sobi. Engine trenutačno ima 12 uzoraka po baru; veći uneseni broj grupa duplicira uzorke, manji ih preslikava. To nije dodatna efektna rezolucija.
 
-## Obvezni WLED mapping
+## WLED mapping i prozor postavki
 
-Svaki kontroler prima jedan uzastopni DDP niz. **Redoslijed izlaza i duljina u WLED-u moraju odgovarati ovoj tablici.** Ne preslikavati proizvoljno prema fizičkoj udaljenosti.
+Svaki kontroler prima jedan uzastopni DDP niz. **Redoslijed izlaza i duljina u WLED-u moraju odgovarati odabranom profilu.** Prozor postavki iz gumba **Izlaz** prikazuje port, GPIO (gdje je poznat), logički DDP početak i broj grupa. Sljedeća tablica je očuvani profil pet C3 čvorova:
 
 | Kontroler | Prvi WLED izlaz: početak 0 | Drugi WLED izlaz: početak nakon prvog bara |
 |---|---|---|
@@ -85,9 +94,15 @@ Svaki kontroler prima jedan uzastopni DDP niz. **Redoslijed izlaza i duljina u W
 | C3-D | L3 | C3 |
 | C3-E | R3 | Nema |
 
+Profil **E8 + C3** šalje redom `L1/C1/R1/L2/C2/R2/L3/C3` na E8 portove `O1`–`O8` (GPIO `5/12/4/27/17/26/33/25`); `R3` ide na zasebni `C3-R3` i počinje od DDP indeksa 0 na tom uređaju. Ako svaki E8 bar ima 12 grupa, njegovi počeci su `0/12/24/36/48/60/72/84`. Stvarni početci računaju se iz unesenog broja grupa. Za C3 GPIO broj treba potvrditi na konkretnoj reviziji pločice. E8 profil odbija konfiguraciju koja bi poslala više od 1400 bajtova u jednom DDP paketu.
+
 Ako prvi bar ima 12 grupa, drugi počinje na logičkoj adresi 12. Ako ima drugi broj, početak drugog izlaza mora biti upravo taj broj. Unesi stvarnu adresabilnu gustoću nakon testa trake; 60 fizičkih LED-ova/m ne znači nužno 60 adresabilnih piksela/m. Default 12 grupa po 120 cm je pretpostavka.
 
-U Postavkama unesi privatne IPv4 adrese svih pet kontrolera, spremi ih i tek zatim uključi izlaz. Postavke se spremaju u lokalni `config.json`. Aplikacija potvrđuje slanje UDP paketa, **ne potvrđuje prijem ni fizičko svjetlo**.
+Kad otvoriš **Postavke kontrolera**, Mac oko 2,6 sekundi sluša Bonjour servis `_wled._tcp` na lokalnoj mreži. Svaki kandidat mora odgovoriti na WLED `/json/info`; traženje samo po sebi ne šalje svjetlo. Odaberi profil, zatim svakom pronađenom uređaju dodijeli ulogu i spremi. Aplikacija čuva WLED MAC identitet uz privatnu IPv4 adresu. Na sljedećem traženju može automatski osvježiti IP kad se DHCP adresa promijeni, ali to radi samo kad je izlaz ugašen i kad je uređaj jednoznačno identificiran. Prije uključivanja ili pojedinačnog testa ponovno uspoređuje identitet automatski uparenih uređaja na spremljenoj IP adresi. Kad Bonjour nije dostupan, **Napredno** nudi ručni IP unos; ručna promjena IP-a briše prethodno automatsko uparivanje.
+
+Ako nema rezultata, provjeri napajanje, istu Wi-Fi mrežu i WLED mDNS postavke. Novi WLED se prvo može pojaviti kao `WLED-AP`; po [WLED uputama za prvi spoj](https://kno.wled.ge/basics/getting-started/) ondje mu treba postaviti kućnu Wi-Fi mrežu, zatim vratiti Mac na istu mrežu. Bonjour rezultat nije dokaz online stanja dok ne prođe HTTP provjera. Aplikacija ne radi opsežno skeniranje svih adresa u podmreži i ne piše automatski WLED konfiguraciju. Na mrežama koje blokiraju lokalni multicast koristi ručni IP.
+
+Gumb **Provjeri WLED** čita `/json/info` sa spremljene adrese i pokazuje verziju firmwarea, broj konfiguriranih grupa, RGBW mogućnost, Wi-Fi signal i vrijeme odgovora. Ako firmware izlaže `/json/cfg`, aplikacija dodatno uspoređuje GPIO, početak i duljinu svakog WLED izlaza s našim planom; taj format [WLED označava kao promjenjiv](https://raw.githubusercontent.com/wled/WLED/main/wled00/cfg.cpp), pa nedostupna usporedba ostaje označena kao nedostupna. U aplikaciju se vraćaju samo potrebni podaci o izlazima, ne cijela WLED konfiguracija. Gumb **Kratki test** na pojedinom baru, nakon spremanja i mrežne provjere, šalje slab crveni DDP puls od 350 ms samo na njegov kontroler i zatim nule. To omogućuje test osam E8 barova dok C3 za R3 još nije dostupan. **Puni show ostaje isključen dok nisu zadane adrese svih kontrolera.** Mrežni odgovor i podudaranje konfiguracije **ne potvrđuju fizički spoj trake ni stvarno svjetlo**. Postavke su u lokalnom `config.json`. DDP slanje i blackout rade za oba profila u simulacijskim testovima.
 
 ## RGBW i zaštita izlaza
 
@@ -124,7 +139,7 @@ Ako Playwright već postoji u zajedničkom razvojnom okruženju, `PLAYWRIGHT_MOD
 ## Fizički commissioning prije konačne instalacije
 
 1. Na jednoj traci potvrditi cut marks, adresabilne grupe i red/green/blue/white test.
-2. Potvrditi stvarni WLED firmware, dva C3 izlaza, redoslijed kanala i white-channel ponašanje.
+2. Potvrditi stvarni WLED firmware, portove odabranog profila (E8 O1–O8 i C3 za R3, ili pet C3 čvorova), redoslijed kanala i white-channel ponašanje.
 3. Izmjeriti potrošnju i pad napona; završiti kablove, osigurače, uzemljenje i ventilaciju kutije.
 4. Za svaki bar testirati oznaku, smjer, početnu adresu i ukupni broj grupa.
 5. Testirati BlackHole uz YouTube, pause, govor, oglase i promjenu audio uređaja.
@@ -149,6 +164,16 @@ Editor prikazuje **3 × 3 izbor devet barova** za svaki pad zasebno, s brzim oda
 Waveform i dionice ostaju na postojećem timelineu iznad; Live Board ih ne duplicira. Sažeta traka pokazuje trenutnu i sljedeću dionicu, odbrojavanje, sugeriranu tipku i indikator beata. Tipke **4 takta**, **8 taktova** i **Dionica** brzo postavljaju petlju. **Beat sync** priprema novi pad za sljedeći beat iz analizirane ili ručno postavljene mreže; pri pauzi se neodigrana naredba otkazuje. Razdjelnici glavnog radnog prostora i razdjelnik između boarda i kontrola mogu se povlačiti, uz tipke strelica za fino namještanje. Na uskim širinama board i kontrole se slažu vertikalno, a katalog se privremeno skriva kako bi board i pozornica ostali čitljivi; ponovno se pojavljuje izlaskom iz Live boarda ili širenjem prozora.
 
 Izvedbeni efekti koriste isti završni RGBW renderer i postojeći master, preview, Bluetooth pomak, izlaz i blackout. Simulacijski testovi potvrđuju deterministički overlay i ograničenja kanala; stvarna latencija Bluetootha i ponašanje fizičkih RGBW traka i dalje čekaju opremu i mjerenje.
+
+### Snimanje izvedbe uživo na timeline (`live-session-recorder.mjs`)
+
+Crveni gumb **● REC** u gornjoj traci transporta ili na samom Live Boardu (prečac `Shift+R` / `⇧R`) naoružava snimanje izvedbe. Kad krene reprodukcija ili pritiskom na REC tijekom sviranja, izvedba se bilježi u stvarnom vremenu izravno na timeline:
+
+- **Automatski slojevi:** Svaki pad automatski pronalazi ili stvara svoj sloj na vrhu timelinea (npr. `Live [Q] · Flash`, `Live [W] · Puls`). Ako se snimaju dva različita efekta na istom padu ili nastane vremensko preklapanje, sustav stvara novu numeriranu traku (`Live [Q] · Flash 2`) kako nijedan clip ne bi pregazio postojeći zapis.
+- **Efekt pilule (clipovi):** Svaki pritisak pada ili aktivirana petlja stvara zasebnu pilulu na pripadajućem sloju. Udarac (`hit`) snima točno trajanje ciklusa animacije, a petlja (`loop`) bilježi duljinu dok god je pad uključen.
+- **Razdvajanje na promjenu parametara:** Ako tijekom trajanja efekta okreneš potenciometar boje, brzine ili jačine, promijeniš zonu barova ili odabereš drugi preset, snimač trenutni clip zaključava i odmah otvara novi s novim postavkama.
+- **Puni MIDI raspored:** Sve zabilježene pilule ostaju standardni timeline clipovi: mogu se pomicati mišem, rastezati im rubove, mijenjati krivulje u clip editoru, brisati ili seliti na druge slojeve.
+- **Poništavanje (`⌘Z`):** Cijela snimljena sesija sprema se kao jedna atomska operacija (`Snimi izvedbu`), pa jedan pritisak `⌘Z` vraća timeline na stanje prije snimanja.
 
 ### Parametarski EQ audio driver i spektrogram (`audio-spectrum.mjs`, `daw-driver.mjs`)
 - **Vizualni kontroler (Maxon-style):** Logaritamski spektrogram u stvarnom vremenu (25 Hz – 18 kHz, 96 pojasa, FFT s +3 dB/oktavi tiltom).
@@ -202,7 +227,7 @@ Izvedbeni efekti koriste isti završni RGBW renderer i postojeći master, previe
 - Svi efekti su dostupni u pregledniku (mogu se povući u traku), u editoru clipa i u generatoru auto showa.
 
 ### Provjera i status
-- Testovi: `npm test` pokreće **99 testova** (renderer, 16 preseta, stemovi, detekcija dionica, spektrogram, band driver, live padovi, odvojene zone Flasheva, putanja Trkača, preskakanje ugašenih barova, audio driver petlje, state operacije, DDP transport).
-- Build: `npm run build` provjerava sintaksu izvršnih modula, uključujući Live board.
-- Postojeći smoke test `daw-smoke.mjs` provjerava DAW alate. Live board je dodatno ručno provjeren u lokalnom browseru na širokoj i uskoj širini: tipkovni pad, preview, blackout, jednake dimenzije svih 12 mjesta, premještanje i zamjena, dodavanje efekta iz kataloga, zasebni 3 × 3 odabiri za dva Flasha, kopiranje, kontrole Trkača, audio driver petlje i razdjelnici. Automatizirani browser smoke za novi panel još nije dodan.
+- Testovi: `npm test` provjerava renderer, 16 preseta, stemove, detekciju dionica, spektrogram, band drivere, live padove, snimanje izvedbe na timeline (`live-session-recorder`), state operacije te C3 i E8 + C3 DDP transport. Mjerodavan broj testova je u aktualnom izlazu naredbe (137 prolaznih testova).
+- Build: `npm run build` provjerava sintaksu svih izvršnih modula, uključujući Live board i snimač sesije.
+- Postojeći smoke test `daw-smoke.mjs` provjerava DAW alate. Live board i snimanje sesije provjereni su automatskim jediničnim i simulacijskim testovima (armiranje, udarci, petlje, razdvajanje pilula na izmjenu parametara, automatski slojevi i `⌘Z` poništavanje).
 - Fizičke provjere i dalje čekaju opremu: RGBW redoslijed WS2814 traka, snaga, Bluetooth sinkronizacija, stvarni broj LED-ica/grupa po baru.

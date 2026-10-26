@@ -39,8 +39,10 @@ try {
   await page.keyboard.press('Meta+z');
 
   // --- clip gestures on the fresh layer (select tool) ---
-  await page.keyboard.press('Escape').catch(() => {}); // would blackout; undone below
-  if (await page.evaluate(() => window.studioTest.engine.state.blackout)) await page.locator('#blackout').click();
+  await page.keyboard.press('Escape').catch(() => {}); // first press: blackout
+  assert.equal(await page.evaluate(() => window.studioTest.engine.state.blackout), true, 'first Esc turns blackout on');
+  await page.keyboard.press('Escape').catch(() => {}); // second press: lights up again
+  assert.equal(await page.evaluate(() => window.studioTest.engine.state.blackout), false, 'second Esc turns blackout off (lights up again)');
   await page.keyboard.press('2');
   const locate = () => page.evaluate(() => {
     const st = window.studioTest, t = st.store.timeline, li = t.layers.length - 1, clip = t.layers[li].clips.at(-1), r = st.playlist.clipScreenRect(li, clip);

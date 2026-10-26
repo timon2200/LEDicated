@@ -15,7 +15,15 @@ export function createLive(host, { now, status }) {
   engine.setState({ scene: 'wave', palette: 'midnight', brightness: .35, energy: .55, reactive: true, bpm: 120 }, now());
   const s = {
     demo: true, stream: null, context: null, analyser: null, samples: null, spectrum: null, queued: null, pendingBeat: null, autoShow: false, cueAnchor: 0, cueBeats: 32,
-    freeze: false, frozenFrame: null, frozenBrightness: .35, freezeBeat: 0, offset: 0, onsetLast: 0, avg: 0, previousLevel: 0, tempoLocked: false, autoTempo: false, level: 0
+    freeze: false, frozenFrame: null, frozenBrightness: .35, freezeBeat: 0, offset: 0, onsetLast: 0, avg: 0, previousLevel: 0, tempoLocked: false, autoTempo: false, level: 0,
+    extUntil: 0, extStems: null, extDropActive: false, extPrevScene: null
+  };
+  const THEME_TO_PALETTE = {
+    midnight: 'midnight', club: 'midnight',
+    cyber: 'magenta', royal: 'magenta', magenta: 'magenta',
+    sunset: 'ember', inferno: 'ember', ember: 'ember',
+    ice: 'ice', rave: 'ice',
+    mono: 'warm', warm: 'warm'
   };
 
   /* ------------------------------------------------------------- scenes */
@@ -36,7 +44,8 @@ export function createLive(host, { now, status }) {
   const reactive = h('input', { type: 'checkbox', checked: true, onChange: () => engine.setState({ reactive: reactive.checked }, now()) });
   function swatches() {
     swatchBox.replaceChildren();
-    for (const color of PALETTES[palette.value].colors) { const [r, g, b] = rgbwToRgb(color.map(c => c * 153)); swatchBox.append(h('i', { style: { background: `rgb(${r},${g},${b})` } })); }
+    const active = PALETTES[palette.value] || PALETTES[engine.state.palette] || PALETTES.midnight;
+    for (const color of active.colors) { const [r, g, b] = rgbwToRgb(color.map(c => c * 255)); swatchBox.append(h('i', { style: { background: `rgb(${r},${g},${b})` } })); }
   }
   function refresh() {
     for (const [id, pad] of pads) { pad.classList.toggle('selected', id === engine.state.scene); pad.classList.toggle('queued', id === s.queued); pad.setAttribute('aria-pressed', String(id === engine.state.scene)); }
@@ -109,7 +118,29 @@ export function createLive(host, { now, status }) {
   /* ------------------------------------------------------------- runtime */
   function sample(t) {
     let level = 0, bass = 0;
-    if (s.analyser) {
+    if (t < s.extUntil && s.extStems) {
+      const st = s.extStems;
+      bass = Math.min(1, Math.max(0, Number(st.bass) || 0));
+      const drums = Math.min(1, Math.max(0, Number(st.drums) || 0));
+      const vocals = Math.min(1, Math.max(0, Number(st.vocals) || 0));
+      const rms = Math.min(1, Math.max(0, Number(st.rms) || (bass * 0.45 + drums * 0.35 + vocals * 0.2)));
+      level = Math.min(1, Math.max(rms, bass * 0.85, drums * 0.9));
+      if (st.isBeat && t - s.onsetLast > .18) {
+        s.onsetLast = t;
+        estimator.addOnset(t, level);
+      }
+      if (st.isDrop && !s.extDropActive) {
+        s.extDropActive = true;
+        s.extPrevScene = engine.state.scene;
+        engine.setState({ scene: 'pulse', energy: 0.95, speed: 2 }, t);
+        refresh();
+      } else if (!st.isDrop && s.extDropActive) {
+        s.extDropActive = false;
+        engine.setState({ scene: s.extPrevScene || 'wave', energy: 0.65, speed: 1 }, t);
+        refresh();
+      }
+      audioStatus.textContent = `YouTube Live Stream · 4 stema${st.isDrop ? ' · DROP!' : ''}`;
+    } else if (s.analyser) {
       s.analyser.getFloatTimeDomainData(s.samples);
       level = Math.min(1, Math.sqrt(s.samples.reduce((sum, x) => sum + x * x, 0) / s.samples.length) * 5);
       s.analyser.getByteFrequencyData(s.spectrum);
@@ -147,6 +178,31 @@ export function createLive(host, { now, status }) {
   return {
     engine, tick, frame, refresh, toggleFreeze,
     get frozen() { return s.freeze; }, get level() { return s.level; },
+    isExternalActive(t = now()) { return t < s.extUntil; },
+    clearExternal() {
+      s.extUntil = 0;
+      s.extStems = null;
+      if (s.extDropActive) {
+        s.extDropActive = false;
+        engine.setState({ scene: s.extPrevScene || 'wave', energy: 0.65, speed: 1 }, now());
+        refresh();
+      }
+    },
+    setPalette(themeId) {
+      const candidate = THEME_TO_PALETTE[themeId] || themeId;
+      const mapped = Object.hasOwn(PALETTES, candidate) ? candidate : 'midnight';
+      if (palette.value === mapped && engine.state.palette === mapped) return;
+      palette.value = mapped;
+      engine.setState({ palette: mapped }, now());
+      swatches();
+    },
+    pushExternalStems(stems, themeId, t = now()) {
+      s.extStems = stems || {};
+      s.extUntil = t + 1.8;
+      s.autoTempo = true;
+      autoTempo.checked = true;
+      if (themeId) this.setPalette(themeId);
+    },
     tap: () => tap.click(),
     setBrightness(value) { engine.setState({ brightness: value / 100 }, now()); },
     setBlackout(active) { engine.setState({ blackout: active }, now()); },

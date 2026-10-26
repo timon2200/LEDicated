@@ -1,6 +1,68 @@
 # LEDicated – High-Performance DAW-Grade LED Light Show Controller
 
-Modularna macOS / cross-platform aplikacija za profesionalnu kontrolu LED matrica i traka, s naprednom AI separacijom stemova, višekanalnim timelineom, fotorealističnim previewom i ultra-niskom latencijom.
+Modularna macOS / cross-platform aplikacija za profesionalnu kontrolu 3×3 RGBW LED matrice (9 barova × 12 adresabilnih grupa = 108 RGBW piksela / 648 fizičkih dioda), s lokalnom analizom 4 stema, višekanalnim timelineom, WebGL2 3×3 simulatorom, dijeljenjem showova i višekorisničkim LAN radom u uredu.
+
+---
+
+## Brzi početak (Quick Start za kloniranje i programiranje doma)
+
+Aplikacija nema vanjskih `npm` ovisnosti (čisti Node.js `>= 20` + nativni ES moduli) i radi odmah nakon kloniranja — čak i kad nemaš fizičke LED barove spojene (u **SIMULACIJA** načinu rada s punim 3×3 WebGL2 prikazom).
+
+```bash
+git clone https://github.com/timon2200/LEDicated.git
+cd LEDicated
+npm start
+```
+
+Nakon pokretanja otvori **[http://127.0.0.1:8787](http://127.0.0.1:8787)** u pregledniku (ili pokreni `npm run open` na macOS-u).
+
+- **Preduvjeti:** Node.js `>= 20` i `ffmpeg` (za dekodiranje MP3/M4A/FLAC pri uvozu; na macOS-u `brew install ffmpeg`, opcijski `brew install yt-dlp` za automatsko preuzimanje audia iz dijeljenih Git showova).
+- **Provjera i testovi:** `npm run build && npm test`
+
+---
+
+## Kako programirati pjesme i showove
+
+1. **Uvoz glazbe ili gotovih showova:**
+   - Povuci bilo koju `.mp3`, `.wav`, `.m4a` ili `.flac` datoteku izravno u prozor preglednika.
+   - Aplikacija lokalno izračunava **BPM**, **4 frekvencijska stema** (`drums`, `bass`, `vocals`, `other`), **dionice pjesme** (Intro, Verse, Buildup, Drop, Breakdown, Outro) i generira klupski **Auto Show**.
+   - Za pregled već pripremljenih showova iz Git repozitorija klikni **Galerija & Launcher (`⌘O`) → 🌐 Dijeljeni showovi (Git)** i klikni **📥 Preuzmi pjesmu + show** ili **✦ Učitaj / Sinkroniziraj show**.
+2. **Uređivanje na vremenskoj traci (Timeline):**
+   - Alati: `1` Crtaj, `2` Odaberi, `3` Podijeli (Slice), `4` Briši.
+   - Svaki clip može ciljati bilo koju kombinaciju 3×3 barova (`L1 C1 R1 / L2 C2 R2 / L3 C3 R3`), koristiti jedan od 16 efekata (`pulse`, `chase`, `sweep`, `strobe`, `flash`, `wash`, `sparkle`, `wave`, `ripple`, `rain`, `spiral`, `fire`, `columns`, `bounce`, `alternate`, `center`) i biti vođen audio stemom (`drums`, `bass`, `vocals`, `other`, `band`).
+3. **Live Performance Board (`P`):**
+   - Tipke `Q W E R / A S D F / Z X C V` okidaju live efekte u stvarnom vremenu, a `⇧R` snima tvoju izvedbu izravno u clipove na vremenskoj traci.
+
+---
+
+## Dijeljenje pjesama i showova među prijateljima
+
+Klikni gumb **🌐 LAN** u gornjoj traci (ili `•••` na bilo kojoj pjesmi u katalogu):
+
+1. **📦 `.ledpack` paket (Sve u 1 datoteci — Audio + Analiza + Show):**
+   - Klikni **📦 Izvezi .ledpack (Pjesma + Show)**.
+   - Dobivaš jednu prijenosnu `.ledpack` datoteku koju možeš poslati preko Slacka, Discorda, WhatsAppa ili AirDropa.
+   - Prijatelj samo povuče `.ledpack` u svoj LEDicated prozor i odmah dobiva audio, analizu i tvoj programirani show.
+2. **🌐 Git `shared-shows/` (`.ledshow.json`):**
+   - Klikni **🌐 Spremi u Git (shared-shows)** — show i analiza spremaju se u `studio-light-baseline/app/shared-shows/<Naziv>.ledshow.json` (bez velikih audio datoteka).
+   - Napravi `git add studio-light-baseline/app/shared-shows && git commit -m "Add show" && git push` kako bi svi prijatelji dobili tvoj show u **Galerija & Launcher → 🌐 Dijeljeni showovi (Git)**.
+3. **🚀 Izravni LAN Push / Pull (od laptopa do laptopa u uredu):**
+   - Kad dođeš u ured s vlastitim laptopom na kojem si doma programirao showove, otvori **🌐 LAN**, upiši LAN adresu uredskog Maca (npr. `http://192.168.1.50:8787`) i klikni **🚀 Pošalji aktivnu pjesmu + show na uredski LAN** (ili **📥 Dohvati katalog s drugog LAN uređaja**).
+
+---
+
+## Više ljudi u uredu na istom LAN-u (Multi-User LAN & Stage Handover)
+
+Kad ste u uredu na istom Wi-Fi / LAN-u, poslužitelj automatski sluša na svim lokalnim mrežnim sučeljima (`0.0.0.0:8787`) i ispisuje LAN adresu u terminalu (npr. `http://192.168.1.50:8787`).
+
+- **Stage Owner (`🟢 ON AIR`) vs. Solo Preview (`🎧 SOLO`):**
+  - Kako se DDP UDP paketi prema fizičkim WLED kontrolerima nikada ne bi sudarali kad više ljudi ima otvoren preglednik, uvijek **točno jedan korisnik drži Stage (`🟢 ON AIR`)**.
+  - Svi ostali povezani na LAN su u **`🎧 SOLO PREVIEW`** modu — mogu slobodno slušati pjesme, slagati clipove i testirati efekte u svom 3×3 WebGL2 simulatoru bez prekidanja rasvjete na fizičkom zidu.
+  - Bilo tko može u 1 kliku preuzeti fizički zid klikom na **🌐 LAN → ⚡ Preuzmi Stage (ON AIR)** (ili prepustiti stage drugome).
+- **Zajedničko uređivanje uživo (Live Timeline Sync):**
+  - U prozoru **🌐 LAN** vidiš tko je sve spojen na mrežu i koju pjesmu trenutno uređuje ili pušta. Klikom na **Otvori istu pjesmu** promjene na timelineu sinkroniziraju se uživo između vaših preglednika.
+
+---
 
 ## Pregled Faze 1 (Istraživanje i Arhitektura)
 
@@ -17,6 +79,6 @@ Cjeloviti nacrt istraživanja i arhitekture dostupan je u [LEDICATED_RESEARCH_BL
 
 ## Stvarno stanje radnog prostora
 
-Ovaj dokument opisuje predloženu Tauri arhitekturu; ona još nije implementirana. Postojeća pokretljiva Node/JS aplikacija, testovi i hardversko mapiranje premješteni su u [studio-light-baseline](studio-light-baseline/). Drugi, za konkretnih devet barova prilagođen istraživački plan je [RESEARCH_PRODUCT_BLUEPRINT.md](studio-light-baseline/RESEARCH_PRODUCT_BLUEPRINT.md). Pri razvoju usporediti oba nacrta i sačuvati funkcionalni baseline dok se nova arhitektura ne potvrdi mjerenjem.
+Ovaj dokument opisuje predloženu Tauri arhitekturu; ona još nije implementirana. Postojeća pokretljiva Node/JS aplikacija, testovi i hardversko mapiranje nalaze se u [studio-light-baseline/app](studio-light-baseline/app/). Drugi, za konkretnih devet barova prilagođen istraživački plan je [RESEARCH_PRODUCT_BLUEPRINT.md](studio-light-baseline/RESEARCH_PRODUCT_BLUEPRINT.md). Pri razvoju usporediti oba nacrta i sačuvati funkcionalni baseline dok se nova arhitektura ne potvrdi mjerenjem.
 
 Za rad s agentima vidi [AGENTS.md](AGENTS.md) i [ORCHESTRATOR_PROMPT.md](ORCHESTRATOR_PROMPT.md).

@@ -2,6 +2,44 @@
 
 export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
+export function segmentIntersectsRect(x1, y1, x2, y2, rect, pad = 3) {
+  if (!rect || typeof rect.left !== 'number' || typeof rect.top !== 'number') return false;
+  if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return false;
+  const left = rect.left - pad, right = (rect.right ?? (rect.left + (rect.width || 0))) + pad;
+  const top = rect.top - pad, bottom = (rect.bottom ?? (rect.top + (rect.height || 0))) + pad;
+  if (right < left || bottom < top || (rect.width === 0 && rect.height === 0)) return false;
+
+  if ((x1 >= left && x1 <= right && y1 >= top && y1 <= bottom) ||
+      (x2 >= left && x2 <= right && y2 >= top && y2 <= bottom)) {
+    return true;
+  }
+
+  const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+  const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+  if (maxX < left || minX > right || maxY < top || minY > bottom) {
+    return false;
+  }
+
+  const dx = x2 - x1, dy = y2 - y1;
+  const p = [-dx, dx, -dy, dy];
+  const q = [x1 - left, right - x1, y1 - top, bottom - y1];
+  let u1 = 0, u2 = 1;
+  for (let i = 0; i < 4; i++) {
+    if (p[i] === 0) {
+      if (q[i] < 0) return false;
+    } else {
+      const t = q[i] / p[i];
+      if (p[i] < 0) {
+        if (t > u1) u1 = t;
+      } else {
+        if (t < u2) u2 = t;
+      }
+      if (u1 > u2) return false;
+    }
+  }
+  return u1 <= u2;
+}
+
 export function h(tag, props = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -57,15 +95,36 @@ export function showMenu(x, y, items) {
 
 /* ----------------------------------------------------------------- knob */
 /** Rotary control: drag vertically, wheel, arrow keys, double-click resets. */
-export function createKnob({ label, min = 0, max = 1, value = 0, step = 0.01, reset = value, size = 38, format = v => String(Math.round(v * 100)), onInput, onChange, title }) {
+export function createKnob({ label, min = 0, max = 1, value = 0, step = 0.01, reset = value, size = 38, warnAbove = null, format = v => String(Math.round(v * 100)), onInput, onChange, title }) {
   let current = value, startY = 0, startValue = 0;
+  const hasWarn = Number.isFinite(warnAbove) && warnAbove > min && warnAbove < max;
+  const warnDeg = hasWarn ? ((warnAbove - min) / (max - min)) * 270 : 270;
   const ring = h('div', { class: 'knob-ring' }), readout = h('output', {}, format(value));
-  const root = h('div', { class: 'knob', role: 'slider', tabIndex: 0, 'aria-label': label, 'aria-valuemin': min, 'aria-valuemax': max, title: title || label, style: { '--size': `${size}px` } },
-    ring, h('span', { class: 'knob-label' }, label), readout);
+  const root = h('div', {
+    class: `knob${hasWarn ? ' has-warn' : ''}`,
+    role: 'slider',
+    tabIndex: 0,
+    'aria-label': label,
+    'aria-valuemin': min,
+    'aria-valuemax': max,
+    title: title || label,
+    style: {
+      '--size': `${size}px`,
+      ...(hasWarn ? { '--warn-deg': `${warnDeg.toFixed(2)}deg` } : {})
+    }
+  }, ring, h('span', { class: 'knob-label' }, label), readout);
   const paint = () => {
     const fraction = (current - min) / (max - min);
-    root.style.setProperty('--turn', `${fraction * 270 - 135}deg`); root.style.setProperty('--fill', `${fraction * 270}deg`);
-    root.setAttribute('aria-valuenow', current.toFixed(2)); readout.textContent = format(current);
+    const fillDeg = fraction * 270;
+    root.style.setProperty('--turn', `${fillDeg - 135}deg`);
+    root.style.setProperty('--fill', `${fillDeg}deg`);
+    if (hasWarn) {
+      root.classList.toggle('warn', current > warnAbove);
+      root.style.setProperty('--safe-fill', `${Math.min(fillDeg, warnDeg).toFixed(2)}deg`);
+      root.style.setProperty('--warn-fill', `${Math.max(warnDeg, fillDeg).toFixed(2)}deg`);
+    }
+    root.setAttribute('aria-valuenow', current.toFixed(2));
+    readout.textContent = format(current);
   };
   const apply = (next, final) => { next = clamp(Math.round(next / step) * step, min, max); const changed = next !== current; current = next; paint(); if (changed) onInput?.(current); if (final) onChange?.(current); };
   root.addEventListener('pointerdown', event => { root.setPointerCapture(event.pointerId); startY = event.clientY; startValue = current; root.classList.add('active'); event.preventDefault(); root.focus(); });
@@ -84,13 +143,21 @@ export function createKnob({ label, min = 0, max = 1, value = 0, step = 0.01, re
 
 /* ---------------------------------------------------------------- fader */
 /** Vertical fader with a live meter. value 0..1 */
-export function createFader({ label, value = 0.7, max = 1, onInput, onChange, format = v => `${Math.round(v * 100)}` }) {
+export function createFader({ label, value = 0.7, max = 1, warnAbove = null, onInput, onChange, format = v => `${Math.round(v * 100)}` }) {
   let current = value;
+  const hasWarn = Number.isFinite(warnAbove) && warnAbove > 0 && warnAbove < max;
   const fill = h('div', { class: 'fader-fill' }), thumb = h('div', { class: 'fader-thumb' }), meter = h('div', { class: 'fader-meter' }, h('i'));
   const track = h('div', { class: 'fader-track' }, fill, thumb);
   const readout = h('output', {}, format(value));
-  const root = h('div', { class: 'fader', role: 'slider', tabIndex: 0, 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': max }, track, meter, readout);
-  const paint = () => { const f = current / max * 100; fill.style.height = `${f}%`; thumb.style.bottom = `${f}%`; readout.textContent = format(current); root.setAttribute('aria-valuenow', current.toFixed(2)); };
+  const root = h('div', { class: `fader${hasWarn ? ' has-warn' : ''}`, role: 'slider', tabIndex: 0, 'aria-label': label, 'aria-valuemin': 0, 'aria-valuemax': max }, track, meter, readout);
+  const paint = () => {
+    const f = current / max * 100;
+    fill.style.height = `${f}%`;
+    thumb.style.bottom = `${f}%`;
+    if (hasWarn) root.classList.toggle('warn', current > warnAbove);
+    readout.textContent = format(current);
+    root.setAttribute('aria-valuenow', current.toFixed(2));
+  };
   const fromPointer = event => { const r = track.getBoundingClientRect(); return clamp(1 - (event.clientY - r.top) / r.height, 0, 1) * max; };
   const apply = (next, final) => { current = clamp(next, 0, max); paint(); onInput?.(current); if (final) onChange?.(current); };
   root.addEventListener('pointerdown', event => { if (event.target === readout) return; root.setPointerCapture(event.pointerId); apply(fromPointer(event), false); event.preventDefault(); root.focus(); });

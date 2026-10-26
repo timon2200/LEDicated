@@ -9,6 +9,8 @@ Izrađena je lokalna aplikacija za ovaj sustav: [pokretanje i testovi](app/READM
 
 Softver je pokretljiv i testiran; fizička instalacija čeka provjeru traka, napajanja, WLED postavki i latencije. Stariji LedFx koraci ispod ostaju alternativni put za usporedbu. Glavni put sada je **BlackHole → Studio Light → WLED**; ne pokretati oba izvora svjetlosnog izlaza istodobno.
 
+**Noviji hardverski podatak:** naručen je [E8-WiFi Plus V1.01](E8_WIFI_PLUS_V1_01.md). Njegovih osam izlaza ne pokriva samo po sebi devet neovisnih barova. Aplikacija sada nudi softverski profil E8 + C3 i zadržava profil pet C3 kontrolera; ostatak ovog starijeg opisa primarno je C3 plan. E8 referenca navodi pinove i fizičke provjere koje još čekaju opremu.
+
 ## Goal and room layout
 
 Build nine individually controlled, 120 cm diffused LED bars in the 3 × 3 arrangement shown in the supplied sketch. The sketch establishes the visual pattern, not physical dimensions, mounting method, cable lengths, or viewing direction. Number bars from the audience-facing view:

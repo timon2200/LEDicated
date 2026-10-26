@@ -58,7 +58,7 @@ test('live RGBW overlay uses the shared renderer and never mutates the base', ()
   assert(lit(a));
   assert(a.bars.C2.some(pixel => pixel[3] > 0));
   assert(a.bars.L1.every(pixel => pixel.every(channel => channel === 0)));
-  for (const pixels of Object.values(a.bars)) for (const pixel of pixels) for (const channel of pixel) assert(channel >= 0 && channel <= 153);
+  for (const pixels of Object.values(a.bars)) for (const pixel of pixels) for (const channel of pixel) assert(channel >= 0 && channel <= 255);
   desk.clear();
   assert.equal(desk.render(base, 100.2), base);
 });
@@ -219,5 +219,29 @@ test('chase hit with rub targets plays both sides simultaneously on trigger', ()
   assert.deepEqual(frame.bars.L1, frame.bars.R1, 'L1 and R1 must be identical');
   assert.equal(frame.bars.C1.some(p => p.some(c => c > 0)), false, 'Center remains dark');
 });
+
+test('live board pads add onto the current playing timeline animation without overwriting it', () => {
+  const desk = createPerformance();
+  const base = blank();
+  for (const id of BAR_IDS) {
+    base.bars[id] = Array.from({ length: PIXELS_PER_BAR }, () => [80, 40, 20, 10]);
+  }
+  // Trigger a flash pad on all bars (adds warm light) and a strobe pad on all bars
+  desk.trigger(0, { clockTime: 10, bpm: 120 });
+  desk.trigger(3, { clockTime: 10, bpm: 120 });
+  const frameOn = desk.render(base, 10.01, 120);
+  const frameStrobeOffPhase = desk.render(base, 10.18, 120);
+
+  for (const id of BAR_IDS) {
+    for (let p = 0; p < PIXELS_PER_BAR; p++) {
+      for (let c = 0; c < 4; c++) {
+        assert.ok(frameOn.bars[id][p][c] >= base.bars[id][p][c], `Bar ${id} px ${p} ch ${c} must not be lower than base timeline during flash/strobe`);
+        assert.ok(frameStrobeOffPhase.bars[id][p][c] >= base.bars[id][p][c], `Bar ${id} px ${p} ch ${c} must preserve base timeline even during strobe off-phase`);
+      }
+    }
+  }
+  assert.ok(frameOn.bars.C2[0][0] > base.bars.C2[0][0], 'Live board adds brightness on top of base timeline');
+});
+
 
 

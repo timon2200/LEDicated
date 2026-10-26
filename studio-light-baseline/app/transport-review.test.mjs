@@ -65,12 +65,12 @@ test('RGBW DDP sends each bar to its assigned node, in output order, with indepe
     for (const id of bars) {
       const marker = ids.indexOf(id) + 1;
       const firstSample = id === 'C1' ? 10 : 1;
-      assert.deepEqual([...packet.subarray(offset, offset + 4)], [marker, firstSample, 153, 99 + marker]);
+      assert.deepEqual([...packet.subarray(offset, offset + 4)], [marker, firstSample, 200, 99 + marker]);
       offset += lengths[id] * 4;
     }
   }
   const reversed = packets[0];
-  assert.deepEqual([...reversed.subarray(10, 26)], [2, 10, 153, 101, 2, 7, 153, 101, 2, 4, 153, 101, 2, 1, 153, 101]);
+  assert.deepEqual([...reversed.subarray(10, 26)], [2, 10, 200, 101, 2, 7, 200, 101, 2, 4, 200, 101, 2, 1, 200, 101]);
 });
 
 test('malformed RGBW frame is rejected before UDP output and does not consume the frame slot', async t => {
@@ -91,4 +91,28 @@ test('malformed RGBW frame is rejected before UDP output and does not consume th
   assert.equal((await post('/api/blackout', {})).status, 200);
   await waitForCount(10);
   assert.ok(packets.slice(5).every(packet => packet.subarray(10).every(value => value === 0)));
+});
+
+test('E8 plus C3 sends eight bars in physical port order and blackouts both destinations', async t => {
+  const config = defaultConfig('e8-c3');
+  config.nodes[0].host = hosts[0]; config.nodes[1].host = hosts[1];
+  config.bars.find(bar => bar.id === 'L1').pixels = 3;
+  config.bars.find(bar => bar.id === 'C1').pixels = 4;
+  const frame = { bars: Object.fromEntries(ids.map((id, i) => [id, Array.from({ length: 12 }, () => [i + 1, 0, 0, 50 + i])])) };
+  const { packets, resolvedHosts, post, waitForCount } = await fixture(t, config);
+  assert.equal((await post('/api/arm', { armed: true })).status, 200);
+  assert.equal((await post('/api/frame', frame)).status, 200);
+  await waitForCount(2);
+  assert.deepEqual(resolvedHosts, hosts.slice(0, 2));
+  assert.equal(packets[0].readUInt16BE(8), (3 + 4 + 6 * 12) * 4);
+  assert.equal(packets[1].readUInt16BE(8), 12 * 4);
+  let offset = 10;
+  for (const [index, length] of [3, 4, 12, 12, 12, 12, 12, 12].entries()) {
+    assert.deepEqual([...packets[0].subarray(offset, offset + 4)], [index + 1, 0, 0, 50 + index]);
+    offset += length * 4;
+  }
+  assert.deepEqual([...packets[1].subarray(10, 14)], [9, 0, 0, 58]);
+  assert.equal((await post('/api/blackout', {})).status, 200);
+  await waitForCount(4);
+  assert.ok(packets.slice(2).every(packet => packet.subarray(10).every(value => value === 0)));
 });
