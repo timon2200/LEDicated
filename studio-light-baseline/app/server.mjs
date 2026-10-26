@@ -567,6 +567,40 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     response.end(JSON.stringify(data));
   };
   const serverShowCache = new Map();
+  let sharedShowsIndexCache = null;
+  let sharedShowsIndexAt = 0;
+  const findSharedShow = async ({ videoId, title } = {}) => {
+    const vid = String(videoId || '').trim();
+    const normTitle = String(title || '').trim().toLowerCase();
+    if (!vid && !normTitle) return null;
+    const nowMs = Date.now();
+    if (!sharedShowsIndexCache || nowMs - sharedShowsIndexAt > 5000) {
+      const files = (await readdir(sharedShowsDir).catch(() => [])).filter(f => f.endsWith('.ledshow.json'));
+      const entries = [];
+      for (const filename of files) {
+        try {
+          const raw = await readFile(join(sharedShowsDir, filename), 'utf8');
+          const parsed = decodeShowJson(raw);
+          entries.push({
+            id: `shared:${filename}`,
+            filename,
+            title: parsed.track?.title || filename.replace(/\.ledshow\.json$/i, ''),
+            videoId: parsed.track?.videoId || null,
+            bpm: parsed.track?.bpm || parsed.timeline?.bpm || 120,
+            durationSec: parsed.track?.durationSec || parsed.timeline?.durationSec || 60,
+            analysis: parsed.analysis,
+            timeline: parsed.timeline
+          });
+        } catch {}
+      }
+      sharedShowsIndexCache = entries;
+      sharedShowsIndexAt = nowMs;
+    }
+    return sharedShowsIndexCache.find(s =>
+      (vid && s.videoId && s.videoId === vid) ||
+      (normTitle && s.title && s.title.toLowerCase() === normTitle)
+    ) || null;
+  };
   const getCachedShow = async trackId => {
     if (!trackId) return null;
     const nowMs = Date.now();
@@ -641,8 +675,10 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           const videoId = parsedUrl.searchParams.get('videoId') || '';
           const title = parsedUrl.searchParams.get('title') || '';
           const track = library.findTrackByVideo({ videoId, title });
-          let bpm = track?.bpm ?? null;
-          let durationSec = track?.durationSec ?? null;
+          const sharedShow = !track ? await findSharedShow({ videoId, title }) : null;
+          const matched = track || sharedShow;
+          let bpm = matched?.bpm ?? null;
+          let durationSec = matched?.durationSec ?? null;
           if (track && (!bpm || !durationSec) && track.hasAnalysis) {
             const analysis = await library.getAnalysis(track.id).catch(() => null);
             if (analysis) {
@@ -654,9 +690,9 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           return json(response, 200, {
             ok: true,
             online: true,
-            track: track ? { id: track.id, title: track.title, bpm, durationSec } : null,
+            track: matched ? { id: matched.id, name: matched.title, title: matched.title, bpm, durationSec, sharedOnly: Boolean(!track && sharedShow) } : null,
             importJob: importJob || null,
-            mode: track ? 'synced' : (extState.mode || 'idle'),
+            mode: matched ? 'synced' : (extState.mode || 'idle'),
             master: liveControl.state.master ?? 70,
             blackout: Boolean(liveControl.state.blackout),
             armed: Boolean(armed),
@@ -677,7 +713,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (existing && (existing.status === 'ready' || existing.hasAnalysis)) {
             liveControl.state.trackId = existing.id;
             liveControl.broadcastCommand({ type: 'select_track', trackId: existing.id });
-            return json(response, 200, { ok: true, alreadyExists: true, status: 'ready', track: existing });
+            return json(response, 200, { ok: true, alreadyExists: true, status: 'ready', track: { ...existing, name: existing.title } });
           }
           const key = videoId || title || randomUUID();
           const runningJob = extJobs.get(key);
@@ -709,6 +745,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               job.status = 'analyzing';
               job.progress = 65;
               job.message = 'Analiza stemova, waveforma i dionica…';
+              const sharedMatch = await findSharedShow({ videoId, title });
               const imported = await library.importTrack(finalMp3Path, `${title || videoId || 'YouTube'}.mp3`, {
                 videoId,
                 sourceUrl: targetUrl,
@@ -717,19 +754,27 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               const analysis = await library.analyzeTrack(imported.id);
               job.status = 'generating_show';
               job.progress = 85;
-              job.message = 'Kreiranje svjetlosnog showa…';
-              const directed = await createDirectedShow(analysis, {
-                title: imported.title,
-                theme,
-                palette: theme,
-                allowedPresets,
-                useGemini
-              });
-              if (Array.isArray(directed.sections) && directed.sections.length) {
-                analysis.sections = directed.sections;
-                await library.saveAnalysis(imported.id, analysis);
+              job.message = sharedMatch?.timeline ? 'Učitavanje dijeljenog Git showa…' : 'Kreiranje svjetlosnog showa…';
+              if (sharedMatch?.timeline) {
+                if (Array.isArray(sharedMatch.analysis?.sections) && sharedMatch.analysis.sections.length) {
+                  analysis.sections = sharedMatch.analysis.sections;
+                  await library.saveAnalysis(imported.id, analysis);
+                }
+                await library.saveTimeline(imported.id, sharedMatch.timeline);
+              } else {
+                const directed = await createDirectedShow(analysis, {
+                  title: imported.title,
+                  theme,
+                  palette: theme,
+                  allowedPresets,
+                  useGemini
+                });
+                if (Array.isArray(directed.sections) && directed.sections.length) {
+                  analysis.sections = directed.sections;
+                  await library.saveAnalysis(imported.id, analysis);
+                }
+                await library.saveTimeline(imported.id, directed.timeline);
               }
-              await library.saveTimeline(imported.id, directed.timeline);
               serverShowCache.delete(imported.id);
               const readyTrack = await library.getTrack(imported.id);
               liveControl.state.trackId = readyTrack.id;
@@ -737,7 +782,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               job.status = 'ready';
               job.progress = 100;
               job.trackId = readyTrack.id;
-              job.track = readyTrack;
+              job.track = { ...readyTrack, name: readyTrack.title };
               job.message = '✓ Show spreman i sinkroniziran!';
             } catch (err) {
               job.status = 'error';
@@ -756,6 +801,8 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (videoId) extState.activeVideoId = videoId;
           if (typeof theme === 'string' && theme.trim()) extState.theme = theme.trim();
           const track = library.findTrackByVideo({ videoId, title });
+          const sharedShow = (!track && !forceLiveStream) ? await findSharedShow({ videoId, title }) : null;
+          const matched = track || sharedShow;
           if (liveMode === false) {
             extState.mode = 'idle';
             extState.liveStems = null;
@@ -771,23 +818,23 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             return json(response, 200, {
               ok: true,
               mode: 'idle',
-              trackId: track?.id || null,
+              trackId: matched?.id || null,
               importJob: (videoId && extJobs.get(videoId)) || null
             });
           }
-          const isReady = Boolean(track && (track.status === 'ready' || track.hasAnalysis) && !forceLiveStream);
+          const isReady = Boolean(((track && (track.status === 'ready' || track.hasAnalysis)) || sharedShow?.timeline) && !forceLiveStream);
           const dawPlayingLocally = Boolean(latestLiveState?.isPlaying && (Date.now() - (latestLiveState.timestamp || 0) < 3500));
           const shouldBroadcast = !dawPlayingLocally && (!paused || !extState.lastPaused || Math.abs(Number(currentTime || 0) - Number(extState.lastTime || 0)) > 0.08);
           extState.lastPaused = Boolean(paused);
           extState.lastTime = Number(currentTime || 0);
           if (isReady) {
             extState.mode = 'synced';
-            if (!dawPlayingLocally) liveControl.state.trackId = track.id;
+            if (!dawPlayingLocally && track) liveControl.state.trackId = track.id;
             if (shouldBroadcast) {
               liveControl.broadcastCommand({
                 type: 'ext_sync',
                 mode: 'synced',
-                trackId: track.id,
+                trackId: matched.id,
                 currentTime,
                 duration,
                 paused,
@@ -795,7 +842,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               });
             }
             if (!dawPlayingLocally && armed && (liveControl.clientCount === 0 || performance.now() - lastFrame > 80) && !liveControl.state.blackout) {
-              const show = await getCachedShow(track.id).catch(() => null);
+              const show = track ? await getCachedShow(track.id).catch(() => null) : { timeline: sharedShow.timeline, analysis: sharedShow.analysis };
               if (show?.timeline) {
                 const rendered = renderTimelineFrame(show.timeline, show.analysis, Math.max(0, Number(currentTime) || 0), null, true);
                 await sendBarsToWled(rendered.bars, paused ? 0 : (liveControl.state.master ?? 70) / 100).catch(() => {});
@@ -824,7 +871,8 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           return json(response, 200, {
             ok: true,
             mode: extState.mode,
-            trackId: isReady ? track.id : (track?.id || null),
+            trackId: isReady ? matched.id : (matched?.id || null),
+            track: matched ? { id: matched.id, name: matched.title, title: matched.title, bpm: matched.bpm, durationSec: matched.durationSec } : null,
             importJob: (videoId && extJobs.get(videoId)) || null
           });
         }
@@ -1127,6 +1175,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             await mkdir(sharedShowsDir, { recursive: true, mode: 0o755 });
             const filename = `${sanitizeFilename(track.title || track.originalName)}.ledshow.json`;
             await writeFile(join(sharedShowsDir, filename), `${JSON.stringify(showObj, null, 2)}\n`, 'utf8');
+            sharedShowsIndexCache = null;
             broadcastLive('command', { type: 'library_updated', trackId: track.id, action: 'share_to_git' });
             return json(response, 200, { ok: true, filename, author });
           }

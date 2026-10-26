@@ -232,7 +232,7 @@ test('export/import .ledpack & .ledshow.json, Git shared-shows, and peer-to-peer
     assert.equal(bDetail.timeline.bpm, 145);
     assert.equal(bDetail.timeline.layers[0].name, 'Marko Drop');
 
-    // 4. Test pull-pack: delete from A, then pull back from B
+    // 4. Test pull-pack: delete from A, verify Chrome extension still syncs against shared-shows/, then pull back from B
     await fetch(`${baseA}/api/library/track-delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -240,6 +240,22 @@ test('export/import .ledpack & .ledshow.json, Git shared-shows, and peer-to-peer
     });
     const aAfterDel = await fetch(`${baseA}/api/library/tracks`).then(r => r.json());
     assert.equal(aAfterDel.tracks.length, 0);
+
+    // Even with 0 local audio files, Chrome extension /api/ext/status and /api/ext/sync match the Git shared show!
+    const extStatus = await fetch(`${baseA}/api/ext/status?title=FriendBanger`).then(r => r.json());
+    assert.equal(extStatus.ok, true);
+    assert.equal(extStatus.mode, 'synced');
+    assert.equal(extStatus.track.name, 'FriendBanger');
+    assert.equal(extStatus.track.sharedOnly, true);
+
+    const extSync = await fetch(`${baseA}/api/ext/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'FriendBanger', currentTime: 1.5, paused: false, liveMode: true })
+    }).then(r => r.json());
+    assert.equal(extSync.ok, true);
+    assert.equal(extSync.mode, 'synced');
+    assert.equal(extSync.track.name, 'FriendBanger');
 
     const pullRes = await fetch(`${baseA}/api/lan/pull-pack`, {
       method: 'POST',

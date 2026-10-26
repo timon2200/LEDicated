@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube Plus Settings</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="popup-header">
+      <div class="brand">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>YouTube Plus</h1>
+          <span class="version-tag">v1.1</span>
+        </div>
+      </div>
+      <div class="status-indicator" id="server-status-indicator">
+        <span class="dot" id="server-status-dot"></span>
+        <span class="status-label" id="server-status-text">Checking...</span>
+      </div>
+    </header>
+
+    <!-- Companion Banner -->
+    <div class="companion-card" id="companion-card">
+      <div class="companion-info">
+        <strong>⚡ Local Companion Engine</strong>
+        <span id="companion-details">yt-dlp & ffmpeg connected</span>
+      </div>
+      <button type="button" class="action-chip-btn" id="open-downloads-btn">
+        <svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:currentColor;"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+        <span>Open Downloads</span>
+      </button>
+    </div>
+
+    <!-- Preferences Form -->
+    <section class="tab-pane active">
+      <form id="settings-form">
+        <!-- Default Video Quality -->
+        <div class="form-group">
+          <label for="defaultVideoQuality">Default MP4 Quality</label>
+          <div class="select-wrapper">
+            <select id="defaultVideoQuality">
+              <option value="2160">4K (2160p)</option>
+              <option value="1440">1440p (2K)</option>
+              <option value="1080" selected>1080p (Full HD)</option>
+              <option value="720">720p (HD)</option>
+              <option value="480">480p</option>
+              <option value="360">360p</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Default Audio Quality -->
+        <div class="form-group">
+          <label for="defaultAudioQuality">Default MP3 Bitrate</label>
+          <div class="select-wrapper">
+            <select id="defaultAudioQuality">
+              <option value="320" selected>320 kbps (High Quality)</option>
+              <option value="256">256 kbps</option>
+              <option value="192">192 kbps</option>
+              <option value="128">128 kbps</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Quick Download Button Toggle -->
+        <div class="form-group toggle-group">
+          <div class="toggle-info">
+            <label for="showQuickButton">Show Action Bar Button</label>
+            <p class="helper-text">Adds quick Download button next to Like/Share on watch page</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="showQuickButton" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <button type="submit" class="save-btn" id="save-btn">Save Preferences</button>
+        <div id="save-feedback" class="save-feedback" style="display: none;">Preferences saved!</div>
+      </form>
+    </section>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,827 @@
+/* content.css - Minimal native YouTube-style download bar & LEDicated Studio Live Popover */
+
+.yt-plus-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 10px 0;
+  padding: 0;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: "Roboto", "YouTube Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  user-select: none;
+}
+
+.yt-plus-group {
+  display: inline-flex;
+  align-items: center;
+  background-color: var(--yt-spec-badge-chip-background, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--yt-spec-10-percent-layer, rgba(255, 255, 255, 0.12));
+  border-radius: 18px;
+  padding: 0 4px 0 10px;
+  height: 34px;
+  box-sizing: border-box;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+html:not([dark]) .yt-plus-group {
+  background-color: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.yt-plus-group:hover {
+  background-color: var(--yt-spec-10-percent-layer, rgba(255, 255, 255, 0.14));
+  border-color: var(--yt-spec-text-secondary, rgba(255, 255, 255, 0.25));
+}
+
+html:not([dark]) .yt-plus-group:hover {
+  background-color: rgba(0, 0, 0, 0.09);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+.yt-plus-ledicated-chip {
+  padding: 0 10px;
+  border-color: rgba(56, 189, 248, 0.35);
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.14), rgba(168, 85, 247, 0.14));
+}
+
+.yt-plus-ledicated-chip:hover {
+  border-color: rgba(56, 189, 248, 0.65);
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.24), rgba(168, 85, 247, 0.24));
+}
+
+.yt-plus-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: var(--yt-spec-text-primary, #f1f1f1);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 4px 0 0;
+  outline: none;
+  transition: opacity 0.15s;
+}
+
+html:not([dark]) .yt-plus-btn {
+  color: #0f0f0f;
+}
+
+.yt-plus-btn:hover {
+  opacity: 0.85;
+}
+
+.yt-plus-btn:active {
+  transform: scale(0.97);
+}
+
+.yt-plus-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.yt-plus-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+
+.yt-plus-divider {
+  width: 1px;
+  height: 16px;
+  background-color: var(--yt-spec-10-percent-layer, rgba(255, 255, 255, 0.15));
+  margin: 0 4px;
+}
+
+html:not([dark]) .yt-plus-divider {
+  background-color: rgba(0, 0, 0, 0.15);
+}
+
+.yt-plus-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  color: var(--yt-spec-text-secondary, #aaaaaa);
+  border: none;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 18px 4px 4px;
+  cursor: pointer;
+  outline: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23aaaaaa'%3e%3cpath d='M7 10l5 5 5-5z'/%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 0px center;
+  background-size: 14px;
+}
+
+html:not([dark]) .yt-plus-select {
+  color: #606060;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23606060'%3e%3cpath d='M7 10l5 5 5-5z'/%3e%3c/svg%3e");
+}
+
+.yt-plus-select:hover {
+  color: var(--yt-spec-text-primary, #ffffff);
+}
+
+html:not([dark]) .yt-plus-select:hover {
+  color: #000000;
+}
+
+.yt-plus-select option {
+  background-color: #212121;
+  color: #ffffff;
+}
+
+html:not([dark]) .yt-plus-select option {
+  background-color: #ffffff;
+  color: #0f0f0f;
+}
+
+.yt-plus-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--yt-spec-text-secondary, #aaaaaa);
+  margin-left: 4px;
+}
+
+.yt-plus-status.is-success {
+  color: #2ea043;
+}
+
+.yt-plus-status.is-error {
+  color: #ff4e45;
+}
+
+.yt-plus-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #ff0033;
+  border-radius: 50%;
+  animation: yt-plus-spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+@keyframes yt-plus-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Quick Action Button on Watch Bar */
+.yt-plus-quick-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 18px;
+  background-color: var(--yt-spec-badge-chip-background, rgba(255, 255, 255, 0.1));
+  color: var(--yt-spec-text-primary, #f1f1f1);
+  border: none;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-left: 8px;
+  transition: background-color 0.15s, box-shadow 0.2s, border-color 0.2s;
+}
+
+html:not([dark]) .yt-plus-quick-action-btn {
+  background-color: rgba(0, 0, 0, 0.05);
+  color: #0f0f0f;
+}
+
+.yt-plus-quick-action-btn:hover {
+  background-color: var(--yt-spec-10-percent-layer, rgba(255, 255, 255, 0.15));
+}
+
+.yt-plus-quick-action-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+/* =========================================================================
+   LEDicated Watch Bar Button & Status Indicator Dot
+   ========================================================================= */
+
+.yt-ledicated-btn {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.yt-ledicated-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: rgba(148, 163, 184, 0.45);
+  display: inline-block;
+  transition: background-color 0.2s, box-shadow 0.2s;
+}
+
+.yt-ledicated-btn.is-streaming {
+  border-color: rgba(34, 211, 238, 0.55);
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.18), rgba(245, 158, 11, 0.16));
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.22);
+}
+
+.yt-ledicated-btn.is-streaming .yt-ledicated-dot {
+  background-color: #22d3ee;
+  box-shadow: 0 0 8px #22d3ee, 0 0 14px #f59e0b;
+  animation: yt-led-pulse 1.2s ease-in-out infinite;
+}
+
+.yt-ledicated-btn.is-synced {
+  border-color: rgba(16, 185, 129, 0.6);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(6, 182, 212, 0.18));
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.25);
+}
+
+.yt-ledicated-btn.is-synced .yt-ledicated-dot {
+  background-color: #10b981;
+  box-shadow: 0 0 8px #10b981, 0 0 14px #10b981;
+}
+
+@keyframes yt-led-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.25); opacity: 0.72; }
+}
+
+/* =========================================================================
+   LEDicated Glassmorphic Popover Panel (#yt-ledicated-popover)
+   ========================================================================= */
+
+.yt-ledicated-popover {
+  position: absolute;
+  z-index: 99999;
+  width: 332px;
+  box-sizing: border-box;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(13, 16, 23, 0.94);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(56, 189, 248, 0.08);
+  color: #f1f5f9;
+  font-family: "Roboto", "YouTube Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  user-select: none;
+  display: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.yt-ledicated-popover.is-open {
+  display: block;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.yt-led-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.yt-led-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.yt-led-matrix-icon {
+  display: grid;
+  grid-template-columns: repeat(3, 4px);
+  grid-template-rows: repeat(3, 4px);
+  gap: 2px;
+  padding: 5px;
+  border-radius: 8px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  flex-shrink: 0;
+}
+
+.yt-led-matrix-icon span {
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: #38bdf8;
+  box-shadow: 0 0 4px rgba(56, 189, 248, 0.8);
+}
+
+.yt-led-matrix-icon span:nth-child(even) {
+  background: #a855f7;
+}
+
+.yt-led-brand-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.yt-led-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: #f8fafc;
+}
+
+.yt-led-subtitle {
+  font-size: 10.5px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 165px;
+}
+
+.yt-led-conn-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+  border: 1px solid transparent;
+}
+
+.yt-led-conn-badge.is-offline {
+  background: rgba(239, 68, 68, 0.14);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.yt-led-conn-badge.is-online {
+  background: rgba(56, 189, 248, 0.14);
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.yt-led-conn-badge.is-streaming {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fcd34d;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.yt-led-conn-badge.is-synced {
+  background: rgba(16, 185, 129, 0.18);
+  color: #6ee7b7;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+/* Primary Toggle Row */
+.yt-led-primary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 10px;
+}
+
+.yt-led-primary-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.yt-led-primary-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.yt-led-primary-desc {
+  font-size: 10.5px;
+  color: #94a3b8;
+}
+
+.yt-led-switch {
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.yt-led-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.yt-led-switch-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: rgba(148, 163, 184, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 24px;
+  transition: 0.2s;
+}
+
+.yt-led-switch-slider::before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 2px;
+  bottom: 2px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  transition: 0.2s;
+}
+
+.yt-led-switch input:checked + .yt-led-switch-slider {
+  background: linear-gradient(135deg, #06b6d4, #10b981);
+  border-color: rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.35);
+}
+
+.yt-led-switch input:checked + .yt-led-switch-slider::before {
+  transform: translateX(18px);
+}
+
+/* 4-Stem Audio Telemetry Meter */
+.yt-led-meters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 10px;
+}
+
+.yt-led-meter-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.yt-led-meter-col span {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: #64748b;
+}
+
+.yt-led-meter-bar {
+  width: 100%;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+
+.yt-led-meter-fill {
+  width: 100%;
+  height: 0%;
+  transition: height 0.05s linear;
+  border-radius: 3px;
+}
+
+.yt-led-meter-fill.is-bass { background: linear-gradient(to top, #ef4444, #f97316); }
+.yt-led-meter-fill.is-drums { background: linear-gradient(to top, #f59e0b, #fde047); }
+.yt-led-meter-fill.is-vocals { background: linear-gradient(to top, #ec4899, #a855f7); }
+.yt-led-meter-fill.is-other { background: linear-gradient(to top, #06b6d4, #38bdf8); }
+
+.yt-led-meter-badges {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.yt-led-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.05);
+  color: #475569;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: all 0.08s ease;
+}
+
+#yt-led-pill-beat.is-active {
+  background: rgba(56, 189, 248, 0.25);
+  color: #e0f2fe;
+  border-color: #38bdf8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+}
+
+#yt-led-pill-drop.is-active {
+  background: rgba(244, 63, 94, 0.3);
+  color: #ffe4e6;
+  border-color: #f43f5e;
+  box-shadow: 0 0 10px rgba(244, 63, 94, 0.65);
+}
+
+/* Import & Show Creation Button + Progress */
+.yt-led-import-section {
+  margin-bottom: 10px;
+}
+
+.yt-led-import-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(139, 92, 246, 0.22));
+  color: #f8fafc;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.yt-led-import-btn:hover {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.34), rgba(139, 92, 246, 0.34));
+  border-color: rgba(56, 189, 248, 0.7);
+}
+
+.yt-led-import-btn:active {
+  transform: scale(0.985);
+}
+
+.yt-led-import-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: #38bdf8;
+  flex-shrink: 0;
+}
+
+.yt-led-job-box {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.yt-led-job-box.is-done {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.yt-led-job-box.is-error {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.yt-led-job-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+
+.yt-led-job-status {
+  color: #e2e8f0;
+  font-weight: 500;
+}
+
+.yt-led-job-box.is-done .yt-led-job-status {
+  color: #6ee7b7;
+}
+
+.yt-led-job-box.is-error .yt-led-job-status {
+  color: #fca5a5;
+}
+
+.yt-led-job-pct {
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
+
+.yt-led-job-track {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.yt-led-job-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #06b6d4, #a855f7);
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.yt-led-job-box.is-done .yt-led-job-fill {
+  background: #10b981;
+}
+
+.yt-led-job-box.is-error .yt-led-job-fill {
+  background: #ef4444;
+}
+
+/* Gemini AI Director Checkbox */
+.yt-led-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.yt-led-checkbox-row input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: #38bdf8;
+  cursor: pointer;
+}
+
+.yt-led-checkbox-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.yt-led-checkbox-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.yt-led-checkbox-sub {
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+/* Theme Dropdown & Master Slider Controls */
+.yt-led-control-group {
+  margin-bottom: 10px;
+}
+
+.yt-led-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #cbd5e1;
+  margin-bottom: 4px;
+}
+
+.yt-led-select {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background-color: rgba(15, 23, 42, 0.85);
+  color: #f8fafc;
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+
+.yt-led-select:focus {
+  border-color: #38bdf8;
+}
+
+.yt-led-slider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.yt-led-slider-val {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #38bdf8;
+  font-variant-numeric: tabular-nums;
+}
+
+.yt-led-slider-val.is-high {
+  color: #f87171;
+}
+
+.yt-led-range {
+  width: 100%;
+  accent-color: #38bdf8;
+  cursor: pointer;
+  margin: 0;
+}
+
+.yt-led-power-warn {
+  margin-top: 4px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+/* Quick Actions Row */
+.yt-led-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.yt-led-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.yt-led-action-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.yt-led-action-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #64748b;
+}
+
+.yt-led-action-btn.is-armed {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.16);
+  color: #6ee7b7;
+}
+
+.yt-led-action-btn.is-armed .yt-led-action-dot {
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+}
+
+.yt-led-action-btn.is-danger {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+}
+
+.yt-led-action-btn.is-danger:hover,
+.yt-led-action-btn.is-danger.is-active {
+  background: rgba(239, 68, 68, 0.32);
+  border-color: #ef4444;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+}
+
+.yt-led-action-link {
+  margin-left: auto;
+  color: #38bdf8;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 5px 6px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.yt-led-action-link:hover {
+  background: rgba(56, 189, 248, 0.12);
+  text-decoration: underline;
+}

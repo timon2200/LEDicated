@@ -64,6 +64,24 @@ Kad ste u uredu na istom Wi-Fi / LAN-u, poslužitelj automatski sluša na svim l
 
 ---
 
+## YouTube Chrome Ekstenzija (`chrome-extension/`)
+
+Repozitorij sadrži i Chrome ekstenziju (**YouTube Plus Downloader + LEDicated Live Light Show Bridge**) u mapi [`chrome-extension/`](chrome-extension/).
+
+### Instalacija u Chrome / Brave / Arc:
+1. Otvori `chrome://extensions/` u pregledniku.
+2. Uključi **Developer mode** (gornji desni kut).
+3. Klikni **Load unpacked** i odaberi mapu `chrome-extension/` iz kloniranog repozitorija.
+
+### Što sve radi na YouTubeu:
+- Na svakom YouTube videu pojavljuje se gumb **Light Show** (uz **Download**).
+- **Automatska sinkronizacija s Git showovima:** Ako je pjesma već u lokalnoj bazi ili u `studio-light-baseline/app/shared-shows/` (22+ gotovih showova u Gitu), ekstenzija se odmah prebacuje u **Sync · ON (`Sinkronizirano s bazom`)** i vrti točan programirani timeline u savršenoj sinkronizaciji s YouTube videom!
+- **Uživo 4-Stem Stream (20 Hz):** Za bilo koji drugi YouTube video ekstenzija u stvarnom vremenu izvlači 4 frekvencijska stema (`bass`, `drums`, `vocals`, `other`) izravno iz YouTube playera bez gašenja zvuka i šalje ih u LEDicated Studio.
+- **1-Click Kreiranje Showa s YouTubea:** Klikom na **Dodaj pjesmu i kreiraj Show** poslužitelj u pozadini preuzima audio (`yt-dlp`), analizira stemove i generira kompletan timeline show.
+- **Lokalno ili Uredski LAN:** U popoveru ekstenzije pod **LEDicated Server (Lokalno ili Ured LAN)** možeš ostaviti `http://127.0.0.1:8787` kad radiš doma ili upisati IP adresu uredskog Maca (npr. `http://192.168.1.50:8787`) kad u uredu puštaš YouTube izravno na fizički 3×3 zid.
+
+---
+
 ## Pregled Faze 1 (Istraživanje i Arhitektura)
 
 Cjeloviti nacrt istraživanja i arhitekture dostupan je u [LEDICATED_RESEARCH_BLUEPRINT.md](LEDICATED_RESEARCH_BLUEPRINT.md).
