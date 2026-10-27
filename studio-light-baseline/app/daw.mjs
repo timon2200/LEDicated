@@ -229,8 +229,16 @@ const telemetrySection = h('div', { class: 'stage-telemetry' },
   h('div', { class: 'tele-foot' }, teleNodes, teleMode)
 );
 
+const stageLiveBanner = h('div', {
+  id: 'stage-live-banner',
+  class: 'stage-live-banner is-idle',
+  role: 'region',
+  'aria-label': 'Status stagea i trenutna reprodukcija'
+});
+
 const stagePanel = h('section', { class: 'stage-panel', 'aria-label': 'Svjetlo' },
   stageSection,
+  stageLiveBanner,
   telemetrySection,
   activeNow
 );
@@ -422,11 +430,17 @@ async function togglePlay() {
   live.clearExternal?.();
   stemsEngine.ensureContext();
   if (audio.paused) {
+    if (!lanState.stageOwnerId && !lanState.isRemoteStageOwner) {
+      lanState.manuallyReleased = false;
+    }
     s.playFrom = s.scrubSec; audio.currentTime = s.scrubSec;
     playPending = true;
     try {
       await audio.play();
       if (recorder?.isArmed) recorder.startRecording();
+      if (lanState.stageOwnerId && lanState.stageOwnerId !== clientId) {
+        toast(`🎧 Solo Preview — na stageu je ${lanState.stageOwnerName || 'kolega'}. Klikni „⚡ Preuzmi Stage” ako želiš prebaciti zid na sebe.`, 'info');
+      }
     } catch (error) { toast(`Reprodukcija nije uspjela: ${error.message}`, 'error'); }
     finally { playPending = false; }
   } else {
@@ -810,9 +824,17 @@ document.getElementById('help-open').onclick = () => help.showModal();
 
 /* ------------------------------------------- LAN & Dijeljenje (Uredski Hub) */
 const lanState = {
-  stageOwnerId: clientId,
-  stageOwnerName: clientName,
+  stageOwnerId: null,
+  stageOwnerName: null,
+  stageOwnerSource: null,
+  stageState: 'idle',
+  graceRemainingSec: 0,
+  graceUpdatedAt: 0,
+  isRemoteStageOwner: false,
+  nowPlaying: null,
+  manuallyReleased: false,
   peers: [],
+  remoteServers: [],
   lanUrls: [],
   hostname: '',
   peerUrl: (() => {
@@ -823,36 +845,173 @@ const lanState = {
   syncBusy: false
 };
 
+const formatMinSec = sec => {
+  const sVal = Math.max(0, Math.floor(Number(sec) || 0));
+  const m = Math.floor(sVal / 60);
+  const r = sVal % 60;
+  return `${m}:${String(r).padStart(2, '0')}`;
+};
+
+const sourceLabel = src => src === 'youtube' ? '🎬 YouTube' : src === 'daw' ? '🎹 DAW' : '💻 LAN';
+
 const lanDialog = h('dialog', { id: 'lan-dialog', class: 'help lan-modal', 'aria-label': 'LAN & Dijeljenje' });
 document.body.append(lanDialog);
 lanDialog.addEventListener('click', e => { if (e.target === lanDialog) lanDialog.close(); });
 
+function getLiveGraceRemaining() {
+  if (lanState.stageState !== 'grace' || !lanState.graceRemainingSec) return 0;
+  const elapsed = Math.floor((Date.now() - (lanState.graceUpdatedAt || Date.now())) / 1000);
+  return Math.max(0, lanState.graceRemainingSec - elapsed);
+}
+
+function renderStageLiveBanner() {
+  const isMyStage = lanState.stageOwnerId === clientId && !lanState.isRemoteStageOwner;
+  const isFree = !lanState.stageOwnerId && !lanState.isRemoteStageOwner;
+  const graceSec = getLiveGraceRemaining();
+  const np = lanState.nowPlaying;
+
+  stageLiveBanner.className = `stage-live-banner ${
+    isMyStage
+      ? (lanState.stageState === 'grace' ? 'is-grace' : 'is-owner')
+      : isFree
+        ? (lanState.manuallyReleased ? 'is-solo' : 'is-idle')
+        : 'is-solo'
+  }`;
+
+  let statusText = '⚪ STAGE SLOBODAN';
+  if (isMyStage) {
+    statusText = lanState.stageState === 'grace'
+      ? `🟡 PAUZA · ${graceSec}s (Ti)`
+      : `🟢 ON AIR · ${clientName} (Ti)`;
+  } else if (isFree) {
+    statusText = lanState.manuallyReleased
+      ? '🎧 SOLO PREVIEW · Stage slobodan'
+      : '⚪ STAGE SLOBODAN · Play preuzima';
+  } else {
+    const ownerName = lanState.stageOwnerName || np?.ownerName || 'Kolega';
+    statusText = lanState.stageState === 'grace'
+      ? `🎧 SOLO · 🟡 ${ownerName} (pauza ${graceSec}s)`
+      : `🎧 SOLO · 🟢 ${ownerName}`;
+  }
+
+  const activeSource = isMyStage ? 'daw' : (np?.source || lanState.stageOwnerSource || 'daw');
+  const srcChip = (!isFree || isMyStage)
+    ? h('span', { class: `slb-source-chip src-${activeSource}` }, sourceLabel(activeSource))
+    : null;
+
+  const actionBtn = isMyStage
+    ? h('button', {
+        type: 'button',
+        class: 'slb-btn release',
+        title: 'Prepusti Stage i prebaci se u Solo Preview mod',
+        onClick: () => claimStage(true)
+      }, 'Prepusti Stage')
+    : (!isFree || lanState.manuallyReleased)
+      ? h('button', {
+          type: 'button',
+          class: 'slb-btn claim',
+          title: 'Preuzmi kontrolu nad fizičkim 3×3 LED barovima',
+          onClick: () => claimStage(false)
+        }, '⚡ Preuzmi Stage')
+      : h('button', {
+          type: 'button',
+          class: 'slb-btn lock',
+          title: 'Zaključaj Stage na sebe',
+          onClick: () => claimStage(false)
+        }, '⚡ Zaključaj');
+
+  const trackTitleText = isMyStage
+    ? (s.track?.title || s.track?.originalName || 'Uživo iz DAW-a')
+    : (np?.trackTitle || (isFree ? (s.track?.title ? `Spremno: ${s.track.title}` : 'Nema aktivne reprodukcije') : 'Uživo izlaz'));
+
+  const curSec = isMyStage ? songTime() : Number(np?.timeSec || 0);
+  const durSec = isMyStage ? duration() : Number(np?.durationSec || 0);
+  const timeCode = (!isFree || isMyStage) && (curSec > 0 || durSec > 0)
+    ? `${formatMinSec(curSec)}${durSec > 0 ? ` / ${formatMinSec(durSec)}` : ''}`
+    : '';
+  const pct = durSec > 0 ? Math.min(100, Math.max(0, Math.round((curSec / durSec) * 100))) : 0;
+
+  const openSameTrackBtn = (!isMyStage && np?.trackId && !String(np.trackId).startsWith('shared:') && np.trackId !== s.track?.id && !lanState.isRemoteStageOwner)
+    ? h('button', {
+        type: 'button',
+        class: 'slb-open-track',
+        title: 'Otvori ovu pjesmu u svom timelineu',
+        onClick: () => selectTrack(np.trackId)
+      }, '🎵 Otvori')
+    : null;
+
+  stageLiveBanner.replaceChildren(
+    h('div', { class: 'slb-top' },
+      h('div', { class: 'slb-badges' },
+        h('span', { class: 'slb-status' }, statusText),
+        srcChip
+      ),
+      h('div', { class: 'slb-actions' },
+        openSameTrackBtn,
+        actionBtn
+      )
+    ),
+    h('div', { class: 'slb-bottom' },
+      h('span', { class: 'slb-track', title: trackTitleText },
+        (!isFree && (isMyStage ? !audio.paused : np?.isPlaying)) ? '▶ ' : (!isFree ? '⏸ ' : ''),
+        trackTitleText
+      ),
+      timeCode ? h('span', { class: 'slb-time' }, timeCode) : null
+    ),
+    (!isFree && durSec > 0)
+      ? h('div', { class: 'slb-progress' }, h('div', { class: 'slb-progress-fill', style: { width: `${pct}%` } }))
+      : null
+  );
+}
+
 function updateLanBadge() {
-  const isOwner = !lanState.stageOwnerId || lanState.stageOwnerId === clientId;
-  window.ledicatedIsStageOwner = isOwner;
+  const isMyStage = lanState.stageOwnerId === clientId && !lanState.isRemoteStageOwner;
+  const isFree = !lanState.stageOwnerId && !lanState.isRemoteStageOwner;
+  const canDrive = isMyStage || (isFree && !lanState.manuallyReleased);
+  window.ledicatedIsStageOwner = canDrive;
+  window.ledicatedRemoteStageOwner = Boolean(lanState.isRemoteStageOwner);
   const peerCount = Math.max(1, lanState.peers.length || 1);
   window.ledicatedPeerCount = peerCount;
-  const countLabel = peerCount > 1 ? ` · ${peerCount} online` : '';
-  if (isOwner) {
-    lanBtn.textContent = `🌐 LAN${countLabel} · ON AIR`;
-    lanBtn.classList.add('on-air');
-    lanBtn.classList.remove('solo-mode');
-    lanBtn.title = `Ti si NA STAGEU (ON AIR)${peerCount > 1 ? ` · ${peerCount} povezanih uređaja na LAN-u` : ''}`;
+  const countLabel = peerCount > 1 ? ` · ${peerCount}` : '';
+  const graceSec = getLiveGraceRemaining();
+
+  lanBtn.classList.remove('on-air', 'solo-mode', 'grace-mode');
+  if (isMyStage) {
+    if (lanState.stageState === 'grace') {
+      lanBtn.textContent = `🌐 LAN${countLabel} · PAUZA (${graceSec}s)`;
+      lanBtn.classList.add('grace-mode');
+      lanBtn.title = `Pauzirano — Stage se drži za tebe još ${graceSec} s prije automatskog otpuštanja.`;
+    } else {
+      lanBtn.textContent = `🌐 LAN${countLabel} · ON AIR`;
+      lanBtn.classList.add('on-air');
+      lanBtn.title = `Ti si NA STAGEU (ON AIR)${peerCount > 1 ? ` · ${peerCount} povezanih uređaja na LAN-u` : ''}`;
+    }
+  } else if (isFree) {
+    if (lanState.manuallyReleased) {
+      lanBtn.textContent = `🌐 LAN${countLabel} · SOLO`;
+      lanBtn.classList.add('solo-mode');
+      lanBtn.title = 'Ti si u Solo Preview modu. Stage je trenutno slobodan.';
+    } else {
+      lanBtn.textContent = `🌐 LAN${countLabel} · SLOBODAN`;
+      lanBtn.classList.add('on-air');
+      lanBtn.title = 'Stage je slobodan — pritisni Play za automatsko preuzimanje izlaza.';
+    }
   } else {
     const ownerName = lanState.stageOwnerName || 'Kolega';
     lanBtn.textContent = `🌐 LAN${countLabel} · SOLO (${ownerName})`;
-    lanBtn.classList.remove('on-air');
     lanBtn.classList.add('solo-mode');
     lanBtn.title = `Na stageu je ${ownerName}. Ti si u Solo Preview modu (klikni za preuzimanje stagea).`;
   }
+  renderStageLiveBanner();
 }
 
 async function claimStage(release = false) {
   try {
+    lanState.manuallyReleased = Boolean(release);
     const res = await fetch('/api/lan/claim-stage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientId, name: clientName, release })
+      body: JSON.stringify({ clientId, name: clientName, source: 'daw', release })
     }).then(r => r.json());
     if (res.ok) {
       applyLanPresence(res);
@@ -866,16 +1025,44 @@ async function claimStage(release = false) {
 function applyLanPresence(data) {
   if (!data) return;
   if (Array.isArray(data.peers)) lanState.peers = data.peers;
+  if (Array.isArray(data.remoteServers)) lanState.remoteServers = data.remoteServers;
   if ('stageOwnerId' in data) lanState.stageOwnerId = data.stageOwnerId;
   if ('stageOwnerName' in data) lanState.stageOwnerName = data.stageOwnerName;
+  if ('stageOwnerSource' in data) lanState.stageOwnerSource = data.stageOwnerSource;
+  if ('stageState' in data) lanState.stageState = data.stageState || 'idle';
+  if ('graceRemainingSec' in data) {
+    lanState.graceRemainingSec = Number(data.graceRemainingSec) || 0;
+    lanState.graceUpdatedAt = Date.now();
+  }
+  if ('isRemoteStageOwner' in data) lanState.isRemoteStageOwner = Boolean(data.isRemoteStageOwner);
+  if ('nowPlaying' in data) lanState.nowPlaying = data.nowPlaying || null;
+  if (lanState.stageOwnerId === clientId && !lanState.isRemoteStageOwner) {
+    lanState.manuallyReleased = false;
+  }
   if (Array.isArray(data.lanUrls)) lanState.lanUrls = data.lanUrls;
   if (data.hostname) lanState.hostname = data.hostname;
   updateLanBadge();
-  if (lanDialog.open) renderLanDialog();
+  if (lanDialog.open && document.activeElement?.tagName !== 'INPUT') {
+    renderLanDialog();
+  }
 }
 
+setInterval(() => {
+  if (lanState.stageState === 'grace') {
+    const rem = getLiveGraceRemaining();
+    updateLanBadge();
+    if (rem <= 0) {
+      fetch('/api/lan/status').then(r => r.json()).then(res => { if (res.ok) applyLanPresence(res); }).catch(() => {});
+    }
+  } else if (!audio.paused && lanState.stageOwnerId === clientId) {
+    renderStageLiveBanner();
+  }
+}, 1000);
+
 function renderLanDialog() {
-  const isOwner = !lanState.stageOwnerId || lanState.stageOwnerId === clientId;
+  const isMyStage = lanState.stageOwnerId === clientId && !lanState.isRemoteStageOwner;
+  const isFree = !lanState.stageOwnerId && !lanState.isRemoteStageOwner;
+  const graceSec = getLiveGraceRemaining();
   const nameInput = h('input', {
     type: 'text',
     class: 'lan-input',
@@ -897,26 +1084,35 @@ function renderLanDialog() {
     }
   });
 
-  const stageBanner = h('div', { class: `lan-stage-card ${isOwner ? 'is-owner' : 'is-solo'}` },
+  const stageBanner = h('div', { class: `lan-stage-card ${isMyStage ? 'is-owner' : 'is-solo'}` },
     h('div', { class: 'lan-stage-info' },
-      h('strong', {}, isOwner ? '🟢 TI SI NA STAGEU (ON AIR)' : `🎧 SOLO PREVIEW MOD · Na stageu je: ${lanState.stageOwnerName || 'Kolega'}`),
-      h('small', {}, isOwner
-        ? 'Tvoj timeline, auto-show i live padovi šalju DDP okvire na fizički 3×3 LED zid u uredu.'
+      h('strong', {}, isMyStage
+        ? (lanState.stageState === 'grace' ? `🟡 PAUZA NA STAGEU · Automatsko otpuštanje za ${graceSec}s` : '🟢 TI SI NA STAGEU (ON AIR)')
+        : isFree
+          ? '⚪ STAGE JE SLOBODAN (Pritisni Play ili Preuzmi Stage)'
+          : `🎧 SOLO PREVIEW MOD · Na stageu je: ${lanState.stageOwnerName || 'Kolega'}`),
+      h('small', {}, isMyStage
+        ? 'Tvoj timeline, auto-show i live padovi šalju DDP okvire na fizički 3×3 LED zid u uredu. Kad pauziraš, stage se automatski oslobađa nakon 20 sekundi.'
         : 'Slobodno uređuj showove i slušaj pjesme u svom pregledniku bez prekidanja tuđeg izlaza na zidu!')
     ),
-    isOwner
+    isMyStage
       ? h('button', { type: 'button', class: 'txt-btn', onClick: () => claimStage(true) }, 'Prepusti Stage')
       : h('button', { type: 'button', class: 'primary', onClick: () => claimStage(false) }, '⚡ Preuzmi Stage (ON AIR)')
   );
 
   const peersList = h('div', { class: 'lan-peers-list' },
-    ...(lanState.peers.length ? lanState.peers : [{ clientId, name: clientName, isStageOwner: isOwner, trackId: s.track?.id, trackTitle: s.track?.title, isPlaying: !audio.paused }]).map(p => {
-      const isMe = p.clientId === clientId;
+    ...(lanState.peers.length ? lanState.peers : [{ clientId, name: clientName, source: 'daw', isStageOwner: isMyStage, trackId: s.track?.id, trackTitle: s.track?.title, isPlaying: !audio.paused }]).map(p => {
+      const isMe = p.clientId === clientId && !p.isRemoteServer;
+      const badgeLabel = p.isStageOwner
+        ? (p.stageState === 'grace' ? `🟡 PAUZA` : '🟢 ON AIR')
+        : '🎧 SOLO';
+      const timeStr = p.timeSec > 0 ? ` (${formatMinSec(p.timeSec)}${p.durationSec > 0 ? ` / ${formatMinSec(p.durationSec)}` : ''})` : '';
       return h('div', { class: `lan-peer-row${p.isStageOwner ? ' owner' : ''}` },
-        h('span', { class: `lan-peer-dot ${p.isStageOwner ? 'on-air' : 'solo'}` }, p.isStageOwner ? '🟢 ON AIR' : '🎧 SOLO'),
+        h('span', { class: `lan-peer-dot ${p.isStageOwner ? 'on-air' : 'solo'}` }, badgeLabel),
+        h('span', { class: `slb-source-chip src-${p.source || 'daw'}` }, sourceLabel(p.source || 'daw')),
         h('b', {}, `${p.name || p.clientId}${isMe ? ' (Ti)' : ''}`),
-        h('small', { class: 'lan-peer-track' }, p.trackTitle ? `${p.isPlaying ? '▶ ' : '⏸ '}${p.trackTitle}` : 'Nema odabrane pjesme'),
-        (!isMe && p.trackId && p.trackId !== s.track?.id)
+        h('small', { class: 'lan-peer-track' }, p.trackTitle ? `${p.isPlaying ? '▶ ' : '⏸ '}${p.trackTitle}${timeStr}` : 'Nema odabrane pjesme'),
+        (!isMe && p.trackId && !String(p.trackId).startsWith('shared:') && p.trackId !== s.track?.id && !p.isRemoteServer)
           ? h('button', { type: 'button', class: 'mini-btn', onClick: () => { lanDialog.close(); selectTrack(p.trackId); } }, 'Otvori istu pjesmu')
           : null
       );
@@ -1112,6 +1308,7 @@ function renderLanDialog() {
   );
 }
 
+updateLanBadge();
 lanBtn.onclick = async () => {
   try {
     const res = await fetch('/api/lan/status').then(r => r.json());
@@ -1440,10 +1637,8 @@ function initLiveSync() {
     })
       .then(async res => {
         const data = await res.json().catch(() => null);
-        if (data && 'stageOwnerId' in data) {
-          lanState.stageOwnerId = data.stageOwnerId;
-          lanState.stageOwnerName = data.stageOwnerName || lanState.stageOwnerName;
-          updateLanBadge();
+        if (data && data.ok) {
+          applyLanPresence(data);
         }
       })
       .catch(() => {})

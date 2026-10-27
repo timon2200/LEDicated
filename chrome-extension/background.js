@@ -2,7 +2,6 @@
 
 const LOCAL_COMPANION_URL = 'http://127.0.0.1:5000';
 const DEFAULT_LEDICATED_SERVER_URL = 'http://127.0.0.1:8787';
-let cachedLedicatedServerUrl = DEFAULT_LEDICATED_SERVER_URL;
 
 function normalizeServerUrl(url) {
   let clean = String(url || '').trim().replace(/\/+$/, '');
@@ -11,14 +10,35 @@ function normalizeServerUrl(url) {
   return clean;
 }
 
-async function getLedicatedServerUrl() {
+async function getLedicatedIdentityAndServer() {
   try {
-    const stored = await chrome.storage.local.get(['ledicatedServerUrl']);
-    if (stored.ledicatedServerUrl) {
-      cachedLedicatedServerUrl = normalizeServerUrl(stored.ledicatedServerUrl);
+    const stored = await chrome.storage.local.get([
+      'ledicatedServerUrl',
+      'ledicatedClientId',
+      'ledicatedUserName'
+    ]);
+    let clientId = stored.ledicatedClientId;
+    if (!clientId || typeof clientId !== 'string') {
+      clientId = `yt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      await chrome.storage.local.set({ ledicatedClientId: clientId });
     }
-  } catch (e) {}
-  return cachedLedicatedServerUrl;
+    const clientName = (typeof stored.ledicatedUserName === 'string' && stored.ledicatedUserName.trim())
+      ? stored.ledicatedUserName.trim().slice(0, 40)
+      : `YT-${clientId.slice(-4).toUpperCase()}`;
+    const baseUrl = normalizeServerUrl(stored.ledicatedServerUrl);
+    return { baseUrl, clientId, clientName };
+  } catch (e) {
+    return {
+      baseUrl: DEFAULT_LEDICATED_SERVER_URL,
+      clientId: 'yt-local',
+      clientName: 'YouTube'
+    };
+  }
+}
+
+async function getLedicatedServerUrl() {
+  const { baseUrl } = await getLedicatedIdentityAndServer();
+  return baseUrl;
 }
 
 // Check if Local Companion server is active
@@ -178,6 +198,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'GET_SETTINGS') {
     (async () => {
+      const { baseUrl, clientId, clientName } = await getLedicatedIdentityAndServer();
       const settings = await chrome.storage.local.get([
         'defaultVideoQuality',
         'defaultAudioQuality',
@@ -186,10 +207,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         'ledicatedUseGemini',
         'ledicatedMaster',
         'ledicatedAutoImport',
-        'ledicatedServerUrl'
+        'ledicatedServerUrl',
+        'ledicatedUserName'
       ]);
-      const normalizedUrl = normalizeServerUrl(settings.ledicatedServerUrl);
-      cachedLedicatedServerUrl = normalizedUrl;
       sendResponse({
         success: true,
         settings: {
@@ -200,7 +220,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ledicatedUseGemini: settings.ledicatedUseGemini !== false,
           ledicatedMaster: typeof settings.ledicatedMaster === 'number' ? settings.ledicatedMaster : 70,
           ledicatedAutoImport: settings.ledicatedAutoImport !== false,
-          ledicatedServerUrl: normalizedUrl
+          ledicatedServerUrl: baseUrl,
+          ledicatedClientId: clientId,
+          ledicatedUserName: settings.ledicatedUserName || clientName
         }
       });
     })();
@@ -212,7 +234,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const nextSettings = { ...(message.settings || {}) };
       if (nextSettings.ledicatedServerUrl !== undefined) {
         nextSettings.ledicatedServerUrl = normalizeServerUrl(nextSettings.ledicatedServerUrl);
-        cachedLedicatedServerUrl = nextSettings.ledicatedServerUrl;
+      }
+      if (nextSettings.ledicatedUserName !== undefined) {
+        nextSettings.ledicatedUserName = String(nextSettings.ledicatedUserName || '').trim().slice(0, 40);
       }
       await chrome.storage.local.set(nextSettings);
       sendResponse({ success: true, settings: nextSettings });
@@ -224,10 +248,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'LEDICATED_STATUS') {
     (async () => {
+      const { clientId, clientName } = await getLedicatedIdentityAndServer();
       const payload = message.data || message;
       const videoId = payload.videoId || '';
       const title = payload.title || '';
-      const qs = `videoId=${encodeURIComponent(videoId)}&title=${encodeURIComponent(title)}`;
+      const qs = new URLSearchParams({
+        videoId,
+        title,
+        clientId: payload.clientId || clientId,
+        clientName: payload.clientName || clientName
+      }).toString();
       const result = await requestLedicated(`/api/ext/status?${qs}`, { method: 'GET' }, 2000);
       sendResponse(result);
     })();
@@ -259,8 +289,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'LEDICATED_SYNC') {
     (async () => {
+      const { clientId, clientName } = await getLedicatedIdentityAndServer();
       const payload = message.data || message;
       const body = {
+        clientId: payload.clientId || clientId,
+        clientName: payload.clientName || clientName,
         videoId: payload.videoId || '',
         title: payload.title || '',
         url: payload.url || '',
@@ -287,8 +320,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'LEDICATED_CONTROL') {
     (async () => {
+      const { clientId, clientName } = await getLedicatedIdentityAndServer();
       const payload = message.data || message;
-      const body = {};
+      const body = {
+        clientId: payload.clientId || clientId,
+        clientName: payload.clientName || clientName
+      };
+      if (payload.claimStage !== undefined) body.claimStage = Boolean(payload.claimStage);
+      if (payload.releaseStage !== undefined) body.releaseStage = Boolean(payload.releaseStage);
       if (payload.master !== undefined) body.master = Number(payload.master);
       if (payload.blackout !== undefined) body.blackout = Boolean(payload.blackout);
       if (payload.armed !== undefined) body.armed = Boolean(payload.armed);

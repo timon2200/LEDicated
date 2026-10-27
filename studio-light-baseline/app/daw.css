@@ -942,5 +942,32 @@ dialog.song-launcher-modal:not([open]){display:none}
 .lan-url-chip{font:600 11.5px ui-monospace,Menlo,monospace;padding:4px 9px;border-radius:6px;background:#172130;border:1px solid #2e4057;color:#7dd3fc;cursor:pointer}
 .lan-url-chip:hover{background:#1e2c40;color:#fff;border-color:var(--cyan)}
 .lan-actions-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.lan-btn.grace-mode{border-color:#f5a524;background:rgba(245,165,36,.15);color:#ffd275}
+
+/* Live Stage & Now Playing Banner in Stage Panel */
+.stage-live-banner{display:flex;flex-direction:column;gap:5px;padding:8px 10px;border-bottom:1px solid var(--line);background:#10141c;font-size:11.5px}
+.stage-live-banner.is-owner{background:linear-gradient(90deg,rgba(45,212,168,.11),rgba(16,20,28,.95));border-left:3px solid #2dd4a8}
+.stage-live-banner.is-grace{background:linear-gradient(90deg,rgba(245,165,36,.14),rgba(16,20,28,.95));border-left:3px solid #f5a524}
+.stage-live-banner.is-solo{background:linear-gradient(90deg,rgba(245,165,36,.11),rgba(16,20,28,.95));border-left:3px solid #fbbf24}
+.stage-live-banner.is-idle{background:#10141c;border-left:3px solid #475569}
+.slb-top{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:wrap}
+.slb-badges{display:flex;align-items:center;gap:6px;min-width:0}
+.slb-status{font-weight:700;letter-spacing:.02em;color:var(--hi);white-space:nowrap}
+.stage-live-banner.is-owner .slb-status{color:#5ef2c8}
+.stage-live-banner.is-grace .slb-status,.stage-live-banner.is-solo .slb-status{color:#ffd275}
+.slb-source-chip{font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;border:1px solid #334155;background:#1e293b;color:#cbd5e1;white-space:nowrap}
+.slb-source-chip.src-youtube{border-color:rgba(244,63,94,.45);background:rgba(244,63,94,.16);color:#fda4af}
+.slb-source-chip.src-daw{border-color:rgba(56,189,248,.4);background:rgba(56,189,248,.14);color:#7dd3fc}
+.slb-actions{display:flex;align-items:center;gap:5px}
+.slb-btn,.slb-open-track{font:700 10.5px var(--sans,system-ui);padding:3px 8px;border-radius:5px;cursor:pointer;border:1px solid #334155;background:#1b2230;color:#e2e8f0;white-space:nowrap;transition:background .12s,border-color .12s}
+.slb-btn.claim{background:rgba(245,165,36,.2);border-color:#f5a524;color:#ffd275}
+.slb-btn.claim:hover{background:#f5a524;color:#0b0e14}
+.slb-btn.release:hover,.slb-btn.lock:hover,.slb-open-track:hover{background:#273247;border-color:#64748b;color:#fff}
+.slb-bottom{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.slb-track{color:var(--fg);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.slb-time{font:600 10.5px ui-monospace,Menlo,monospace;color:var(--dim);white-space:nowrap}
+.slb-progress{height:3px;border-radius:2px;background:#1e2636;overflow:hidden}
+.slb-progress-fill{height:100%;background:linear-gradient(90deg,#2dd4a8,#38bdf8);transition:width .25s linear}
+
 
 

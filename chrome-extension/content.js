@@ -14,7 +14,9 @@
     ledicatedUseGemini: true,
     ledicatedMaster: 70,
     ledicatedAutoImport: true,
-    ledicatedServerUrl: 'http://127.0.0.1:8787'
+    ledicatedServerUrl: 'http://127.0.0.1:8787',
+    ledicatedClientId: '',
+    ledicatedUserName: ''
   };
 
   // LEDicated runtime state
@@ -30,6 +32,8 @@
     armed: false,
     theme: 'midnight',
     useGemini: true,
+    isStageOwner: true,
+    lan: null,
     lastVideoId: '',
     autoImportedVideoIds: new Set(),
     syncTimer: null,
@@ -389,6 +393,8 @@
       if (typeof res.armed === 'boolean') ledicatedState.armed = res.armed;
       if (res.theme) ledicatedState.theme = res.theme;
       if (res.mode) ledicatedState.mode = res.mode;
+      if (typeof res.isStageOwner === 'boolean') ledicatedState.isStageOwner = res.isStageOwner;
+      if (res.lan) ledicatedState.lan = res.lan;
     } else {
       ledicatedState.online = false;
     }
@@ -535,14 +541,17 @@
 
       if (res && res.online) {
         const prevTrack = ledicatedState.track;
+        const prevOwner = ledicatedState.isStageOwner;
         ledicatedState.online = true;
         if (res.mode) ledicatedState.mode = res.mode;
         if (res.track !== undefined) ledicatedState.track = res.track;
         if (res.importJob !== undefined) ledicatedState.importJob = res.importJob;
         if (typeof res.armed === 'boolean') ledicatedState.armed = res.armed;
         if (typeof res.blackout === 'boolean') ledicatedState.blackout = res.blackout;
+        if (typeof res.isStageOwner === 'boolean') ledicatedState.isStageOwner = res.isStageOwner;
+        if (res.lan) ledicatedState.lan = res.lan;
 
-        if (!prevTrack && ledicatedState.track) {
+        if ((!prevTrack && ledicatedState.track) || prevOwner !== ledicatedState.isStageOwner || ledicatedState.popoverOpen) {
           updateLedicatedUI();
         }
       } else {
@@ -642,6 +651,8 @@
         if (typeof res.armed === 'boolean') ledicatedState.armed = res.armed;
         if (res.theme) ledicatedState.theme = res.theme;
         if (res.track) ledicatedState.track = res.track;
+        if (typeof res.isStageOwner === 'boolean') ledicatedState.isStageOwner = res.isStageOwner;
+        if (res.lan) ledicatedState.lan = res.lan;
         updateLedicatedUI();
       }
     };
@@ -884,6 +895,15 @@
         <span class="yt-led-conn-badge is-offline" id="yt-ledicated-conn-badge">Offline</span>
       </div>
 
+      <!-- LAN Stage Ownership & Now Playing Banner -->
+      <div class="yt-led-stage-card is-owner" id="yt-ledicated-stage-card">
+        <div class="yt-led-stage-top">
+          <span class="yt-led-stage-badge" id="yt-ledicated-stage-badge">🟢 TI SI NA STAGEU</span>
+          <button type="button" class="yt-led-stage-btn" id="yt-ledicated-stage-btn">Prepusti</button>
+        </div>
+        <div class="yt-led-stage-now" id="yt-ledicated-stage-now">Stage je spreman za YouTube Light Show</div>
+      </div>
+
       <!-- Primary Live Show / Sync Toggle -->
       <div class="yt-led-primary-row">
         <div class="yt-led-primary-info">
@@ -955,10 +975,16 @@
         </select>
       </div>
 
-      <!-- Server URL (Local or Office LAN IP) -->
-      <div class="yt-led-control-group">
-        <label class="yt-led-label" for="yt-ledicated-server-url">LEDicated Server (Lokalno ili Ured LAN)</label>
-        <input type="text" class="yt-led-select" id="yt-ledicated-server-url" value="http://127.0.0.1:8787" placeholder="http://127.0.0.1:8787 ili http://192.168.x.x:8787" spellcheck="false">
+      <!-- DJ Name & Server URL (Local or Office LAN IP) -->
+      <div class="yt-led-control-group yt-led-grid-2">
+        <div>
+          <label class="yt-led-label" for="yt-ledicated-user-name">Tvoje ime (LAN)</label>
+          <input type="text" class="yt-led-select" id="yt-ledicated-user-name" value="" placeholder="npr. Timon" spellcheck="false">
+        </div>
+        <div>
+          <label class="yt-led-label" for="yt-ledicated-server-url">LEDicated Server</label>
+          <input type="text" class="yt-led-select" id="yt-ledicated-server-url" value="http://127.0.0.1:8787" placeholder="http://127.0.0.1:8787" spellcheck="false">
+        </div>
       </div>
 
       <!-- Master Brightness Slider (0-100%) -->
@@ -996,6 +1022,44 @@
     });
 
     // Event Listeners
+    const stageBtn = popover.querySelector('#yt-ledicated-stage-btn');
+    if (stageBtn) {
+      stageBtn.addEventListener('click', () => {
+        const lan = ledicatedState.lan;
+        const myId = userSettings.ledicatedClientId;
+        const iHoldStage = Boolean(lan && lan.stageOwnerId && myId && lan.stageOwnerId === myId && !lan.isRemoteStageOwner);
+        if (iHoldStage) {
+          sendControlUpdate({ releaseStage: true }, true);
+        } else {
+          sendControlUpdate({ claimStage: true }, true);
+        }
+      });
+    }
+
+    const userNameInput = popover.querySelector('#yt-ledicated-user-name');
+    if (userNameInput) {
+      userNameInput.value = userSettings.ledicatedUserName || '';
+      const saveUserName = async () => {
+        const nextName = userNameInput.value.trim().slice(0, 40);
+        const res = await sendRuntimeMessage({
+          action: 'SAVE_SETTINGS',
+          settings: { ledicatedUserName: nextName }
+        });
+        if (res?.settings?.ledicatedUserName !== undefined) {
+          userSettings.ledicatedUserName = res.settings.ledicatedUserName;
+        }
+        sendControlUpdate({ clientName: userSettings.ledicatedUserName }, true);
+      };
+      userNameInput.addEventListener('change', saveUserName);
+      userNameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          saveUserName();
+          userNameInput.blur();
+        }
+      });
+    }
+
     const liveToggle = popover.querySelector('#yt-ledicated-live-toggle');
     liveToggle.addEventListener('change', () => {
       setLiveShowMode(liveToggle.checked);
@@ -1194,6 +1258,12 @@
   }
 
   function updateLedicatedUI() {
+    const lan = ledicatedState.lan;
+    const myId = userSettings.ledicatedClientId;
+    const iHoldStage = Boolean(lan && lan.stageOwnerId && myId && lan.stageOwnerId === myId && !lan.isRemoteStageOwner);
+    const stageIsFree = !lan || (!lan.stageOwnerId && !lan.isRemoteStageOwner);
+    const canDrive = ledicatedState.isStageOwner !== false;
+
     const isSyncedWithDb = Boolean(
       ledicatedState.liveMode &&
       ledicatedState.online &&
@@ -1204,11 +1274,15 @@
     // 1. Watch Bar Button (#yt-ledicated-btn)
     const watchBtn = document.getElementById('yt-ledicated-btn');
     if (watchBtn) {
-      watchBtn.classList.toggle('is-streaming', isLiveStreaming);
-      watchBtn.classList.toggle('is-synced', isSyncedWithDb);
+      watchBtn.classList.toggle('is-streaming', isLiveStreaming && canDrive);
+      watchBtn.classList.toggle('is-synced', isSyncedWithDb && canDrive);
+      watchBtn.classList.toggle('is-solo', Boolean(ledicatedState.liveMode && !canDrive));
       const labelEl = watchBtn.querySelector('.yt-ledicated-btn-label');
       if (labelEl) {
-        if (isSyncedWithDb) {
+        if (ledicatedState.liveMode && !canDrive) {
+          const ownerName = lan?.stageOwnerName || 'Kolega';
+          labelEl.textContent = `Solo (${ownerName})`;
+        } else if (isSyncedWithDb) {
           labelEl.textContent = 'Sync · ON';
         } else if (isLiveStreaming) {
           labelEl.textContent = 'Light Show · ON';
@@ -1227,6 +1301,55 @@
     // 3. Popover Controls
     const popover = document.getElementById('yt-ledicated-popover');
     if (!popover) return;
+
+    const stageCard = document.getElementById('yt-ledicated-stage-card');
+    const stageBadge = document.getElementById('yt-ledicated-stage-badge');
+    const stageBtn = document.getElementById('yt-ledicated-stage-btn');
+    const stageNow = document.getElementById('yt-ledicated-stage-now');
+    if (stageCard && stageBadge && stageBtn && stageNow) {
+      const np = lan?.nowPlaying;
+      stageCard.className = 'yt-led-stage-card';
+      if (!ledicatedState.online) {
+        stageCard.classList.add('is-idle');
+        stageBadge.textContent = '⚪ SERVER OFFLINE';
+        stageBtn.style.display = 'none';
+        stageNow.textContent = 'Pokreni LEDicated Studio ili provjeri IP adresu servera.';
+      } else if (iHoldStage) {
+        stageCard.classList.add(lan?.stageState === 'grace' ? 'is-grace' : 'is-owner');
+        stageBadge.textContent = lan?.stageState === 'grace'
+          ? `🟡 PAUZA (${lan.graceRemainingSec || 20}s)`
+          : '🟢 TI SI NA STAGEU (ON AIR)';
+        stageBtn.style.display = 'inline-flex';
+        stageBtn.textContent = 'Prepusti';
+        stageBtn.className = 'yt-led-stage-btn is-release';
+        stageNow.textContent = `Na 3×3 zidu: ${getVideoTitle() || 'YouTube'}`;
+      } else if (stageIsFree && canDrive) {
+        stageCard.classList.add('is-idle');
+        stageBadge.textContent = '⚪ STAGE SLOBODAN';
+        stageBtn.style.display = 'inline-flex';
+        stageBtn.textContent = '⚡ Preuzmi Stage';
+        stageBtn.className = 'yt-led-stage-btn is-claim';
+        stageNow.textContent = 'Uključi Uživo svjetlo za automatsko preuzimanje zida.';
+      } else {
+        stageCard.classList.add('is-solo');
+        const ownerName = lan?.stageOwnerName || np?.ownerName || 'Kolega';
+        stageBadge.textContent = lan?.stageState === 'grace'
+          ? `🎧 SOLO · 🟡 ${ownerName} (${lan.graceRemainingSec || 20}s)`
+          : `🎧 SOLO · 🟢 Na stageu: ${ownerName}`;
+        stageBtn.style.display = 'inline-flex';
+        stageBtn.textContent = '⚡ Preuzmi Stage';
+        stageBtn.className = 'yt-led-stage-btn is-claim';
+        const srcTag = np?.source === 'youtube' ? 'YouTube' : 'DAW';
+        stageNow.textContent = np?.trackTitle
+          ? `${np.isPlaying ? '▶' : '⏸'} ${np.trackTitle} (${srcTag})`
+          : `Zid trenutno drži ${ownerName}. Klikni Preuzmi Stage za prebacivanje na sebe.`;
+      }
+    }
+
+    const userNameInput = document.getElementById('yt-ledicated-user-name');
+    if (userNameInput && document.activeElement !== userNameInput && userSettings.ledicatedUserName) {
+      userNameInput.value = userSettings.ledicatedUserName;
+    }
 
     const connBadge = document.getElementById('yt-ledicated-conn-badge');
     if (connBadge) {

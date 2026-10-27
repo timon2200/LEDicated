@@ -15,6 +15,7 @@ import { mapBarPixels } from './mapping.mjs';
 import { BAR_IDS, HARDWARE_PROFILES, hardwareProfile, routesForNode } from './hardware-topology.mjs';
 import { discoverWled, normalizeMac } from './wled-discovery.mjs';
 import { applyTimelineOp } from './daw-remote.mjs';
+import { createLanCoordinator, DEFAULT_LAN_BUS_PORT } from './lan-coordinator.mjs';
 import {
   sanitizeFilename,
   encodeShowJson,
@@ -281,7 +282,7 @@ export function encodeDDP(channels, sequence = 1, transport = 'rgb') {
   return packet;
 }
 
-export function createLightingServer({ configPath = resolve(ROOT, 'config.json'), libraryRoot = resolve(ROOT, 'data'), library: customLibrary = null, sharedShowsDir = resolve(ROOT, 'shared-shows'), initialConfig, allowLoopback = false, udpPort = 4048, watchdogMs = 3500, minFrameMs = 8, resolveHost = host => host, probe = probeWled, discovery = discoverWled, maxAudioBytes, ytDownloader = downloadWithYtDlp, peerFetcher = fetch } = {}) {
+export function createLightingServer({ configPath = resolve(ROOT, 'config.json'), libraryRoot = resolve(ROOT, 'data'), library: customLibrary = null, sharedShowsDir = resolve(ROOT, 'shared-shows'), initialConfig, allowLoopback = false, udpPort = 4048, watchdogMs = 3500, minFrameMs = 8, stageIdleMs = 20000, lanBusPort = 0, lanMulticastAddr, lanBroadcastAddrs, lanHeartbeatMs = 1500, lanPeerTtlMs = 6000, resolveHost = host => host, probe = probeWled, discovery = discoverWled, maxAudioBytes, ytDownloader = downloadWithYtDlp, peerFetcher = fetch } = {}) {
   let config = validateConfig(initialConfig ?? defaultConfig(), allowLoopback);
   let cachedNodeRoutes = new Map(config.nodes.map(node => [node.id, routesForNode(config, node.id)]));
   const updateConfig = next => {
@@ -302,7 +303,12 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
   const liveClients = new Set();
   const lanPeers = new Map();
   let stageOwnerId = null;
+  let remoteStageOwner = null;
+  let claimEpoch = 0;
+  let stageLastActiveAt = 0;
+  let yieldedToRemote = false;
   let latestLiveState = null;
+
   const broadcastLive = (event, data) => {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of liveClients) {
@@ -313,74 +319,383 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     const raw = String(req?.socket?.remoteAddress || '127.0.0.1');
     return raw.startsWith('::ffff:') ? raw.slice(7) : raw;
   };
+
+  let lanCoordinator = null;
+
+  const computeStageState = (nowMs = Date.now()) => {
+    if (remoteStageOwner) {
+      return remoteStageOwner.isPlaying ? 'on_air' : (remoteStageOwner.stageState || 'grace');
+    }
+    if (!stageOwnerId || !lanPeers.has(stageOwnerId)) {
+      return 'idle';
+    }
+    const owner = lanPeers.get(stageOwnerId);
+    if (owner.isPlaying || owner.hasActivePads) {
+      return 'on_air';
+    }
+    if (stageIdleMs > 0 && nowMs - stageLastActiveAt >= stageIdleMs) {
+      return 'idle';
+    }
+    return 'grace';
+  };
+
+  const getGraceRemainingSec = (nowMs = Date.now()) => {
+    if (remoteStageOwner) {
+      return Number(remoteStageOwner.graceRemainingSec || 0);
+    }
+    if (!stageOwnerId || !lanPeers.has(stageOwnerId)) return 0;
+    const owner = lanPeers.get(stageOwnerId);
+    if (owner.isPlaying || owner.hasActivePads) return Math.ceil(stageIdleMs / 1000);
+    const remainingMs = Math.max(0, stageIdleMs - (nowMs - stageLastActiveAt));
+    return Math.ceil(remainingMs / 1000);
+  };
+
   const pruneLanPeers = () => {
     const nowMs = Date.now();
+    let stageChanged = false;
     for (const [cid, peer] of lanPeers.entries()) {
       const hasSse = peer.sseRes && !peer.sseRes.writableEnded && !peer.sseRes.destroyed;
+      if (peer.source === 'youtube' && nowMs - peer.lastSeenAt > 6000 && peer.isPlaying) {
+        peer.isPlaying = false;
+      }
       if (!hasSse && nowMs - peer.lastSeenAt > 12000) {
         lanPeers.delete(cid);
+        if (stageOwnerId === cid) {
+          stageOwnerId = null;
+          stageChanged = true;
+        }
       }
     }
-    if (stageOwnerId && !lanPeers.has(stageOwnerId)) {
-      const nextPlaying = [...lanPeers.values()].find(p => p.isPlaying) || [...lanPeers.values()][0] || null;
-      stageOwnerId = nextPlaying ? nextPlaying.clientId : null;
+
+    if (remoteStageOwner && lanCoordinator) {
+      const remoteSrv = lanCoordinator.getRemoteServers().find(s => s.serverId === remoteStageOwner.serverId);
+      if (!remoteSrv || !remoteSrv.stageOwner || remoteSrv.stageState === 'idle') {
+        remoteStageOwner = null;
+        stageChanged = true;
+      } else {
+        remoteStageOwner = {
+          ...remoteSrv.stageOwner,
+          serverId: remoteSrv.serverId,
+          httpUrl: remoteSrv.lanUrls?.[0] || remoteStageOwner.httpUrl || null,
+          stageState: remoteSrv.stageState || (remoteSrv.stageOwner.isPlaying ? 'on_air' : 'grace')
+        };
+      }
+    }
+
+    if (stageOwnerId) {
+      if (!lanPeers.has(stageOwnerId)) {
+        stageOwnerId = null;
+        stageChanged = true;
+      } else {
+        const owner = lanPeers.get(stageOwnerId);
+        if (owner.isPlaying || owner.hasActivePads) {
+          stageLastActiveAt = nowMs;
+        } else if (stageIdleMs > 0 && nowMs - stageLastActiveAt >= stageIdleMs) {
+          const expiredId = stageOwnerId;
+          stageOwnerId = null;
+          claimEpoch = Math.max(nowMs, claimEpoch + 1);
+          stageChanged = true;
+          lanCoordinator?.broadcastRelease?.({ claimEpoch, clientId: expiredId });
+        }
+      }
+    }
+    return stageChanged;
+  };
+
+  const rearmAfterYield = () => {
+    if (!yieldedToRemote || armed || liveControl.state.blackout || testRunning) return;
+    const activeNodes = config.nodes.filter(n => n.host);
+    if (activeNodes.length) {
+      yieldedToRemote = false;
+      armed = true;
+      reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
+      lastFrame = performance.now();
+      lastAcceptedFrame = -Infinity;
+      for (const node of activeNodes) wakeWled(node.host);
+      broadcastLive('command', { type: 'hardware_sync', state: state() });
     }
   };
+
+  const claimStageForPeer = (peer, { takeover = false } = {}) => {
+    if (!peer) return false;
+    const nowMs = Date.now();
+    const prevOwner = stageOwnerId;
+    const wasRemote = Boolean(remoteStageOwner);
+    claimEpoch = Math.max(nowMs, claimEpoch + 1);
+    stageOwnerId = peer.clientId;
+    remoteStageOwner = null;
+    stageLastActiveAt = nowMs;
+    peer.lastActiveAt = nowMs;
+    peer.releasedWhilePlaying = false;
+    rearmAfterYield();
+    lanCoordinator?.broadcastClaim?.({ claimEpoch });
+    return prevOwner !== peer.clientId || wasRemote || takeover;
+  };
+
+  const releaseStageForPeer = cid => {
+    const peer = lanPeers.get(cid);
+    if (peer && (peer.isPlaying || peer.hasActivePads)) {
+      peer.releasedWhilePlaying = true;
+    }
+    if (stageOwnerId === cid) {
+      stageOwnerId = null;
+      claimEpoch = Math.max(Date.now(), claimEpoch + 1);
+      lanCoordinator?.broadcastRelease?.({ claimEpoch, clientId: cid });
+      return true;
+    }
+    return false;
+  };
+
   const touchLanPeer = (clientId, patch = {}, req = null) => {
     if (typeof clientId !== 'string' || !clientId.trim()) return null;
     const cid = clientId.trim().slice(0, 64);
     pruneLanPeers();
     const existing = lanPeers.get(cid);
     const nowMs = Date.now();
+    const source = patch.source || existing?.source || (cid.startsWith('yt-') ? 'youtube' : 'daw');
+    const defaultPrefix = source === 'youtube' ? 'YouTube' : 'DJ';
     const name = typeof patch.name === 'string' && patch.name.trim()
       ? patch.name.trim().slice(0, 48)
-      : (existing?.name || `Gost ${lanPeers.size + 1}`);
+      : (existing?.name || `${defaultPrefix}-${cid.slice(-4).toUpperCase()}`);
+    const nextIsPlaying = patch.isPlaying !== undefined ? Boolean(patch.isPlaying) : Boolean(existing?.isPlaying);
+    const nextHasActivePads = patch.hasActivePads !== undefined ? Boolean(patch.hasActivePads) : Boolean(existing?.hasActivePads);
+    const nextTrackId = patch.trackId !== undefined ? patch.trackId : (existing?.trackId || null);
+
+    let releasedWhilePlaying = Boolean(existing?.releasedWhilePlaying);
+    if ((patch.isPlaying === false && !nextHasActivePads) || (existing && patch.trackId !== undefined && patch.trackId !== existing.trackId)) {
+      releasedWhilePlaying = false;
+    }
+
     const peer = {
       clientId: cid,
       name,
+      source,
       ip: req ? cleanPeerIp(req) : (existing?.ip || '127.0.0.1'),
       connectedAt: existing?.connectedAt || nowMs,
       lastSeenAt: nowMs,
-      trackId: patch.trackId !== undefined ? patch.trackId : (existing?.trackId || null),
+      lastActiveAt: (nextIsPlaying || nextHasActivePads) ? nowMs : (existing?.lastActiveAt || 0),
+      trackId: nextTrackId,
       trackTitle: patch.trackTitle !== undefined ? patch.trackTitle : (existing?.trackTitle || null),
-      isPlaying: patch.isPlaying !== undefined ? Boolean(patch.isPlaying) : Boolean(existing?.isPlaying),
+      videoId: patch.videoId !== undefined ? patch.videoId : (existing?.videoId || null),
+      isPlaying: nextIsPlaying,
+      hasActivePads: nextHasActivePads,
       timeSec: patch.timeSec !== undefined ? Number(patch.timeSec || 0) : Number(existing?.timeSec || 0),
+      durationSec: patch.durationSec !== undefined ? Number(patch.durationSec || 0) : Number(existing?.durationSec || 0),
       bpm: patch.bpm !== undefined ? patch.bpm : (existing?.bpm || null),
+      releasedWhilePlaying,
       sseRes: patch.sseRes !== undefined ? patch.sseRes : (existing?.sseRes || null)
     };
     lanPeers.set(cid, peer);
-    if (!stageOwnerId) stageOwnerId = cid;
+
+    const activeNow = peer.isPlaying || peer.hasActivePads;
+    if (activeNow) {
+      if (stageOwnerId === cid && !remoteStageOwner) {
+        stageLastActiveAt = nowMs;
+      } else if (!peer.releasedWhilePlaying) {
+        const currentOwner = stageOwnerId ? lanPeers.get(stageOwnerId) : null;
+        const stageIsFree = !stageOwnerId && !remoteStageOwner;
+        // Also allow seamless handover between DAW tab and YouTube tab on the exact same computer when the previous tab is paused
+        const sameMachinePausedSwitch = Boolean(
+          currentOwner &&
+          !remoteStageOwner &&
+          !currentOwner.isPlaying &&
+          !currentOwner.hasActivePads &&
+          currentOwner.ip === peer.ip &&
+          currentOwner.source !== peer.source
+        );
+        if (stageIsFree || sameMachinePausedSwitch) {
+          claimStageForPeer(peer, { takeover: false });
+        }
+      }
+    }
     return peer;
   };
+
+  const canClientDriveStage = clientId => {
+    pruneLanPeers();
+    if (remoteStageOwner) return false;
+    if (!clientId) return true;
+    const cid = String(clientId).trim();
+    const peer = lanPeers.get(cid);
+    if (peer?.releasedWhilePlaying) return false;
+    if (stageOwnerId) {
+      return stageOwnerId === cid;
+    }
+    return true;
+  };
+
+  const formatPeerForStatus = (p, activeOwnerId, isRemote = false, currentStageState = 'idle') => ({
+    clientId: p.clientId,
+    name: p.name,
+    ip: p.ip,
+    source: p.source || 'daw',
+    isStageOwner: Boolean(activeOwnerId && p.clientId === activeOwnerId),
+    stageState: Boolean(activeOwnerId && p.clientId === activeOwnerId) ? currentStageState : 'solo',
+    isRemoteServer: Boolean(isRemote),
+    remoteUrl: p.remoteUrl || p.httpUrl || null,
+    trackId: p.trackId || null,
+    trackTitle: p.trackTitle || null,
+    videoId: p.videoId || null,
+    isPlaying: Boolean(p.isPlaying),
+    timeSec: Number(p.timeSec || 0),
+    durationSec: Number(p.durationSec || 0),
+    bpm: p.bpm || null,
+    lastSeenAt: p.lastSeenAt
+  });
+
   const getLanStatus = () => {
     pruneLanPeers();
+    const nowMs = Date.now();
     const port = server?.address?.()?.port || 8787;
     const addrInfo = getLanAddresses(port);
+    const stageState = computeStageState(nowMs);
+    const graceRemainingSec = stageState === 'grace' ? getGraceRemainingSec(nowMs) : 0;
+    const localOwner = (stageOwnerId && lanPeers.get(stageOwnerId)) || null;
+    const effectiveOwner = remoteStageOwner || localOwner || null;
+    const effectiveOwnerId = effectiveOwner ? effectiveOwner.clientId : null;
+
+    const allPeers = [...lanPeers.values()].map(p => formatPeerForStatus(p, effectiveOwnerId, false, stageState));
+    if (lanCoordinator) {
+      for (const rp of lanCoordinator.getRemotePeers()) {
+        if (!allPeers.some(lp => lp.clientId === rp.clientId)) {
+          allPeers.push(formatPeerForStatus(rp, effectiveOwnerId, true, stageState));
+        }
+      }
+    }
+
+    const nowPlaying = effectiveOwner ? {
+      clientId: effectiveOwner.clientId,
+      name: effectiveOwner.name,
+      source: effectiveOwner.source || 'daw',
+      trackId: effectiveOwner.trackId || null,
+      trackTitle: effectiveOwner.trackTitle || null,
+      videoId: effectiveOwner.videoId || null,
+      isPlaying: Boolean(effectiveOwner.isPlaying),
+      timeSec: Number(effectiveOwner.timeSec || 0),
+      durationSec: Number(effectiveOwner.durationSec || 0),
+      bpm: effectiveOwner.bpm || null,
+      stageState,
+      graceRemainingSec,
+      isRemoteServer: Boolean(remoteStageOwner),
+      remoteUrl: remoteStageOwner?.httpUrl || null
+    } : null;
+
     return {
       ok: true,
+      serverId: lanCoordinator?.serverId || null,
       ...addrInfo,
       armed: Boolean(armed),
+      yieldedToRemote: Boolean(yieldedToRemote),
       blackout: Boolean(liveControl.state.blackout),
       master: liveControl.state.master ?? 70,
-      stageOwnerId,
-      stageOwnerName: (stageOwnerId && lanPeers.get(stageOwnerId)?.name) || null,
-      peers: [...lanPeers.values()].map(p => ({
-        clientId: p.clientId,
-        name: p.name,
-        ip: p.ip,
-        isStageOwner: p.clientId === stageOwnerId,
-        trackId: p.trackId || null,
-        trackTitle: p.trackTitle || null,
-        isPlaying: Boolean(p.isPlaying),
-        timeSec: Number(p.timeSec || 0),
-        bpm: p.bpm || null,
-        lastSeenAt: p.lastSeenAt
-      }))
+      stageState,
+      graceRemainingSec,
+      stageIdleSec: Math.round(stageIdleMs / 1000),
+      stageOwnerId: effectiveOwnerId,
+      stageOwnerName: effectiveOwner?.name || null,
+      stageOwnerSource: effectiveOwner?.source || null,
+      isRemoteStageOwner: Boolean(remoteStageOwner),
+      nowPlaying,
+      peers: allPeers
     };
   };
+
   const broadcastLanPresence = (extra = {}) => {
-    broadcastLive('command', { type: 'lan_presence', lan: getLanStatus(), ...extra });
+    const statusPayload = getLanStatus();
+    broadcastLive('command', { type: 'lan_presence', lan: statusPayload, ...statusPayload, ...extra });
+    lanCoordinator?.broadcastState?.('state');
   };
+
+  lanCoordinator = createLanCoordinator({
+    port: lanBusPort,
+    ...(lanMulticastAddr !== undefined ? { multicastAddr: lanMulticastAddr } : {}),
+    ...(lanBroadcastAddrs !== undefined ? { broadcastAddrs: lanBroadcastAddrs } : {}),
+    heartbeatMs: lanHeartbeatMs,
+    peerTtlMs: lanPeerTtlMs,
+    getLocalState: () => {
+      const port = server?.address?.()?.port || 8787;
+      const addrInfo = getLanAddresses(port);
+      const nowMs = Date.now();
+      const localOwner = (stageOwnerId && lanPeers.get(stageOwnerId)) || null;
+      const localStageState = localOwner
+        ? ((localOwner.isPlaying || localOwner.hasActivePads) ? 'on_air' : 'grace')
+        : 'idle';
+      return {
+        hostname: addrInfo.hostname,
+        port,
+        lanUrls: addrInfo.lanUrls,
+        claimEpoch,
+        stageState: localStageState,
+        localStageOwner: localOwner ? {
+          clientId: localOwner.clientId,
+          name: localOwner.name,
+          source: localOwner.source || 'daw',
+          httpUrl: addrInfo.lanUrls?.[0] || `http://127.0.0.1:${port}`,
+          trackId: localOwner.trackId || null,
+          trackTitle: localOwner.trackTitle || null,
+          videoId: localOwner.videoId || null,
+          isPlaying: Boolean(localOwner.isPlaying),
+          timeSec: Number(localOwner.timeSec || 0),
+          durationSec: Number(localOwner.durationSec || 0),
+          bpm: localOwner.bpm || null,
+          graceRemainingSec: localStageState === 'grace' ? getGraceRemainingSec(nowMs) : 0,
+          lastActiveAt: stageLastActiveAt
+        } : null,
+        localPeers: [...lanPeers.values()].map(p => ({
+          clientId: p.clientId,
+          name: p.name,
+          ip: p.ip,
+          source: p.source || 'daw',
+          trackId: p.trackId || null,
+          trackTitle: p.trackTitle || null,
+          videoId: p.videoId || null,
+          isPlaying: Boolean(p.isPlaying),
+          timeSec: Number(p.timeSec || 0),
+          durationSec: Number(p.durationSec || 0),
+          bpm: p.bpm || null,
+          lastSeenAt: p.lastSeenAt
+        }))
+      };
+    },
+    onRemoteClaim: ({ serverId: remSrvId, claimEpoch: remEpoch, stageState: remState, stageOwner: remOwner }) => {
+      if (!remOwner || remEpoch < claimEpoch) return;
+      const changed = !remoteStageOwner || remoteStageOwner.clientId !== remOwner.clientId || Boolean(stageOwnerId);
+      claimEpoch = remEpoch;
+      stageOwnerId = null;
+      remoteStageOwner = {
+        ...remOwner,
+        serverId: remSrvId,
+        stageState: remState || (remOwner.isPlaying ? 'on_air' : 'grace')
+      };
+      if (armed) {
+        // Yield WLED output cleanly without sending blackout zeros so the new owner's frames don't flicker
+        armed = false;
+        yieldedToRemote = true;
+        reason = `Na stageu (LAN): ${remOwner.name || 'Kolega'}`;
+        broadcastLive('command', { type: 'hardware_sync', state: state() });
+      }
+      if (changed) {
+        const statusPayload = getLanStatus();
+        broadcastLive('command', { type: 'lan_presence', lan: statusPayload, ...statusPayload, reason: 'remote_claim' });
+      }
+    },
+    onRemoteRelease: ({ serverId: remSrvId, claimEpoch: remEpoch }) => {
+      if (remoteStageOwner && remoteStageOwner.serverId === remSrvId) {
+        if (remEpoch >= claimEpoch) claimEpoch = remEpoch;
+        remoteStageOwner = null;
+        const statusPayload = getLanStatus();
+        broadcastLive('command', { type: 'lan_presence', lan: statusPayload, ...statusPayload, reason: 'remote_release' });
+      }
+    },
+    onRemoteStateChanged: () => {
+      pruneLanPeers();
+      const statusPayload = getLanStatus();
+      broadcastLive('command', { type: 'lan_presence', lan: statusPayload, ...statusPayload });
+    }
+  });
+  if (lanBusPort > 0) {
+    lanCoordinator.start().catch(() => {});
+  }
   const liveControl = {
     state: { master: 70, blackout: false, trackId: null },
     get clientCount() { return liveClients.size; },
@@ -426,7 +741,16 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     }
   };
   let autoConnectPromise = null;
-  const autoConnect = ({ allowDiscovery = true } = {}) => {
+  const autoConnect = ({ allowDiscovery = true, forceTakeover = false } = {}) => {
+    if (remoteStageOwner && !forceTakeover) {
+      return Promise.resolve({
+        ok: false,
+        connected: false,
+        yieldedToRemote: true,
+        error: `Na stageu je ${remoteStageOwner.name || 'kolega na LAN-u'}.`,
+        ...state()
+      });
+    }
     if (armed) {
       const e8 = config.nodes.find(n => n.id === 'E8-1') || config.nodes.find(n => n.host);
       return Promise.resolve({ ok: true, connected: true, alreadyArmed: true, host: e8?.host || null, nodeId: e8?.id || null, ...state() });
@@ -477,6 +801,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               }
               if (activeNodes.length) {
                 armed = true;
+                yieldedToRemote = false;
                 reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
                 lastFrame = performance.now();
                 lastAcceptedFrame = -Infinity;
@@ -515,6 +840,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             wakeWled(matched.host);
             const activeNodes = config.nodes.filter(n => n.host);
             armed = true;
+            yieldedToRemote = false;
             reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
             lastFrame = performance.now();
             lastAcceptedFrame = -Infinity;
@@ -530,7 +856,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     return autoConnectPromise;
   };
   const sendBarsToWled = async (bars, scale = 1) => {
-    if (!armed || !bars || Object.keys(bars).length !== 9) return false;
+    if (!armed || remoteStageOwner || !bars || Object.keys(bars).length !== 9) return false;
     const now = performance.now();
     if (now - lastAcceptedFrame < minFrameMs) return false;
     const values = new Map(config.nodes.map(node => [node.id, []]));
@@ -560,7 +886,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     await Promise.all(config.nodes.filter(node => node.host).map(node => send(node.host, values.get(node.id))));
     return true;
   };
-  const state = () => ({ armed, reason, config, transport: config.transport === 'rgbw' ? 'DDP RGBW' : 'DDP RGB', ceiling: 255, maxFps: 120, watchdogMs });
+  const state = () => ({ armed, yieldedToRemote, reason, config, transport: config.transport === 'rgbw' ? 'DDP RGBW' : 'DDP RGB', ceiling: 255, maxFps: 120, watchdogMs });
   const json = (response, status, data) => {
     if (response.headersSent || response.destroyed || response.writableEnded) return;
     response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -620,7 +946,10 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
   };
   let fallbackBusy = false;
   const timer = setInterval(() => {
-    if (!armed) return;
+    if (pruneLanPeers()) {
+      broadcastLanPresence({ reason: 'idle_timeout' });
+    }
+    if (!armed || remoteStageOwner) return;
     const idleMs = performance.now() - lastFrame;
     if (liveClients.size > 0 && !liveControl.state.blackout && idleMs > 80 && !fallbackBusy) {
       const trackId = latestLiveState?.trackId || liveControl.state.trackId;
@@ -628,7 +957,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         fallbackBusy = true;
         getCachedShow(trackId)
           .then(show => {
-            if (!show || !armed) return;
+            if (!show || !armed || remoteStageOwner) return;
             const elapsedSec = latestLiveState?.isPlaying
               ? Math.max(0, (Date.now() - (latestLiveState.timestamp || Date.now())) / 1000)
               : 0;
@@ -674,6 +1003,11 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         if (request.method === 'GET' && pathname === '/api/ext/status') {
           const videoId = parsedUrl.searchParams.get('videoId') || '';
           const title = parsedUrl.searchParams.get('title') || '';
+          const clientId = parsedUrl.searchParams.get('clientId') || '';
+          const clientName = parsedUrl.searchParams.get('clientName') || '';
+          if (clientId) {
+            touchLanPeer(clientId, { name: clientName || undefined, source: 'youtube' }, request);
+          }
           const track = library.findTrackByVideo({ videoId, title });
           const sharedShow = !track ? await findSharedShow({ videoId, title }) : null;
           const matched = track || sharedShow;
@@ -687,6 +1021,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             }
           }
           const importJob = (videoId && extJobs.get(videoId)) || (title && extJobs.get(title)) || null;
+          const lanStatus = getLanStatus();
           return json(response, 200, {
             ok: true,
             online: true,
@@ -697,7 +1032,9 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             blackout: Boolean(liveControl.state.blackout),
             armed: Boolean(armed),
             theme: extState.theme,
-            themes: SHOW_THEMES.map(t => ({ id: t.id, name: t.name, description: t.description }))
+            themes: SHOW_THEMES.map(t => ({ id: t.id, name: t.name, description: t.description })),
+            isStageOwner: clientId ? canClientDriveStage(clientId) : !remoteStageOwner,
+            lan: lanStatus
           });
         }
         if (request.method !== 'POST') return json(response, 405, { error: 'Metoda nije podržana.' });
@@ -796,34 +1133,91 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           return json(response, 200, { ok: true, jobId, status: 'downloading', alreadyExists: false });
         }
         if (pathname === '/api/ext/sync') {
-          const { videoId, title, currentTime = 0, duration, paused = false, playbackRate = 1, liveMode, forceLiveStream = false, theme, stems } = input;
-          extState.lastSyncAt = Date.now();
-          if (videoId) extState.activeVideoId = videoId;
-          if (typeof theme === 'string' && theme.trim()) extState.theme = theme.trim();
+          const { clientId, clientName, videoId, title, currentTime = 0, duration, paused = false, playbackRate = 1, liveMode, forceLiveStream = false, theme, stems } = input;
           const track = library.findTrackByVideo({ videoId, title });
           const sharedShow = (!track && !forceLiveStream) ? await findSharedShow({ videoId, title }) : null;
           const matched = track || sharedShow;
+
+          let prevOwner = stageOwnerId;
+          let prevPeerSnap = '';
+          if (clientId) {
+            const existing = lanPeers.get(String(clientId).trim());
+            prevPeerSnap = existing ? `${existing.name}|${existing.trackTitle}|${existing.isPlaying}` : '';
+            touchLanPeer(clientId, {
+              name: clientName,
+              source: 'youtube',
+              trackId: matched?.id || null,
+              trackTitle: title || matched?.title || 'YouTube Video',
+              videoId: videoId || null,
+              isPlaying: Boolean(liveMode !== false && !paused),
+              timeSec: Number(currentTime || 0),
+              durationSec: Number(duration || matched?.durationSec || 0),
+              bpm: matched?.bpm || null
+            }, request);
+          }
+
           if (liveMode === false) {
-            extState.mode = 'idle';
-            extState.liveStems = null;
-            extState.lastPaused = true;
-            liveControl.broadcastCommand({
-              type: 'ext_sync',
-              mode: 'idle',
-              videoId,
-              title,
-              paused: true,
-              liveMode: false
-            });
+            const cid = clientId ? String(clientId).trim() : '';
+            const wasOwner = !cid || stageOwnerId === cid;
+            if (cid && stageOwnerId === cid) {
+              releaseStageForPeer(cid);
+            }
+            if (wasOwner) {
+              extState.mode = 'idle';
+              extState.liveStems = null;
+              extState.lastPaused = true;
+              liveControl.broadcastCommand({
+                type: 'ext_sync',
+                mode: 'idle',
+                videoId,
+                title,
+                paused: true,
+                liveMode: false
+              });
+            }
+            if (cid) broadcastLanPresence({ reason: 'ext_stop' });
             return json(response, 200, {
               ok: true,
               mode: 'idle',
               trackId: matched?.id || null,
-              importJob: (videoId && extJobs.get(videoId)) || null
+              importJob: (videoId && extJobs.get(videoId)) || null,
+              isStageOwner: cid ? canClientDriveStage(cid) : !remoteStageOwner,
+              lan: getLanStatus()
             });
           }
+
+          if (clientId) {
+            const updated = lanPeers.get(String(clientId).trim());
+            const nextPeerSnap = updated ? `${updated.name}|${updated.trackTitle}|${updated.isPlaying}` : '';
+            if (prevOwner !== stageOwnerId || prevPeerSnap !== nextPeerSnap) {
+              broadcastLanPresence();
+            }
+          }
+
           const isReady = Boolean(((track && (track.status === 'ready' || track.hasAnalysis)) || sharedShow?.timeline) && !forceLiveStream);
-          const dawPlayingLocally = Boolean(latestLiveState?.isPlaying && (Date.now() - (latestLiveState.timestamp || 0) < 3500));
+          const canDrive = canClientDriveStage(clientId);
+          if (!canDrive) {
+            return json(response, 200, {
+              ok: true,
+              skipped: remoteStageOwner ? 'remote_stage_owner' : 'not_stage_owner',
+              isStageOwner: false,
+              mode: isReady ? 'synced' : 'live_stream',
+              trackId: isReady ? matched.id : (matched?.id || null),
+              track: matched ? { id: matched.id, name: matched.title, title: matched.title, bpm: matched.bpm, durationSec: matched.durationSec } : null,
+              importJob: (videoId && extJobs.get(videoId)) || null,
+              lan: getLanStatus()
+            });
+          }
+
+          extState.lastSyncAt = Date.now();
+          if (videoId) extState.activeVideoId = videoId;
+          if (typeof theme === 'string' && theme.trim()) extState.theme = theme.trim();
+          const cid = clientId ? String(clientId).trim() : '';
+          const dawPlayingLocally = Boolean(
+            (!cid || stageOwnerId !== cid) &&
+            latestLiveState?.isPlaying &&
+            (Date.now() - (latestLiveState.timestamp || 0) < 3500)
+          );
           const shouldBroadcast = !dawPlayingLocally && (!paused || !extState.lastPaused || Math.abs(Number(currentTime || 0) - Number(extState.lastTime || 0)) > 0.08);
           extState.lastPaused = Boolean(paused);
           extState.lastTime = Number(currentTime || 0);
@@ -870,14 +1264,34 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           }
           return json(response, 200, {
             ok: true,
+            isStageOwner: true,
             mode: extState.mode,
             trackId: isReady ? matched.id : (matched?.id || null),
             track: matched ? { id: matched.id, name: matched.title, title: matched.title, bpm: matched.bpm, durationSec: matched.durationSec } : null,
-            importJob: (videoId && extJobs.get(videoId)) || null
+            importJob: (videoId && extJobs.get(videoId)) || null,
+            lan: getLanStatus()
           });
         }
         if (pathname === '/api/ext/control') {
-          const { master, blackout, armed: reqArmed, theme, allowedPresets, regenerate, useGemini, videoId, title } = input;
+          const { clientId, clientName, claimStage, releaseStage, master, blackout, armed: reqArmed, theme, allowedPresets, regenerate, useGemini, videoId, title } = input;
+          if (clientId) {
+            const peer = touchLanPeer(clientId, {
+              name: clientName,
+              source: 'youtube',
+              ...(videoId ? { videoId } : {}),
+              ...(title ? { trackTitle: title } : {})
+            }, request);
+            if (claimStage === true && peer) {
+              claimStageForPeer(peer, { takeover: true });
+              broadcastLanPresence({ reason: 'claim' });
+            } else if (releaseStage === true && peer) {
+              releaseStageForPeer(peer.clientId);
+              pruneLanPeers();
+              broadcastLanPresence({ reason: 'release' });
+            } else if (clientName) {
+              broadcastLanPresence();
+            }
+          }
           if (Number.isFinite(master)) {
             const val = clampVal(Number(master), 0, 100);
             liveControl.state.master = val;
@@ -899,6 +1313,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               const activeNodes = config.nodes.filter(node => node.host);
               if (activeNodes.length) {
                 armed = true;
+                yieldedToRemote = false;
                 reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
                 lastFrame = performance.now();
                 lastAcceptedFrame = -Infinity;
@@ -955,7 +1370,9 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             master: liveControl.state.master,
             blackout: Boolean(liveControl.state.blackout),
             armed: Boolean(armed),
-            theme: extState.theme
+            theme: extState.theme,
+            isStageOwner: clientId ? canClientDriveStage(clientId) : !remoteStageOwner,
+            lan: getLanStatus()
           });
         }
         return json(response, 404, { error: 'Nepoznat API ekstenzije.' });
@@ -1363,22 +1780,26 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         const input = JSON.parse(body || '{}');
         if (pathname === '/api/live/state') {
           let prevPeerSnap = '';
+          const prevOwner = stageOwnerId;
           if (input.clientId) {
             const existing = lanPeers.get(String(input.clientId));
-            prevPeerSnap = existing ? `${existing.name}|${existing.trackId}|${existing.isPlaying}` : '';
+            prevPeerSnap = existing ? `${existing.name}|${existing.trackId}|${existing.isPlaying}|${existing.hasActivePads}` : '';
             touchLanPeer(input.clientId, {
               name: input.clientName,
+              source: 'daw',
               trackId: input.trackId,
               trackTitle: input.trackTitle,
               isPlaying: input.isPlaying,
+              hasActivePads: Array.isArray(input.activePads) && input.activePads.length > 0,
               timeSec: input.timeSec,
+              durationSec: input.durationSec,
               bpm: input.bpm
             }, request);
             const updated = lanPeers.get(String(input.clientId));
-            const nextPeerSnap = updated ? `${updated.name}|${updated.trackId}|${updated.isPlaying}` : '';
-            if (prevPeerSnap !== nextPeerSnap) broadcastLanPresence();
+            const nextPeerSnap = updated ? `${updated.name}|${updated.trackId}|${updated.isPlaying}|${updated.hasActivePads}` : '';
+            if (prevPeerSnap !== nextPeerSnap || prevOwner !== stageOwnerId) broadcastLanPresence();
           }
-          const isStageOwner = !input.clientId || !stageOwnerId || stageOwnerId === String(input.clientId);
+          const isStageOwner = canClientDriveStage(input.clientId);
           if (isStageOwner) {
             latestLiveState = { ...input, timestamp: Date.now() };
             if (Number.isFinite(input.master)) liveControl.state.master = input.master;
@@ -1386,26 +1807,30 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             if (input.trackId) liveControl.state.trackId = input.trackId;
             if (armed && input.armed) lastFrame = performance.now();
           }
-          const ownerPeer = stageOwnerId ? lanPeers.get(stageOwnerId) : null;
+          const lanStat = getLanStatus();
           return json(response, 200, {
             ok: true,
-            stageOwnerId,
-            stageOwnerName: ownerPeer?.name || null,
-            isStageOwner
+            isStageOwner,
+            ...lanStat
           });
         }
         if (pathname === '/api/lan/claim-stage') {
           const cid = String(input.clientId || '').trim();
           if (!cid) return json(response, 400, { error: 'Nedostaje clientId.' });
-          touchLanPeer(cid, { name: input.name }, request);
+          const peer = touchLanPeer(cid, { name: input.name, source: input.source }, request);
           if (input.release === true) {
-            if (stageOwnerId === cid) stageOwnerId = null;
+            releaseStageForPeer(cid);
             pruneLanPeers();
+            broadcastLanPresence({ reason: 'release' });
           } else {
-            stageOwnerId = cid;
+            claimStageForPeer(peer, { takeover: true });
+            broadcastLanPresence({ reason: 'claim' });
           }
-          broadcastLanPresence();
-          return json(response, 200, { ok: true, ...getLanStatus() });
+          return json(response, 200, {
+            ok: true,
+            isStageOwner: canClientDriveStage(cid),
+            ...getLanStatus()
+          });
         }
         if (pathname === '/api/lan/profile') {
           const cid = String(input.clientId || '').trim();
@@ -1589,8 +2014,10 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         if (pathname === '/api/arm') {
           if (typeof input.armed !== 'boolean') throw new Error('Očekuje se armed true ili false.');
           if (input.armed && testRunning) return json(response, 409, { error: 'Pričekajte kraj kratkog testa.' });
-          if (!input.armed) await disarm('Izlaz ugašen');
-          else {
+          if (!input.armed) {
+            yieldedToRemote = false;
+            await disarm('Izlaz ugašen');
+          } else {
             const activeNodes = config.nodes.filter(node => node.host);
             if (!activeNodes.length) return json(response, 409, { error: `Postavite IP adresu barem jednog kontrolera.` });
             for (const node of activeNodes.filter(item => item.mac)) {
@@ -1608,6 +2035,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               }
             }
             armed = true;
+            yieldedToRemote = false;
             reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
             lastFrame = performance.now();
             lastAcceptedFrame = -Infinity;
@@ -1659,19 +2087,21 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           return json(response, 200, { ok: !interrupted, interrupted, barId: bar.id });
         }
         if (pathname === '/api/frame') {
-          if (!armed) return json(response, 409, { error: 'Izlaz je ugašen.' });
           if (input.clientId) {
             touchLanPeer(input.clientId, { name: input.clientName }, request);
-            if (stageOwnerId && stageOwnerId !== String(input.clientId) && lanPeers.has(stageOwnerId)) {
-              const ownerPeer = lanPeers.get(stageOwnerId);
-              return json(response, 200, {
-                ok: true,
-                skipped: 'not_stage_owner',
-                stageOwnerId,
-                stageOwnerName: ownerPeer?.name || null
-              });
-            }
           }
+          if (!canClientDriveStage(input.clientId)) {
+            const lanStat = getLanStatus();
+            return json(response, 200, {
+              ok: true,
+              skipped: remoteStageOwner ? 'remote_stage_owner' : 'not_stage_owner',
+              isStageOwner: false,
+              stageOwnerId: lanStat.stageOwnerId,
+              stageOwnerName: lanStat.stageOwnerName,
+              stageState: lanStat.stageState
+            });
+          }
+          if (!armed) return json(response, 409, { error: 'Izlaz je ugašen.' });
           if (!input.bars || Object.keys(input.bars).length !== 9) throw new Error('Kadar mora sadržavati svih 9 traka.');
           const values = new Map(config.nodes.map(node => [node.id, []]));
           for (const node of config.nodes) {
@@ -1696,7 +2126,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           lastFrame = now;
           lastAcceptedFrame = now;
           await Promise.all(config.nodes.filter(node => node.host).map(node => send(node.host, values.get(node.id))));
-          return json(response, 200, { ok: true, stageOwnerId });
+          return json(response, 200, { ok: true, isStageOwner: true, stageOwnerId });
         }
         return json(response, 404, { error: 'Nepoznat API.' });
       }
@@ -1723,6 +2153,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     library,
     autoConnect,
     getLanStatus,
+    lanCoordinator,
     async load() {
       if (!configPath) return;
       try { updateConfig(validateConfig(JSON.parse(await readFile(configPath, 'utf8')), allowLoopback)); }
@@ -1732,6 +2163,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
       if (closing) return;
       closing = true;
       clearInterval(timer);
+      await lanCoordinator?.close?.().catch(() => {});
       for (const client of liveClients) {
         try { client.end(); } catch {}
       }
@@ -1739,6 +2171,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
       lanPeers.clear();
       if (testRunning) { testAbort = true; stopTest?.(); await testSettled; }
       await disarm('Poslužitelj ugašen').catch(() => {});
+      server.closeAllConnections?.();
       await new Promise(done => server.close(done));
       try { udp.close(); } catch (error) { if (error.code !== 'ERR_SOCKET_DGRAM_NOT_RUNNING') throw error; }
     }
@@ -1750,7 +2183,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   process.on('unhandledRejection', err => console.error('Unhandled rejection:', err));
   const listenPort = Number(process.env.PORT) || 8787;
   const listenHost = process.env.HOST || (process.argv.includes('--local-only') ? '127.0.0.1' : '0.0.0.0');
-  const app = createLightingServer();
+  const lanBusPort = process.argv.includes('--local-only') ? 0 : (Number(process.env.LAN_BUS_PORT) || DEFAULT_LAN_BUS_PORT);
+  const app = createLightingServer({ lanBusPort });
   await app.load();
   app.server.listen(listenPort, listenHost, () => {
     const url = `http://127.0.0.1:${listenPort}`;

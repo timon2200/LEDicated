@@ -53,14 +53,16 @@ Klikni gumb **🌐 LAN** u gornjoj traci (ili `•••` na bilo kojoj pjesmi u
 
 ## Više ljudi u uredu na istom LAN-u (Multi-User LAN & Stage Handover)
 
-Kad ste u uredu na istom Wi-Fi / LAN-u, poslužitelj automatski sluša na svim lokalnim mrežnim sučeljima (`0.0.0.0:8787`) i ispisuje LAN adresu u terminalu (npr. `http://192.168.1.50:8787`).
+Kad ste u uredu na istom Wi-Fi / LAN-u, poslužitelj automatski sluša na svim lokalnim mrežnim sučeljima (`0.0.0.0:8787`), ispisuje LAN adresu u terminalu (npr. `http://192.168.1.50:8787`) i sinkronizira stanje s drugim pokrenutim laptopima preko UDP LAN koordinatora (`lan-coordinator.mjs`, port `4049`).
 
-- **Stage Owner (`🟢 ON AIR`) vs. Solo Preview (`🎧 SOLO`):**
-  - Kako se DDP UDP paketi prema fizičkim WLED kontrolerima nikada ne bi sudarali kad više ljudi ima otvoren preglednik, uvijek **točno jedan korisnik drži Stage (`🟢 ON AIR`)**.
-  - Svi ostali povezani na LAN su u **`🎧 SOLO PREVIEW`** modu — mogu slobodno slušati pjesme, slagati clipove i testirati efekte u svom 3×3 WebGL2 simulatoru bez prekidanja rasvjete na fizičkom zidu.
-  - Bilo tko može u 1 kliku preuzeti fizički zid klikom na **🌐 LAN → ⚡ Preuzmi Stage (ON AIR)** (ili prepustiti stage drugome).
+- **Polite Handover — Stage Owner (`🟢 ON AIR`) vs. Solo Preview (`🎧 SOLO`):**
+  - Kako se DDP UDP paketi prema fizičkim WLED kontrolerima nikada ne bi sudarali kad više ljudi ima otvoren DAW ili YouTube ekstenziju, uvijek **točno jedan korisnik drži Stage (`🟢 ON AIR`)**.
+  - **Automatsko preuzimanje kad je Stage slobodan (`⚪ SLOBODAN`):** Prvi korisnik koji pritisne **Play** u DAW-u ili pokrene YouTube video s uključenim Light Showom automatski preuzima Stage.
+  - **Zaštita aktivnog DJ-a (`🎧 SOLO`):** Dok netko već pušta glazbu (`🟢 ON AIR`), svi ostali koji pritisnu Play ostaju u **`🎧 SOLO PREVIEW`** modu — čuju glazbu i vide puni 3×3 WebGL2 simulator na svom ekranu bez prekidanja rasvjete na fizičkom zidu.
+  - **Automatsko otpuštanje nakon 20s pauze (`🟡 PAUZA`):** Kad aktivni DJ pauzira glazbu, Stage mu čuva rezervaciju 20 sekundi (uz odbrojavanje uživo), a zatim se automatski oslobađa u `⚪ SLOBODAN` kako bi sljedeća osoba mogla preuzeti zid čim stisne Play.
+  - **1-Click Preuzimanje (`⚡ Preuzmi Stage`) i Prepuštanje (`Prepusti Stage`):** Na desnom **Stage** panelu (i u YouTube ekstenziji) nalazi se **Now Playing** traka uživo koja prikazuje tko je na stageu, izvor (`🎹 DAW` ili `🎬 YouTube`), naziv pjesme/videa, vremenski kod i gumb za trenutno preuzimanje ili prepuštanje kontrole.
 - **Zajedničko uređivanje uživo (Live Timeline Sync):**
-  - U prozoru **🌐 LAN** vidiš tko je sve spojen na mrežu i koju pjesmu trenutno uređuje ili pušta. Klikom na **Otvori istu pjesmu** promjene na timelineu sinkroniziraju se uživo između vaših preglednika.
+  - U prozoru **🌐 LAN** (ili klikom na **🎵 Otvori** na Stage traci) vidiš tko je sve spojen na mrežu i koju pjesmu trenutno uređuje ili pušta. Klikom na **Otvori istu pjesmu** promjene na timelineu sinkroniziraju se uživo između vaših preglednika.
 
 ---
 

@@ -825,3 +825,104 @@ html:not([dark]) .yt-plus-quick-action-btn {
   background: rgba(56, 189, 248, 0.12);
   text-decoration: underline;
 }
+
+.yt-ledicated-btn.is-solo {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.yt-ledicated-btn.is-solo .yt-ledicated-dot {
+  background-color: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+}
+
+.yt-led-stage-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 11px;
+  border-radius: 11px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.yt-led-stage-card.is-owner {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.16), rgba(6, 182, 212, 0.08));
+}
+
+.yt-led-stage-card.is-grace,
+.yt-led-stage-card.is-solo {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(15, 23, 42, 0.6));
+}
+
+.yt-led-stage-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.yt-led-stage-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.yt-led-stage-card.is-owner .yt-led-stage-badge {
+  color: #6ee7b7;
+}
+
+.yt-led-stage-card.is-grace .yt-led-stage-badge,
+.yt-led-stage-card.is-solo .yt-led-stage-badge {
+  color: #fcd34d;
+}
+
+.yt-led-stage-btn {
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+  white-space: nowrap;
+  transition: all 0.14s ease;
+}
+
+.yt-led-stage-btn.is-claim {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.25);
+  color: #fef3c7;
+}
+
+.yt-led-stage-btn.is-claim:hover {
+  background: #f59e0b;
+  color: #0f172a;
+}
+
+.yt-led-stage-btn.is-release:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.yt-led-stage-now {
+  font-size: 10.5px;
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.yt-led-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr;
+  gap: 8px;
+}
+

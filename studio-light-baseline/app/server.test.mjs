@@ -363,3 +363,241 @@ test('auto-connect immediately arms E8-1 on saved IP and falls back to Bonjour d
   assert.equal(offlineRes.data.connected, false);
   assert.equal(offlineRes.data.armed, false);
 });
+
+test('multi-user LAN stage control: auto-claim on idle, polite Solo protection, 1-click takeover, release-while-playing, and pause grace timeout', async t => {
+  const receiver = dgram.createSocket('udp4');
+  const packets = [];
+  receiver.on('message', packet => packets.push(packet));
+  await new Promise(done => receiver.bind(0, '127.0.0.1', done));
+  t.after(() => receiver.close());
+
+  const config = defaultConfig('e8-columns');
+  config.nodes[0].host = '127.0.0.2';
+  const { base, post } = await fixture(t, {
+    initialConfig: config,
+    allowLoopback: true,
+    udpPort: receiver.address().port,
+    resolveHost: () => '127.0.0.1',
+    stageIdleMs: 140
+  });
+  await post('/api/arm', { armed: true });
+
+  // 1. Stage starts idle; Timon pressing Play auto-claims the stage
+  const timonPlay = await post('/api/live/state', {
+    clientId: 'peer-timon',
+    clientName: 'Timon',
+    trackId: 'track-1',
+    trackTitle: 'Bangarang',
+    isPlaying: true,
+    timeSec: 42,
+    durationSec: 210
+  });
+  assert.equal(timonPlay.status, 200);
+  assert.equal(timonPlay.data.stageOwnerId, 'peer-timon');
+  assert.equal(timonPlay.data.stageState, 'on_air');
+  assert.equal(timonPlay.data.isStageOwner, true);
+  assert.equal(timonPlay.data.nowPlaying?.trackTitle, 'Bangarang');
+
+  // 2. Luka presses Play while Timon is ON AIR -> Luka stays in Solo Preview and cannot overwrite WLED frames
+  const lukaPlay = await post('/api/live/state', {
+    clientId: 'peer-luka',
+    clientName: 'Luka',
+    trackId: 'track-2',
+    trackTitle: 'Levels',
+    isPlaying: true,
+    timeSec: 10,
+    durationSec: 180
+  });
+  assert.equal(lukaPlay.status, 200);
+  assert.equal(lukaPlay.data.stageOwnerId, 'peer-timon');
+  assert.equal(lukaPlay.data.isStageOwner, false);
+
+  const lukaFrameBlocked = await post('/api/frame', {
+    ...makeFrames([90, 0, 0, 0]),
+    clientId: 'peer-luka',
+    clientName: 'Luka'
+  });
+  assert.equal(lukaFrameBlocked.status, 200);
+  assert.equal(lukaFrameBlocked.data.skipped, 'not_stage_owner');
+  assert.equal(packets.length, 0);
+
+  const timonFrameOk = await post('/api/frame', {
+    ...makeFrames([0, 120, 0, 0]),
+    clientId: 'peer-timon',
+    clientName: 'Timon'
+  });
+  assert.equal(timonFrameOk.status, 200);
+  assert.equal(timonFrameOk.data.isStageOwner, true);
+  await pause(20);
+  assert.equal(packets.length, 1);
+
+  // 3. Luka clicks 'Preuzmi Stage' -> Luka becomes ON AIR and Timon is moved to Solo
+  const lukaClaim = await post('/api/lan/claim-stage', {
+    clientId: 'peer-luka',
+    name: 'Luka'
+  });
+  assert.equal(lukaClaim.status, 200);
+  assert.equal(lukaClaim.data.stageOwnerId, 'peer-luka');
+  assert.equal(lukaClaim.data.stageOwnerName, 'Luka');
+  assert.equal(lukaClaim.data.nowPlaying?.trackTitle, 'Levels');
+
+  const timonBlockedNow = await post('/api/frame', {
+    ...makeFrames([0, 120, 0, 0]),
+    clientId: 'peer-timon',
+    clientName: 'Timon'
+  });
+  assert.equal(timonBlockedNow.data.skipped, 'not_stage_owner');
+
+  // 4. Luka clicks 'Prepusti Stage' while still playing -> stays in Solo and does NOT auto-reclaim on next state tick
+  const lukaRelease = await post('/api/lan/claim-stage', {
+    clientId: 'peer-luka',
+    name: 'Luka',
+    release: true
+  });
+  assert.equal(lukaRelease.data.stageOwnerId, null);
+  assert.equal(lukaRelease.data.isStageOwner, false);
+
+  const lukaNextTick = await post('/api/live/state', {
+    clientId: 'peer-luka',
+    clientName: 'Luka',
+    trackId: 'track-2',
+    trackTitle: 'Levels',
+    isPlaying: true,
+    timeSec: 12
+  });
+  assert.equal(lukaNextTick.data.stageOwnerId, null);
+  assert.equal(lukaNextTick.data.isStageOwner, false);
+
+  // 5. Timon pauses -> enters 'grace' state, then auto-releases after stageIdleMs (140ms)
+  await post('/api/lan/claim-stage', { clientId: 'peer-timon', name: 'Timon' });
+  const timonPaused = await post('/api/live/state', {
+    clientId: 'peer-timon',
+    clientName: 'Timon',
+    trackId: 'track-1',
+    trackTitle: 'Bangarang',
+    isPlaying: false,
+    timeSec: 55
+  });
+  assert.equal(timonPaused.data.stageOwnerId, 'peer-timon');
+  assert.equal(timonPaused.data.stageState, 'grace');
+
+  await pause(180);
+  const statusAfterGrace = await fetch(`${base}/api/lan/status`).then(r => r.json());
+  assert.equal(statusAfterGrace.stageOwnerId, null);
+  assert.equal(statusAfterGrace.stageState, 'idle');
+});
+
+test('YouTube Chrome extension (/api/ext/sync & /api/ext/control) participates in unified LAN stage lock', async t => {
+  const config = defaultConfig('e8-columns');
+  config.nodes[0].host = '127.0.0.2';
+  const { post } = await fixture(t, { initialConfig: config, allowLoopback: true });
+  await post('/api/arm', { armed: true });
+
+  // DAW user owns the stage
+  await post('/api/live/state', {
+    clientId: 'peer-daw',
+    clientName: 'Timon DAW',
+    trackTitle: 'DAW Track',
+    isPlaying: true,
+    timeSec: 15
+  });
+
+  // YouTube user starts syncing while DAW user is ON AIR -> politely skipped
+  const ytSyncBlocked = await post('/api/ext/sync', {
+    clientId: 'yt-marko',
+    clientName: 'Marko YT',
+    videoId: 'abc123xyz',
+    title: 'Daft Punk - One More Time',
+    currentTime: 30,
+    duration: 320,
+    paused: false,
+    liveMode: true,
+    stems: { bass: 0.8, drums: 0.7, vocals: 0.4, other: 0.5, rms: 0.7 }
+  });
+  assert.equal(ytSyncBlocked.status, 200);
+  assert.equal(ytSyncBlocked.data.isStageOwner, false);
+  assert.equal(ytSyncBlocked.data.skipped, 'not_stage_owner');
+  assert.equal(ytSyncBlocked.data.lan?.stageOwnerName, 'Timon DAW');
+
+  // YouTube user clicks 'Preuzmi Stage' via /api/ext/control
+  const ytClaim = await post('/api/ext/control', {
+    clientId: 'yt-marko',
+    clientName: 'Marko YT',
+    claimStage: true,
+    videoId: 'abc123xyz',
+    title: 'Daft Punk - One More Time'
+  });
+  assert.equal(ytClaim.status, 200);
+  assert.equal(ytClaim.data.isStageOwner, true);
+  assert.equal(ytClaim.data.lan?.stageOwnerId, 'yt-marko');
+  assert.equal(ytClaim.data.lan?.stageOwnerSource, 'youtube');
+
+  // Now YouTube sync drives the stage
+  const ytSyncActive = await post('/api/ext/sync', {
+    clientId: 'yt-marko',
+    clientName: 'Marko YT',
+    videoId: 'abc123xyz',
+    title: 'Daft Punk - One More Time',
+    currentTime: 32,
+    duration: 320,
+    paused: false,
+    liveMode: true,
+    stems: { bass: 0.8, drums: 0.7, vocals: 0.4, other: 0.5, rms: 0.7 }
+  });
+  assert.equal(ytSyncActive.data.isStageOwner, true);
+  assert.equal(ytSyncActive.data.lan?.nowPlaying?.trackTitle, 'Daft Punk - One More Time');
+});
+
+test('multi-laptop UDP LAN Coordinator arbitrates WLED ownership across two server instances without conflicts', async t => {
+  const probeSocket = dgram.createSocket('udp4');
+  await new Promise(done => probeSocket.bind(0, '127.0.0.1', done));
+  const lanBusPort = probeSocket.address().port;
+  await new Promise(done => probeSocket.close(done));
+
+  const config = defaultConfig('e8-columns');
+  config.nodes[0].host = '127.0.0.2';
+
+  const srvA = await fixture(t, { initialConfig: structuredClone(config), allowLoopback: true, lanBusPort });
+  const srvB = await fixture(t, { initialConfig: structuredClone(config), allowLoopback: true, lanBusPort });
+
+  await srvA.post('/api/arm', { armed: true });
+  await srvB.post('/api/arm', { armed: true });
+  assert.equal(srvA.app.state().armed, true);
+  assert.equal(srvB.app.state().armed, true);
+
+  // Laptop A claims the stage
+  await srvA.post('/api/live/state', {
+    clientId: 'peer-mac-a',
+    clientName: 'Timon Mac',
+    trackTitle: 'Strobe',
+    isPlaying: true,
+    timeSec: 60
+  });
+  await srvA.post('/api/lan/claim-stage', { clientId: 'peer-mac-a', name: 'Timon Mac' });
+  await pause(80);
+
+  // Laptop B automatically yields WLED output to Laptop A
+  assert.equal(srvA.app.state().armed, true);
+  assert.equal(srvB.app.state().armed, false);
+  assert.equal(srvB.app.state().yieldedToRemote, true);
+  assert.equal(srvB.app.getLanStatus().isRemoteStageOwner, true);
+  assert.equal(srvB.app.getLanStatus().stageOwnerName, 'Timon Mac');
+
+  // Now Laptop B clicks 'Preuzmi Stage' -> Laptop B re-arms and Laptop A yields!
+  await srvB.post('/api/live/state', {
+    clientId: 'peer-mac-b',
+    clientName: 'Luka Mac',
+    trackTitle: 'Opus',
+    isPlaying: true,
+    timeSec: 15
+  });
+  await srvB.post('/api/lan/claim-stage', { clientId: 'peer-mac-b', name: 'Luka Mac' });
+  await pause(80);
+
+  assert.equal(srvB.app.state().armed, true);
+  assert.equal(srvB.app.state().yieldedToRemote, false);
+  assert.equal(srvA.app.state().armed, false);
+  assert.equal(srvA.app.state().yieldedToRemote, true);
+  assert.equal(srvA.app.getLanStatus().isRemoteStageOwner, true);
+  assert.equal(srvA.app.getLanStatus().stageOwnerName, 'Luka Mac');
+});

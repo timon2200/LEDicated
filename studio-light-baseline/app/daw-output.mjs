@@ -57,7 +57,13 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
   offset.value = localStorage.getItem('ledicated-bluetooth-offset-ms') || '0'; updateOffset();
 
   function updateBadge() {
-    badge.textContent = s.armed ? 'IZLAZ UKLJUČEN' : 'SIMULACIJA'; badge.classList.toggle('live', s.armed);
+    if (s.yieldedToRemote && !s.armed) {
+      badge.textContent = 'NA STAGEU: LAN';
+      badge.classList.remove('live');
+    } else {
+      badge.textContent = s.armed ? 'IZLAZ UKLJUČEN' : 'SIMULACIJA';
+      badge.classList.toggle('live', s.armed);
+    }
     arm.textContent = s.armed ? 'Isključi izlaz' : 'Uključi izlaz'; arm.classList.toggle('on', s.armed);
     const activeCount = s.config?.nodes.filter(node => node.host).length || 0;
     const totalNodes = s.config?.nodes.length || 0;
@@ -66,7 +72,9 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
     arm.title = unavailable ? 'Spremi postavke, dodijeli barem jedan kontroler i otpusti BLACKOUT.' : '';
     const modalArm = dialog.querySelector('[data-modal-arm]');
     if (modalArm) { modalArm.textContent = arm.textContent; modalArm.disabled = unavailable; modalArm.title = arm.title; }
-    note.textContent = s.armed ? `DDP ${(s.config?.transport || 'rgb').toUpperCase()} slanje uključeno (${activeCount}/${totalNodes} kontrolera) · prijem na trakama nije potvrđen.` : 'Izlaz nije uključen.';
+    note.textContent = s.armed
+      ? `DDP ${(s.config?.transport || 'rgb').toUpperCase()} slanje uključeno (${activeCount}/${totalNodes} kontrolera) · prijem na trakama nije potvrđen.`
+      : (s.yieldedToRemote ? (s.reason || 'Drugi laptop na LAN-u trenutno upravlja EO8+ kontrolerom.') : 'Izlaz nije uključen.');
   }
 
   function readInputs() {
@@ -279,7 +287,7 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
   async function probeOne(nodeId) { if (s.dirty) return; try { s.probes.set(nodeId, await call('probe', { nodeId })); render(); } catch (error) { toast(error.message, 'error'); } }
   async function probeAll() { await Promise.all(s.config.nodes.filter(node => node.host).map(node => probeOne(node.id))); }
   async function autoConnect({ allowDiscovery = true, silent = false } = {}) {
-    if (s.armed || s.autoConnecting || s.dirty || s.testRunning || isBlackout?.() || s.manualDisarm) return false;
+    if (s.armed || s.autoConnecting || s.dirty || s.testRunning || isBlackout?.() || s.manualDisarm || window.ledicatedRemoteStageOwner) return false;
     s.autoConnecting = true;
     if (!silent) note.textContent = 'Automatsko spajanje na EO8+…';
     try {
@@ -289,8 +297,11 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
         s.draft = structuredClone(result.config);
         onConfig?.(s.config);
       }
+      s.yieldedToRemote = Boolean(result.yieldedToRemote);
+      if (result.reason) s.reason = result.reason;
       if (result.armed) {
         s.armed = true;
+        s.yieldedToRemote = false;
         s.failed = false;
         render();
         const e8 = s.config?.nodes?.find(n => n.id === 'E8-1') || s.config?.nodes?.find(n => n.host);
@@ -319,6 +330,7 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
     else s.manualDisarm = false;
     const result = await call('arm', { armed });
     s.armed = result.armed;
+    s.yieldedToRemote = Boolean(result.yieldedToRemote);
     s.failed = false;
     render();
   }
@@ -349,8 +361,10 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
   async function init() {
     try {
       const state = await call('state'); s.config = state.config; s.draft = structuredClone(state.config); s.armed = state.armed;
+      s.yieldedToRemote = Boolean(state.yieldedToRemote);
+      s.reason = state.reason || '';
       render(); onConfig?.(s.config);
-      if (!s.armed && !isBlackout?.()) {
+      if (!s.armed && !s.yieldedToRemote && !isBlackout?.()) {
         const fastConnected = await autoConnect({ allowDiscovery: false, silent: true });
         if (!fastConnected) {
           autoConnect({ allowDiscovery: true, silent: true }).catch(() => {});
@@ -362,12 +376,12 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
     updateBadge();
   }
   setInterval(() => {
-    if (!s.armed && !s.manualDisarm && !s.dirty && !s.testRunning && !isBlackout?.() && !dialog.open) {
+    if (!s.armed && !s.yieldedToRemote && !window.ledicatedRemoteStageOwner && !s.manualDisarm && !s.dirty && !s.testRunning && !isBlackout?.() && !dialog.open) {
       autoConnect({ allowDiscovery: true, silent: true }).catch(() => {});
     }
   }, 5000);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && !s.armed && !s.manualDisarm && !s.dirty && !s.testRunning && !isBlackout?.()) {
+    if (!document.hidden && !s.armed && !s.yieldedToRemote && !window.ledicatedRemoteStageOwner && !s.manualDisarm && !s.dirty && !s.testRunning && !isBlackout?.()) {
       autoConnect({ allowDiscovery: false, silent: true }).catch(() => {});
     }
   });
@@ -384,9 +398,13 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
         s.draft = structuredClone(serverState.config);
         onConfig?.(s.config);
       }
+      if ('yieldedToRemote' in serverState) {
+        s.yieldedToRemote = Boolean(serverState.yieldedToRemote);
+      }
+      if (serverState.reason) s.reason = serverState.reason;
       if (typeof serverState.armed === 'boolean') {
-        if (!serverState.armed && s.armed && !isBlackout?.() && String(serverState.reason || '').startsWith('Prekid veze')) {
-          if (!s.rearming && window.ledicatedIsStageOwner !== false) {
+        if (!serverState.armed && s.armed && !s.yieldedToRemote && !isBlackout?.() && String(serverState.reason || '').startsWith('Prekid veze')) {
+          if (!s.rearming && window.ledicatedIsStageOwner !== false && !window.ledicatedRemoteStageOwner) {
             s.rearming = true;
             call('arm', { armed: true })
               .then(st => { s.armed = Boolean(st.armed); if (s.armed) s.failed = false; render(); })
@@ -396,7 +414,10 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
           return;
         }
         s.armed = serverState.armed;
-        if (s.armed) s.failed = false;
+        if (s.armed) {
+          s.failed = false;
+          s.yieldedToRemote = false;
+        }
       }
       render();
     },
