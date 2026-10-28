@@ -102,3 +102,4 @@ Cjeloviti nacrt istraživanja i arhitekture dostupan je u [LEDICATED_RESEARCH_BL
 Ovaj dokument opisuje predloženu Tauri arhitekturu; ona još nije implementirana. Postojeća pokretljiva Node/JS aplikacija, testovi i hardversko mapiranje nalaze se u [studio-light-baseline/app](studio-light-baseline/app/). Drugi, za konkretnih devet barova prilagođen istraživački plan je [RESEARCH_PRODUCT_BLUEPRINT.md](studio-light-baseline/RESEARCH_PRODUCT_BLUEPRINT.md). Pri razvoju usporediti oba nacrta i sačuvati funkcionalni baseline dok se nova arhitektura ne potvrdi mjerenjem.
 
 Za rad s agentima vidi [AGENTS.md](AGENTS.md) i [ORCHESTRATOR_PROMPT.md](ORCHESTRATOR_PROMPT.md).
+Za praćenje napretka, otvorenih zadataka i GitHub Issues vidi [ROADMAP.md](ROADMAP.md) te [GitHub Issues](https://github.com/timon2200/LEDicated/issues).
