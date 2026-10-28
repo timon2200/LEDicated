@@ -8,7 +8,7 @@ import {
   MIN_CLIP_SEC, addKeyframe, beatPosition, clamp, clipEnd, deleteClips, duplicateClips, findClip, moveKeyframe, moveKeyframes, patchClips, removeKeyframe, removeKeyframes, snapTime, splitClip, timeAtBeat,
   toggleTarget
 } from './daw-state.mjs';
-import { clipUiColor, h, hexToRgb, rgbToHex, segmentIntersectsRect } from './daw-ui.mjs';
+import { clipUiColor, createZoneGridIcon, h, hexToRgb, rgbToHex, segmentIntersectsRect } from './daw-ui.mjs';
 import { PRESET_LABELS } from './daw-playlist.mjs';
 import { formatBBT } from './daw-state.mjs';
 
@@ -859,7 +859,13 @@ export function createClipEditor(host, ctx) {
     const patternBtns = [];
     const patterns = h('div', { class: 'bp-patterns', role: 'group', 'aria-label': 'Predlošci barova' },
       BAR_PATTERNS.map(([label, title, make]) => {
-        const btn = h('button', { type: 'button', class: 'mini-btn', title, onClick: () => commit(make(selected())) }, label);
+        const activeIds = make(BAR_IDS);
+        const btn = h('button', {
+          type: 'button',
+          class: 'mini-btn bp-pat-btn',
+          title,
+          onClick: () => commit(make(selected()))
+        }, createZoneGridIcon(activeIds, BAR_IDS), h('span', { class: 'zone-btn-label' }, label));
         patternBtns.push({ make, btn });
         return btn;
       })

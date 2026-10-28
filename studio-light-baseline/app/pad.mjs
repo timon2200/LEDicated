@@ -1,6 +1,7 @@
 import { BAR_IDS, PIXELS_PER_BAR } from './engine.mjs';
 import { PRESETS } from './timeline.mjs';
 import { createPerformance, DEFAULT_PADS, PAD_KEYS } from './live-performance-state.mjs';
+import { createZoneGridIcon } from './daw-ui.mjs';
 
 const PRESET_LABELS = {
   pulse: 'Impuls',
@@ -43,11 +44,15 @@ const COLOR_SWATCHES = [
 ];
 
 const ZONE_PRESETS = {
+  left: ['L1', 'L2', 'L3'],
+  center: ['C1', 'C2', 'C3'],
+  right: ['R1', 'R2', 'R3'],
+  edge: ['L1', 'C1', 'R1', 'L2', 'R2', 'L3', 'C3', 'R3'].filter(id => id.startsWith('L') || id.startsWith('R')),
   all: [...BAR_IDS],
+  cross: ['C1', 'L2', 'C2', 'R2', 'C3'],
   top: ['L1', 'C1', 'R1'],
   mid: ['L2', 'C2', 'R2'],
   bot: ['L3', 'C3', 'R3'],
-  center: ['C1', 'C2', 'C3'],
   outer: ['L1', 'L2', 'L3', 'R1', 'R2', 'R3']
 };
 
@@ -768,9 +773,18 @@ function initInspectorControls() {
   });
 
   document.querySelectorAll('[data-zone-preset]').forEach(btn => {
+    const presetIds = ZONE_PRESETS[btn.dataset.zonePreset] || BAR_IDS;
+    const labelText = btn.textContent.trim();
+    btn.textContent = '';
+    btn.append(createZoneGridIcon(presetIds, BAR_IDS));
+    const span = document.createElement('span');
+    span.className = 'zone-btn-label';
+    span.textContent = labelText;
+    btn.append(span);
     btn.addEventListener('click', () => {
       const pad = ensureSelectedPad();
-      pad.bars = [...(ZONE_PRESETS[btn.dataset.zonePreset] || BAR_IDS)];
+      pad.bars = [...presetIds];
+      pad.targets = presetIds.length === 9 ? 'all' : [...presetIds];
       syncSelectedPadToStudio();
       populateInspectorFromPad();
     });
@@ -854,6 +868,12 @@ function populateInspectorFromPad() {
   const barSet = new Set(Array.isArray(pad.bars) && pad.bars.length ? pad.bars : BAR_IDS);
   inspBarGrid.querySelectorAll('.insp-bar-cell').forEach(cell => {
     cell.classList.toggle('selected', barSet.has(cell.dataset.bar));
+  });
+  document.querySelectorAll('[data-zone-preset]').forEach(btn => {
+    const presetIds = ZONE_PRESETS[btn.dataset.zonePreset] || BAR_IDS;
+    const active = presetIds.length === barSet.size && presetIds.every(id => barSet.has(id));
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
   });
 
   inspPresetGrid.querySelectorAll('.preset-chip').forEach(chip => {

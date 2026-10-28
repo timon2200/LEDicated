@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { segmentIntersectsRect } from './daw-ui.mjs';
+import { segmentIntersectsRect, createZoneGridIcon } from './daw-ui.mjs';
 
 test('segmentIntersectsRect: detects point inside rect', () => {
   const rect = { left: 100, right: 200, top: 50, bottom: 100, width: 100, height: 50 };
@@ -229,6 +229,33 @@ test('createPerformancePanel: live drag multiselect across row and column', asyn
 
     const buttons = targetGrid.querySelectorAll('.pf-target');
     assert.equal(buttons.length, 9, 'must render 9 bar buttons');
+
+    const presetWrap = host.querySelector('.pf-target-presets');
+    assert(presetWrap, 'presetWrap must be present in DOM');
+    const presetBtns = presetWrap.querySelectorAll('button');
+    assert.equal(presetBtns.length, 6, 'must render 6 zone preset buttons');
+    const expectedPresetCounts = [
+      ['Lijevo', 3],
+      ['Centar', 3],
+      ['Desno', 3],
+      ['Rub', 6],
+      ['Svi', 9],
+      ['Križ', 5]
+    ];
+    expectedPresetCounts.forEach(([label, onCount], idx) => {
+      const btn = presetBtns[idx];
+      assert.equal(btn.textContent, label, `preset button ${idx} label matches ${label}`);
+      const icon = btn.querySelector('.zone-grid-icon');
+      assert(icon, `preset button ${label} must include .zone-grid-icon`);
+      assert.equal(icon.getAttribute('aria-hidden'), 'true');
+      const cells = icon.querySelectorAll('i');
+      assert.equal(cells.length, 9, `preset button ${label} icon must have 9 grid cells`);
+      const activeCells = icon.querySelectorAll('.on');
+      assert.equal(activeCells.length, onCount, `preset button ${label} icon must light ${onCount} bars`);
+    });
+
+    const standaloneIcon = createZoneGridIcon(['L1', 'L2', 'L3', 'R1', 'R2', 'R3']);
+    assert.equal(standaloneIcon.querySelectorAll('.on').length, 6);
 
     // Layout the 9 buttons into a 3x3 grid geometry:
     // Row 0: L1 (10..70), C1 (80..140), R1 (150..210) at y=10..50

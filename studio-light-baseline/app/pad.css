@@ -1093,6 +1093,10 @@ input {
 }
 
 .tiny-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   padding: 4px 8px;
   border-radius: 7px;
   border: 1px solid var(--border-subtle);
@@ -1107,6 +1111,35 @@ input {
   border-color: var(--accent-cyan);
   background: rgba(0, 242, 255, 0.18);
   color: #fff;
+}
+
+.zone-grid-icon {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 3px);
+  grid-template-rows: repeat(3, 4px);
+  gap: 1.5px;
+  flex: none;
+  pointer-events: none;
+  forced-color-adjust: none;
+}
+
+.zone-grid-icon i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 1px;
+  background: rgba(148, 175, 202, 0.24);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.zone-grid-icon i.on {
+  background: var(--accent-cyan);
+  box-shadow: 0 0 3.5px rgba(0, 242, 255, 0.65);
+}
+
+.tiny-pill.active .zone-grid-icon i.on {
+  background: #ffffff;
+  box-shadow: 0 0 5px var(--accent-cyan);
 }
 
 .inspector-bar-grid {

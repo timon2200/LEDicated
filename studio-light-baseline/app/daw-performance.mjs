@@ -1,6 +1,6 @@
 /** Compact live board. The song arrangement above is the visual timeline;
  * this pane focuses on cues, movable pads, and one set of controls. */
-import { h, toast, segmentIntersectsRect } from './daw-ui.mjs';
+import { createZoneGridIcon, h, toast, segmentIntersectsRect } from './daw-ui.mjs';
 import { PRESET_LABELS } from './daw-playlist.mjs';
 import { SECTION_COLORS, SECTION_NAMES } from './audio-sections.mjs';
 import { BAR_IDS } from './engine.mjs';
@@ -607,7 +607,7 @@ export function createPerformancePanel(host, ctx) {
       class: values.length === currentTargets.length && values.every(id => targetSet.has(id)) ? 'on' : '',
       'aria-pressed': String(values.length === currentTargets.length && values.every(id => targetSet.has(id))),
       onClick: () => setTargets(values)
-    }, name));
+    }, createZoneGridIcon(values, BAR_IDS), h('span', { class: 'zone-btn-label' }, name)));
 
     const targetPanel = h('section', { class: 'pf-editor-section pf-target-section' },
       h('div', { class: 'pf-section-title' }, h('b', {}, 'BAROVI · 3 × 3'), countLabel),

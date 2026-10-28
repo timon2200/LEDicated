@@ -62,6 +62,16 @@ export function h(tag, props = {}, ...children) {
   return node;
 }
 
+const DEFAULT_BAR_IDS = ['L1', 'C1', 'R1', 'L2', 'C2', 'R2', 'L3', 'C3', 'R3'];
+
+/** Miniature 3×3 LED bar matrix icon showing which bars a zone preset activates. */
+export function createZoneGridIcon(activeIds = [], barIds = DEFAULT_BAR_IDS) {
+  const set = new Set(activeIds === 'all' ? barIds : activeIds);
+  return h('span', { class: 'zone-grid-icon', 'aria-hidden': 'true' },
+    barIds.map(id => h('i', { class: set.has(id) ? 'on' : '' }))
+  );
+}
+
 /* ---------------------------------------------------------------- toast */
 let toastTimer = 0;
 export function toast(message, kind = 'info') {
