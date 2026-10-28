@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="hr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#07080c" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="LEDicated Pad" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/assets/pad-icon.svg" />
+    <link rel="apple-touch-icon" href="/assets/pad-icon.svg" />
+    <title>LEDicated Pad — Live Performance Surface</title>
+    <link rel="stylesheet" href="/pad.css" />
+  </head>
+  <body>
+    <main class="pad-cockpit" id="pad-cockpit">
+      <!-- Top Status & Stage Handover Bar -->
+      <header class="pad-topbar" aria-label="Status i kontrola pozornice">
+        <div class="brand-cluster">
+          <span class="conn-dot" id="conn-dot" title="Status veze sa studiom"></span>
+          <div class="brand-titles">
+            <span class="brand-eyebrow">LEDICATED · LIVE SURFACE</span>
+            <div class="stage-badge-row">
+              <button type="button" class="stage-pill" id="btn-stage-role" title="Preuzmi ili pusti pozornicu">
+                <span class="stage-pill-dot"></span>
+                <span id="stage-role-label">ON AIR</span>
+              </button>
+              <span class="latency-readout" id="latency-readout">LAN 0 ms</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="topbar-actions">
+          <button type="button" class="top-icon-btn" id="btn-rec-session" title="Snimaj live padove u vremensku traku" aria-pressed="false">
+            <span class="rec-dot"></span>
+            <span>REC</span>
+          </button>
+          <button type="button" class="top-icon-btn" id="btn-open-transport" title="Pjesme, transport i master svjetlina">
+            <span id="top-bpm-label">124 BPM</span>
+          </button>
+          <button type="button" class="blackout-pill" id="btn-blackout" aria-pressed="false" title="Trenutno gašenje svih 9 barova">
+            BLACKOUT
+          </button>
+        </div>
+      </header>
+
+      <!-- Live 3x3 Bar Visualizer & Zone Target Matrix -->
+      <section class="stage-monitor-card" aria-label="3x3 prikaz LED barova">
+        <div class="stage-monitor-head">
+          <div class="track-context" id="btn-track-banner" role="button" tabindex="0">
+            <span class="play-indicator" id="play-indicator">▶</span>
+            <span class="track-name" id="track-title">LEDicated Live Performance</span>
+            <span class="section-tag" id="section-tag">LIVE</span>
+          </div>
+          <div class="beat-phase-cluster" aria-label="Beat faza">
+            <span class="beat-pip" data-beat="0"></span>
+            <span class="beat-pip" data-beat="1"></span>
+            <span class="beat-pip" data-beat="2"></span>
+            <span class="beat-pip" data-beat="3"></span>
+            <span class="time-code" id="time-code">00:00.0</span>
+          </div>
+        </div>
+
+        <div class="stage-canvas-wrap" id="stage-canvas-wrap">
+          <canvas id="stage-canvas" width="780" height="220"></canvas>
+          <div class="zone-paint-overlay" id="zone-paint-overlay" hidden>
+            <button type="button" class="zone-bar-chip" data-bar="L1">L1</button>
+            <button type="button" class="zone-bar-chip" data-bar="C1">C1</button>
+            <button type="button" class="zone-bar-chip" data-bar="R1">R1</button>
+            <button type="button" class="zone-bar-chip" data-bar="L2">L2</button>
+            <button type="button" class="zone-bar-chip" data-bar="C2">C2</button>
+            <button type="button" class="zone-bar-chip" data-bar="R2">R2</button>
+            <button type="button" class="zone-bar-chip" data-bar="L3">L3</button>
+            <button type="button" class="zone-bar-chip" data-bar="C3">C3</button>
+            <button type="button" class="zone-bar-chip" data-bar="R3">R3</button>
+          </div>
+        </div>
+
+        <div class="stage-telemetry-row">
+          <div class="rgbw-meters" aria-label="RGBW izlazni kanali">
+            <span class="ch-pill ch-r"><i id="meter-r"></i><b>R</b></span>
+            <span class="ch-pill ch-g"><i id="meter-g"></i><b>G</b></span>
+            <span class="ch-pill ch-b"><i id="meter-b"></i><b>B</b></span>
+            <span class="ch-pill ch-w"><i id="meter-w"></i><b>W</b></span>
+            <span class="watts-readout" id="watts-readout">8 W</span>
+          </div>
+          <div class="monitor-mode-btns">
+            <button type="button" class="mini-chip" id="btn-zone-paint" aria-pressed="false" title="Odaberi koje barove pogađa odabrani pad">
+              3×3 Zone: <strong id="zone-summary">SVI</strong>
+            </button>
+            <button type="button" class="mini-chip" id="btn-zone-all" title="Uključi svih 9 barova">9/9</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Performance Macro Strip -->
+      <section class="macro-strip" aria-label="Performance makro kontrole">
+        <div class="surface-tabs" role="tablist" aria-label="Način površine">
+          <button type="button" class="surface-tab active" data-surface="pads" role="tab" aria-selected="true">12 PADOVA</button>
+          <button type="button" class="surface-tab" data-surface="xy" role="tab" aria-selected="false">XY MORPH</button>
+        </div>
+
+        <div class="macro-pills">
+          <button type="button" class="macro-btn" id="btn-quantize" aria-pressed="false" title="Beat Sync — kvantiziraj okidanje na idući beat">
+            <span>⏱</span> Beat Sync
+          </button>
+          <button type="button" class="macro-btn" id="btn-hold-latch" aria-pressed="false" title="Hold Latch — drži pritisnute padove aktivnima">
+            <span>🔒</span> Hold
+          </button>
+          <button type="button" class="macro-btn" id="btn-edit-mode" aria-pressed="false" title="Uredi odabrani pad (boja, efekt, barovi)">
+            <span>⚙</span> Inspector
+          </button>
+          <button type="button" class="macro-btn danger" id="btn-panic-pads" title="Ugasi sve aktivne live padove">
+            <span>✕</span> Stop FX
+          </button>
+        </div>
+      </section>
+
+      <!-- Main Multi-Touch 12-Pad Performance Grid -->
+      <section class="pad-surface-area" id="pad-surface-area">
+        <div class="pad-matrix-grid" id="pad-matrix-grid" role="group" aria-label="12 live performance padova"></div>
+
+        <!-- XY Morph Expressive Pad Surface -->
+        <div class="xy-morph-surface" id="xy-morph-surface" hidden>
+          <div class="xy-pad-stage" id="xy-pad-stage">
+            <canvas id="xy-canvas" width="600" height="440"></canvas>
+            <div class="xy-axis-label xy-label-x">X · BRZINA &amp; GUSTOĆA (0.4× → 3.2×)</div>
+            <div class="xy-axis-label xy-label-y">Y · INTENZITET &amp; TOPLA BIJELA (W)</div>
+            <div class="xy-puck" id="xy-puck">
+              <span class="xy-puck-ring"></span>
+              <span class="xy-puck-core"></span>
+            </div>
+          </div>
+          <div class="xy-quick-pads" id="xy-quick-pads"></div>
+        </div>
+      </section>
+
+      <!-- Bottom Live Expression & Transport Dock -->
+      <footer class="expression-dock" aria-label="Ekspresija i brzi transport">
+        <div class="dial-group">
+          <label class="touch-dial" for="dial-intensity">
+            <span class="dial-head">
+              <span class="dial-title">INTENZITET</span>
+              <strong class="dial-val" id="val-intensity">100%</strong>
+            </span>
+            <input type="range" id="dial-intensity" min="15" max="100" value="100" />
+          </label>
+
+          <label class="touch-dial" for="dial-speed">
+            <span class="dial-head">
+              <span class="dial-title">BRZINA FX</span>
+              <strong class="dial-val" id="val-speed">1.4×</strong>
+            </span>
+            <input type="range" id="dial-speed" min="3" max="35" value="14" />
+          </label>
+
+          <label class="touch-dial" for="dial-white">
+            <span class="dial-head">
+              <span class="dial-title">TOPLA W</span>
+              <strong class="dial-val" id="val-white">0%</strong>
+            </span>
+            <input type="range" id="dial-white" min="0" max="100" value="0" />
+          </label>
+        </div>
+
+        <div class="dock-transport-bar">
+          <button type="button" class="dock-btn" id="btn-play-toggle" title="Pokreni ili pauziraj reprodukciju u studiju">
+            <span id="dock-play-icon">▶</span>
+            <span id="dock-play-text">Play</span>
+          </button>
+          <div class="selected-pad-summary" id="selected-pad-summary" role="button" tabindex="0" title="Dodirni za uređivanje odabranog pada">
+            <span class="sel-pad-key" id="sel-pad-key">Q</span>
+            <div class="sel-pad-meta">
+              <strong id="sel-pad-name">Strobe Blinder</strong>
+              <span id="sel-pad-sub">FLASH · HIT · 9 barova</span>
+            </div>
+          </div>
+          <button type="button" class="dock-btn accent" id="btn-inspect-pad" title="Uredi odabrani pad">
+            Uredi pad
+          </button>
+        </div>
+      </footer>
+    </main>
+
+    <!-- Light-Dismissable Pad Inspector Dialog -->
+    <dialog id="pad-inspector-dialog" class="pad-sheet-dialog" closedby="any" aria-labelledby="inspector-title">
+      <div class="sheet-card">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header">
+          <div class="sheet-title-wrap">
+            <span class="sheet-pad-badge" id="inspector-pad-key">Q</span>
+            <div>
+              <h2 id="inspector-title">Postavke pada</h2>
+              <p class="sheet-subtitle" id="inspector-subtitle">Trenutna sinkronizacija s LEDicated Studiom</p>
+            </div>
+          </div>
+          <button type="button" class="sheet-close-btn" id="btn-close-inspector" aria-label="Zatvori">✕</button>
+        </header>
+
+        <div class="sheet-body">
+          <!-- Pad Name & Trigger Mode -->
+          <div class="inspector-row two-col">
+            <label class="field-block">
+              <span class="field-label">Naziv pada</span>
+              <input type="text" id="insp-name" class="text-input" maxlength="24" placeholder="npr. Bass Drop" />
+            </label>
+            <div class="field-block">
+              <span class="field-label">Način okidanja</span>
+              <div class="segmented-switch" id="insp-mode-switch">
+                <button type="button" data-mode="hit" class="seg-btn active">⚡ HIT (Drži/Bljesak)</button>
+                <button type="button" data-mode="loop" class="seg-btn">🔁 LOOP (Prekidač)</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3x3 Target Bars Painter -->
+          <div class="field-block">
+            <div class="field-head-row">
+              <span class="field-label">Ciljani barovi (3 × 3 matrica)</span>
+              <div class="quick-zone-presets">
+                <button type="button" class="tiny-pill" data-zone-preset="all">Svi (9)</button>
+                <button type="button" class="tiny-pill" data-zone-preset="top">Gornji red</button>
+                <button type="button" class="tiny-pill" data-zone-preset="mid">Sredina</button>
+                <button type="button" class="tiny-pill" data-zone-preset="bot">Donji red</button>
+                <button type="button" class="tiny-pill" data-zone-preset="center">Stupac C</button>
+                <button type="button" class="tiny-pill" data-zone-preset="outer">L + R</button>
+              </div>
+            </div>
+            <div class="inspector-bar-grid" id="insp-bar-grid">
+              <button type="button" class="insp-bar-cell" data-bar="L1"><span>L1</span><small>Gornji L</small></button>
+              <button type="button" class="insp-bar-cell" data-bar="C1"><span>C1</span><small>Gornji C</small></button>
+              <button type="button" class="insp-bar-cell" data-bar="R1"><span>R1</span><small>Gornji D</small></button>
+              <button type="button" class="insp-bar-cell" data-bar="L2"><span>L2</span><small>Srednji L</small></button>
+              <button type="button" class="insp-bar-cell" data-bar="C2"><span>C2</span><small>Srednji C</small></button>
+              <button type="button" class="insp-bar-cell" data-bar="R2"><span>R2</span><small>Srednji D</small></button>
+              <button type="button" class="insp-bar-cell" data-bar="L3"><span>L3</span><small>Donji L</small></button>
+              <button type="button" class="insp-bar-cell" data-bar="C3"><span>C3</span><small>Donji C</small></button>
+              <button type="button" class="insp-bar-cell" data-bar="R3"><span>R3</span><small>Donji D</small></button>
+            </div>
+          </div>
+
+          <!-- 16 Effect Presets -->
+          <div class="field-block">
+            <span class="field-label">Svjetlosni efekt (16 studijskih preseta)</span>
+            <div class="preset-chip-grid" id="insp-preset-grid"></div>
+          </div>
+
+          <!-- Color Swatches & Warm White -->
+          <div class="field-block">
+            <div class="field-head-row">
+              <span class="field-label">Primarna i sekundarna RGBW boja</span>
+              <div class="color-pair-pickers">
+                <label class="color-well-wrap">
+                  <span>Boja A</span>
+                  <input type="color" id="insp-color-a" value="#00f2ff" />
+                </label>
+                <label class="color-well-wrap">
+                  <span>Boja B</span>
+                  <input type="color" id="insp-color-b" value="#ff2e93" />
+                </label>
+              </div>
+            </div>
+            <div class="swatch-strip" id="insp-swatch-strip"></div>
+          </div>
+
+          <!-- Audio Stem Driver & Duration -->
+          <div class="inspector-row two-col">
+            <div class="field-block">
+              <span class="field-label">Audio stem driver</span>
+              <div class="driver-chip-row" id="insp-driver-row">
+                <button type="button" class="tiny-pill active" data-driver="none">Ručno</button>
+                <button type="button" class="tiny-pill" data-driver="drums">Bubanj</button>
+                <button type="button" class="tiny-pill" data-driver="bass">Bas</button>
+                <button type="button" class="tiny-pill" data-driver="vocals">Vokal</button>
+                <button type="button" class="tiny-pill" data-driver="other">Synth</button>
+              </div>
+            </div>
+            <label class="field-block">
+              <span class="field-label">Trajanje HIT bljeska (<strong id="insp-dur-val">0.85 s</strong>)</span>
+              <input type="range" id="insp-duration" min="20" max="300" value="85" />
+            </label>
+          </div>
+        </div>
+
+        <footer class="sheet-footer">
+          <button type="button" class="sheet-btn ghost" id="btn-test-insp-pad">⚡ Isprobaj pad</button>
+          <button type="button" class="sheet-btn primary" id="btn-done-inspector">Spremi i zatvori</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <!-- Light-Dismissable Studio Transport, Tracks & Master Dialog -->
+    <dialog id="transport-sheet-dialog" class="pad-sheet-dialog" closedby="any" aria-labelledby="transport-sheet-title">
+      <div class="sheet-card">
+        <div class="sheet-handle"></div>
+        <header class="sheet-header">
+          <div>
+            <h2 id="transport-sheet-title">Studio Transport &amp; Pjesme</h2>
+            <p class="sheet-subtitle" id="studio-host-label">Spojeno na LEDicated Studio</p>
+          </div>
+          <button type="button" class="sheet-close-btn" id="btn-close-transport" aria-label="Zatvori">✕</button>
+        </header>
+
+        <div class="sheet-body">
+          <!-- Master Brightness & Stage Handover -->
+          <div class="field-block">
+            <div class="field-head-row">
+              <span class="field-label">Master svjetlina pozornice (0 – 60)</span>
+              <strong id="sheet-master-val">35%</strong>
+            </div>
+            <input type="range" id="sheet-master-slider" min="0" max="60" value="35" />
+          </div>
+
+          <div class="transport-big-controls">
+            <button type="button" class="trans-action-btn" id="sheet-btn-rewind">⏮ 0:00</button>
+            <button type="button" class="trans-action-btn primary" id="sheet-btn-play">▶ Play / Pause</button>
+            <button type="button" class="trans-action-btn" id="sheet-btn-claim">🎛 Preuzmi Stage</button>
+          </div>
+
+          <!-- Section Jump Strip -->
+          <div class="field-block" id="sheet-sections-block" hidden>
+            <span class="field-label">Skok na sekciju pjesme</span>
+            <div class="section-jump-grid" id="sheet-sections-grid"></div>
+          </div>
+
+          <!-- Track Library List -->
+          <div class="field-block">
+            <span class="field-label">Pjesme u LEDicated knjižnici</span>
+            <div class="track-list-scroll" id="sheet-track-list"></div>
+          </div>
+
+          <!-- iOS Home Screen / Native App Hint -->
+          <div class="install-hint-box">
+            <strong>Savjet za puni ekran na iPhoneu:</strong>
+            <span>U Safariju dodirni <b>Dijeli (Share) → Dodaj na početni zaslon (Add to Home Screen)</b> za samostalni iOS app bez adresne trake, ili pokreni nativni Xcode projekt <code>ios-companion/LEDicatedPad.xcodeproj</code>.</span>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <script type="module" src="/pad.mjs"></script>
+  </body>
+</html>

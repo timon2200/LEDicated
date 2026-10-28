@@ -10,6 +10,53 @@ document.addEventListener('DOMContentLoaded', async () => {
   const audioQualitySelect = document.getElementById('defaultAudioQuality');
   const showQuickButtonToggle = document.getElementById('showQuickButton');
   const saveFeedback = document.getElementById('save-feedback');
+  const ledTitleEl = document.getElementById('ledicated-popup-title');
+  const ledSubEl = document.getElementById('ledicated-popup-sub');
+  const ledTakeoverBtn = document.getElementById('ledicated-takeover-btn');
+
+  let currentOutputMode = 'show';
+
+  function refreshLedicatedPopup() {
+    chrome.runtime.sendMessage({ action: 'LEDICATED_STATUS', data: {} }, (res) => {
+      if (!ledTitleEl || !ledSubEl || !ledTakeoverBtn) return;
+      if (!res || !res.online) {
+        ledTitleEl.textContent = '⚪ LEDicated Studio (Offline)';
+        ledSubEl.textContent = 'Pokreni LEDicated Studio server';
+        ledTakeoverBtn.disabled = true;
+        return;
+      }
+      ledTakeoverBtn.disabled = false;
+      const isAmbient = res.outputMode === 'ambient' || res.lan?.outputMode === 'ambient' || !res.armed;
+      currentOutputMode = isAmbient ? 'ambient' : 'show';
+      if (isAmbient) {
+        ledTitleEl.textContent = '💡 Menu Bar (Uredska rasvjeta)';
+        ledSubEl.textContent = 'Statično svjetlo drži 3×3 LED zid';
+        ledTakeoverBtn.textContent = '⚡ Preuzmi za Show';
+      } else {
+        const npTitle = res.lan?.nowPlaying?.trackTitle || res.track?.title || 'Uživo DDP izlaz';
+        ledTitleEl.textContent = '🟢 Light Show na zidu';
+        ledSubEl.textContent = npTitle;
+        ledTakeoverBtn.textContent = '💡 Vrati uredsko svjetlo';
+      }
+    });
+  }
+
+  if (ledTakeoverBtn) {
+    ledTakeoverBtn.addEventListener('click', () => {
+      const wantShow = currentOutputMode === 'ambient';
+      chrome.runtime.sendMessage(
+        {
+          action: 'LEDICATED_CONTROL',
+          data: wantShow
+            ? { claimStage: true, takeover: true, armed: true, outputMode: 'show' }
+            : { outputMode: 'ambient', armed: false }
+        },
+        () => {
+          refreshLedicatedPopup();
+        }
+      );
+    });
+  }
 
   // Check Companion Server
   function checkCompanion() {
@@ -64,5 +111,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Initialize
   checkCompanion();
+  refreshLedicatedPopup();
   loadSettings();
 });

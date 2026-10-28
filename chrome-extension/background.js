@@ -219,7 +219,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ledicatedTheme: settings.ledicatedTheme || 'midnight',
           ledicatedUseGemini: settings.ledicatedUseGemini !== false,
           ledicatedMaster: typeof settings.ledicatedMaster === 'number' ? settings.ledicatedMaster : 70,
-          ledicatedAutoImport: settings.ledicatedAutoImport !== false,
+          ledicatedAutoImport: settings.ledicatedAutoImport === true,
           ledicatedServerUrl: baseUrl,
           ledicatedClientId: clientId,
           ledicatedUserName: settings.ledicatedUserName || clientName
@@ -302,6 +302,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         paused: Boolean(payload.paused),
         playbackRate: Number(payload.playbackRate) || 1,
         liveMode: payload.liveMode !== false,
+        takeover: Boolean(payload.takeover),
         theme: payload.theme || 'midnight',
         stems: payload.stems || null
       };
@@ -328,6 +329,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       };
       if (payload.claimStage !== undefined) body.claimStage = Boolean(payload.claimStage);
       if (payload.releaseStage !== undefined) body.releaseStage = Boolean(payload.releaseStage);
+      if (payload.takeover !== undefined) body.takeover = Boolean(payload.takeover);
+      if (payload.outputMode !== undefined) body.outputMode = payload.outputMode;
       if (payload.master !== undefined) body.master = Number(payload.master);
       if (payload.blackout !== undefined) body.blackout = Boolean(payload.blackout);
       if (payload.armed !== undefined) body.armed = Boolean(payload.armed);

@@ -63,6 +63,7 @@ test('local analysis finds 120 BPM pulses and keeps bounded waveform/features', 
     assert.ok(result.waveform.mid.every(v => v >= 0 && v <= 1));
     assert.ok(result.waveform.high.every(v => v >= 0 && v <= 1));
     assert.equal(result.features.kind, 'frequency-band-estimates');
+    assert.ok(result.features.hopSec < 0.015, `Expected high-res feature hopSec < 0.015s (~86 Hz), got ${result.features.hopSec}`);
     assert.equal(result.features.drums.length, result.features.bass.length);
     assert.equal(result.features.vocals.length, result.features.drums.length);
     assert.equal(result.features.other.length, result.features.drums.length);

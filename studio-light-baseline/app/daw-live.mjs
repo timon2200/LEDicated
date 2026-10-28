@@ -12,7 +12,7 @@ const DESCRIPTIONS = {
 
 export function createLive(host, { now, status }) {
   const engine = new LightingEngine(), estimator = new OnsetTempoEstimator();
-  engine.setState({ scene: 'wave', palette: 'midnight', brightness: .35, energy: .55, reactive: true, bpm: 120 }, now());
+  engine.setState({ scene: 'wave', palette: 'midnight', brightness: 1.0, energy: .55, reactive: true, bpm: 120 }, now());
   const s = {
     demo: true, stream: null, context: null, analyser: null, samples: null, spectrum: null, queued: null, pendingBeat: null, autoShow: false, cueAnchor: 0, cueBeats: 32,
     freeze: false, frozenFrame: null, frozenBrightness: .35, freezeBeat: 0, offset: 0, onsetLast: 0, avg: 0, previousLevel: 0, tempoLocked: false, autoTempo: false, level: 0,

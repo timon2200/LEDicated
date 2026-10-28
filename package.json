@@ -12,6 +12,8 @@
     "open": "node studio-light-baseline/app/server.mjs --open",
     "local": "node studio-light-baseline/app/server.mjs --local-only",
     "test": "npm --prefix studio-light-baseline/app test",
-    "build": "npm --prefix studio-light-baseline/app run build"
+    "build": "npm --prefix studio-light-baseline/app run build",
+    "menubar:build": "./macos-menubar/build.sh",
+    "menubar:install": "./macos-menubar/build.sh --install"
   }
 }

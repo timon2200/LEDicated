@@ -6,11 +6,10 @@
 
   function extractPlayerData() {
     try {
-      let playerResponse = window.ytInitialPlayerResponse;
-
-      const watchFlexy = document.querySelector('ytd-watch-flexy');
-      if (!playerResponse && watchFlexy && watchFlexy.playerData) {
-        playerResponse = watchFlexy.playerData;
+      const urlParams = new URLSearchParams(window.location.search);
+      let urlVideoId = urlParams.get('v') || '';
+      if (!urlVideoId && window.location.pathname.startsWith('/shorts/')) {
+        urlVideoId = window.location.pathname.split('/shorts/')[1]?.split('?')[0] || '';
       }
 
       const moviePlayer = document.getElementById('movie_player');
@@ -19,19 +18,40 @@
         try { videoData = moviePlayer.getVideoData(); } catch (e) {}
       }
 
-      const urlParams = new URLSearchParams(window.location.search);
-      let videoId = urlParams.get('v') || (videoData && videoData.video_id) || (playerResponse?.videoDetails?.videoId) || '';
-      if (!videoId && window.location.pathname.startsWith('/shorts/')) {
-        videoId = window.location.pathname.split('/shorts/')[1]?.split('?')[0] || '';
+      const watchFlexy = document.querySelector('ytd-watch-flexy');
+      const flexyResponse = watchFlexy && watchFlexy.playerData ? watchFlexy.playerData : null;
+      const initialResponse = window.ytInitialPlayerResponse || null;
+
+      let playerResponse = null;
+      if (flexyResponse?.videoDetails?.videoId && (!urlVideoId || flexyResponse.videoDetails.videoId === urlVideoId)) {
+        playerResponse = flexyResponse;
+      } else if (initialResponse?.videoDetails?.videoId && (!urlVideoId || initialResponse.videoDetails.videoId === urlVideoId)) {
+        playerResponse = initialResponse;
       }
 
-      let title = playerResponse?.videoDetails?.title || (videoData && videoData.title);
-      if (!title) {
+      const validVideoData = (videoData && videoData.video_id && (!urlVideoId || videoData.video_id === urlVideoId))
+        ? videoData
+        : null;
+
+      const videoId = urlVideoId || validVideoData?.video_id || playerResponse?.videoDetails?.videoId || '';
+      let title = (validVideoData && validVideoData.title) || (playerResponse?.videoDetails?.title) || '';
+      const isPlayerSynced = Boolean(
+        videoId && (
+          (validVideoData && validVideoData.video_id === videoId && validVideoData.title) ||
+          (playerResponse?.videoDetails?.videoId === videoId && playerResponse?.videoDetails?.title)
+        )
+      );
+
+      // Only fall back to DOM h1 if moviePlayer doesn't report a different video_id
+      const playerHasDifferentVideo = Boolean(
+        urlVideoId && videoData && videoData.video_id && videoData.video_id !== urlVideoId
+      );
+      if (!title && !playerHasDifferentVideo) {
         const titleEl = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1.title yt-formatted-string');
         title = titleEl ? titleEl.textContent.trim() : document.title.replace(' - YouTube', '').trim();
       }
 
-      const author = playerResponse?.videoDetails?.author || videoData?.author || '';
+      const author = validVideoData?.author || playerResponse?.videoDetails?.author || '';
       const streamingData = playerResponse?.streamingData;
       const formats = [];
       const audioFormats = [];
@@ -75,8 +95,9 @@
 
       return {
         videoId,
-        title: title || 'YouTube_Video',
+        title: title || '',
         author,
+        isPlayerSynced,
         formats,
         audioFormats,
         url: window.location.href
@@ -84,7 +105,8 @@
     } catch (err) {
       return {
         videoId: new URLSearchParams(window.location.search).get('v') || '',
-        title: document.title.replace(' - YouTube', '').trim() || 'YouTube_Video',
+        title: '',
+        isPlayerSynced: false,
         formats: [],
         audioFormats: [],
         url: window.location.href

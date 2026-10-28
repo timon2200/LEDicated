@@ -189,6 +189,8 @@ html:not([dark]) .yt-plus-select option {
   font-weight: 500;
   cursor: pointer;
   margin-left: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: background-color 0.15s, box-shadow 0.2s, border-color 0.2s;
 }
 

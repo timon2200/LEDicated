@@ -1,297 +1,306 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.836Z",
+  "exportedAt": "2026-10-26T22:10:12.832Z",
   "author": "Timon",
   "track": {
-    "id": "95e4e700-9f7c-432c-ada1-e3468e33681e",
+    "id": "387f4424-9b99-4241-aac2-085c917aa9e4",
     "title": "BLOOD POOL",
     "originalName": "BLOOD POOL.mp3",
     "extension": ".mp3",
-    "sha256": "f8ca6b69e08561531c2dfd6613d8db058b22600f6d7bb41343318137f3cc5f64",
-    "sizeBytes": 3051693,
-    "durationSec": 127.097,
+    "sha256": "f66d7331adb61ff1deddee1eb3308434a748afa895a7cc8c81f6d82ba13ba148",
+    "sizeBytes": 3172653,
+    "durationSec": 132.125,
     "bpm": 110,
-    "videoId": "HL1JFUs8XA8",
-    "sourceUrl": "https://www.youtube.com/watch?v=HL1JFUs8XA8",
+    "videoId": "AwFCqqRKOjY",
+    "sourceUrl": "https://www.youtube.com/watch?v=AwFCqqRKOjY",
     "theme": "ice"
   },
   "analysis": {
-    "durationSec": 127.097,
+    "durationSec": 132.125,
     "bpm": 110,
     "beatsSec": [
-      0.445,
-      0.991,
-      1.536,
-      2.082,
-      2.627,
-      3.173,
-      3.718,
-      4.264,
-      4.809,
-      5.355,
-      5.9,
-      6.445,
-      6.991,
-      7.536,
-      8.082,
-      8.627,
-      9.173,
-      9.718,
-      10.264,
-      10.809,
-      11.355,
-      11.9,
-      12.445,
-      12.991,
-      13.536,
-      14.082,
-      14.627,
-      15.173,
-      15.718,
-      16.264,
-      16.809,
-      17.355,
-      17.9,
-      18.445,
-      18.991,
-      19.536,
-      20.082,
-      20.627,
-      21.173,
-      21.718,
-      22.264,
-      22.809,
-      23.355,
-      23.9,
-      24.445,
-      24.991,
-      25.536,
-      26.082,
-      26.627,
-      27.173,
-      27.718,
-      28.264,
-      28.809,
-      29.355,
-      29.9,
-      30.445,
-      30.991,
-      31.536,
-      32.082,
-      32.627,
-      33.173,
-      33.718,
-      34.264,
-      34.809,
-      35.355,
-      35.9,
-      36.445,
-      36.991,
-      37.536,
-      38.082,
-      38.627,
-      39.173,
-      39.718,
-      40.264,
-      40.809,
-      41.355,
-      41.9,
-      42.445,
-      42.991,
-      43.536,
-      44.082,
-      44.627,
-      45.173,
-      45.718,
-      46.264,
-      46.809,
-      47.355,
-      47.9,
-      48.445,
-      48.991,
-      49.536,
-      50.082,
-      50.627,
-      51.173,
-      51.718,
-      52.264,
-      52.809,
-      53.355,
-      53.9,
-      54.445,
-      54.991,
-      55.536,
-      56.082,
-      56.627,
-      57.173,
-      57.718,
-      58.264,
-      58.809,
-      59.355,
-      59.9,
-      60.445,
-      60.991,
-      61.536,
-      62.082,
-      62.627,
-      63.173,
-      63.718,
-      64.264,
-      64.809,
-      65.355,
-      65.9,
-      66.445,
-      66.991,
-      67.536,
-      68.082,
-      68.627,
-      69.173,
-      69.718,
-      70.264,
-      70.809,
-      71.355,
-      71.9,
-      72.445,
-      72.991,
-      73.536,
-      74.082,
-      74.627,
-      75.173,
-      75.718,
-      76.264,
-      76.809,
-      77.355,
-      77.9,
-      78.445,
-      78.991,
-      79.536,
-      80.082,
-      80.627,
-      81.173,
-      81.718,
-      82.264,
-      82.809,
-      83.355,
-      83.9,
-      84.445,
-      84.991,
-      85.536,
-      86.082,
-      86.627,
-      87.173,
-      87.718,
-      88.264,
-      88.809,
-      89.355,
-      89.9,
-      90.445,
-      90.991,
-      91.536,
-      92.082,
-      92.627,
-      93.173,
-      93.718,
-      94.264,
-      94.809,
-      95.355,
-      95.9,
-      96.445,
-      96.991,
-      97.536,
-      98.082,
-      98.627,
-      99.173,
-      99.718,
-      100.264,
-      100.809,
-      101.355,
-      101.9,
-      102.445,
-      102.991,
-      103.536,
-      104.082,
-      104.627,
-      105.173,
-      105.718,
-      106.264,
-      106.809,
-      107.355,
-      107.9,
-      108.445,
-      108.991,
-      109.536,
-      110.082,
-      110.627,
-      111.173,
-      111.718,
-      112.264,
-      112.809,
-      113.355,
-      113.9,
-      114.445,
-      114.991,
-      115.536,
-      116.082,
-      116.627,
-      117.173,
-      117.718,
-      118.264,
-      118.809,
-      119.355,
-      119.9,
-      120.445,
-      120.991,
-      121.536,
-      122.082,
-      122.627,
-      123.173,
-      123.718,
-      124.264,
-      124.809,
-      125.355,
-      125.9,
-      126.445,
-      126.991
+      0.45,
+      0.995,
+      1.541,
+      2.086,
+      2.632,
+      3.177,
+      3.723,
+      4.268,
+      4.814,
+      5.359,
+      5.905,
+      6.45,
+      6.995,
+      7.541,
+      8.086,
+      8.632,
+      9.177,
+      9.723,
+      10.268,
+      10.814,
+      11.359,
+      11.905,
+      12.45,
+      12.995,
+      13.541,
+      14.086,
+      14.632,
+      15.177,
+      15.723,
+      16.268,
+      16.814,
+      17.359,
+      17.905,
+      18.45,
+      18.995,
+      19.541,
+      20.086,
+      20.632,
+      21.177,
+      21.723,
+      22.268,
+      22.814,
+      23.359,
+      23.905,
+      24.45,
+      24.995,
+      25.541,
+      26.086,
+      26.632,
+      27.177,
+      27.723,
+      28.268,
+      28.814,
+      29.359,
+      29.905,
+      30.45,
+      30.995,
+      31.541,
+      32.086,
+      32.632,
+      33.177,
+      33.723,
+      34.268,
+      34.814,
+      35.359,
+      35.905,
+      36.45,
+      36.995,
+      37.541,
+      38.086,
+      38.632,
+      39.177,
+      39.723,
+      40.268,
+      40.814,
+      41.359,
+      41.905,
+      42.45,
+      42.995,
+      43.541,
+      44.086,
+      44.632,
+      45.177,
+      45.723,
+      46.268,
+      46.814,
+      47.359,
+      47.905,
+      48.45,
+      48.995,
+      49.541,
+      50.086,
+      50.632,
+      51.177,
+      51.723,
+      52.268,
+      52.814,
+      53.359,
+      53.905,
+      54.45,
+      54.995,
+      55.541,
+      56.086,
+      56.632,
+      57.177,
+      57.723,
+      58.268,
+      58.814,
+      59.359,
+      59.905,
+      60.45,
+      60.995,
+      61.541,
+      62.086,
+      62.632,
+      63.177,
+      63.723,
+      64.268,
+      64.814,
+      65.359,
+      65.905,
+      66.45,
+      66.995,
+      67.541,
+      68.086,
+      68.632,
+      69.177,
+      69.723,
+      70.268,
+      70.814,
+      71.359,
+      71.905,
+      72.45,
+      72.995,
+      73.541,
+      74.086,
+      74.632,
+      75.177,
+      75.723,
+      76.268,
+      76.814,
+      77.359,
+      77.905,
+      78.45,
+      78.995,
+      79.541,
+      80.086,
+      80.632,
+      81.177,
+      81.723,
+      82.268,
+      82.814,
+      83.359,
+      83.905,
+      84.45,
+      84.995,
+      85.541,
+      86.086,
+      86.632,
+      87.177,
+      87.723,
+      88.268,
+      88.814,
+      89.359,
+      89.905,
+      90.45,
+      90.995,
+      91.541,
+      92.086,
+      92.632,
+      93.177,
+      93.723,
+      94.268,
+      94.814,
+      95.359,
+      95.905,
+      96.45,
+      96.995,
+      97.541,
+      98.086,
+      98.632,
+      99.177,
+      99.723,
+      100.268,
+      100.814,
+      101.359,
+      101.905,
+      102.45,
+      102.995,
+      103.541,
+      104.086,
+      104.632,
+      105.177,
+      105.723,
+      106.268,
+      106.814,
+      107.359,
+      107.905,
+      108.45,
+      108.995,
+      109.541,
+      110.086,
+      110.632,
+      111.177,
+      111.723,
+      112.268,
+      112.814,
+      113.359,
+      113.905,
+      114.45,
+      114.995,
+      115.541,
+      116.086,
+      116.632,
+      117.177,
+      117.723,
+      118.268,
+      118.814,
+      119.359,
+      119.905,
+      120.45,
+      120.995,
+      121.541,
+      122.086,
+      122.632,
+      123.177,
+      123.723,
+      124.268,
+      124.814,
+      125.359,
+      125.905,
+      126.45,
+      126.995,
+      127.541,
+      128.086,
+      128.632,
+      129.177,
+      129.723,
+      130.268,
+      130.814,
+      131.359,
+      131.905
     ],
     "sections": [
       {
         "id": "sec-1",
-        "name": "Uvod",
-        "type": "intro",
+        "name": "Gradnja",
+        "type": "build",
         "startSec": 0,
-        "endSec": 8.08,
-        "durationSec": 8.08,
-        "energy": 0.69,
-        "color": "#3a86ff"
+        "endSec": 7.54,
+        "durationSec": 7.54,
+        "energy": 0.94,
+        "color": "#ffb703"
       },
       {
         "id": "sec-2",
         "name": "Drop",
         "type": "drop",
-        "startSec": 8.08,
+        "startSec": 7.54,
         "endSec": 122.63,
-        "durationSec": 114.55,
+        "durationSec": 115.09,
         "energy": 1,
         "color": "#ff0054"
       },
       {
         "id": "sec-3",
-        "name": "Završetak",
-        "type": "outro",
+        "name": "Breakdown",
+        "type": "breakdown",
         "startSec": 122.63,
-        "endSec": 127.1,
-        "durationSec": 4.47,
-        "energy": 0.81,
-        "color": "#48cae4"
+        "endSec": 132.13,
+        "durationSec": 9.5,
+        "energy": 0.92,
+        "color": "#9d4edd"
       }
     ]
   },
   "timeline": {
     "version": 1,
-    "durationSec": 127.097,
+    "durationSec": 132.125,
     "bpm": 110,
-    "beatOffsetSec": 0.445,
+    "beatOffsetSec": 0.45,
     "blackout": false,
     "layers": [
       {
@@ -303,55 +312,189 @@
         "opacity": 0.72,
         "clips": [
           {
-            "id": "wash-intro-0",
-            "startSec": 0,
-            "durationSec": 7.534545454545455,
-            "preset": "pulse",
+            "id": "wash-bld-sp1-0",
+            "startSec": 2.630909090909091,
+            "durationSec": 1.0909090909090908,
+            "preset": "spiral",
             "targets": [
               "L1",
+              "C1",
               "R1",
-              "L2",
               "R2",
+              "R3",
+              "C3",
               "L3",
-              "R3"
+              "L2"
             ],
             "color": [
-              0.017,
-              0.23800000000000002,
-              0.6375,
+              0.209,
+              0.45599999999999996,
+              0.9309999999999999,
               0
             ],
-            "driver": "other",
-            "driverGain": 0.98,
-            "speed": 1,
+            "driver": "band",
+            "driverGain": 1.1,
+            "speed": 2,
             "timing": "beat",
-            "params": {
-              "floor": 0.2,
-              "curve": "breath"
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
             },
             "keyframes": [
               {
                 "timeSec": 0,
-                "value": 0.198
+                "value": 0.52
               },
               {
-                "timeSec": 0.35,
-                "value": 0.44
+                "timeSec": 1.0909090909090908,
+                "value": 0.62
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp2-0",
+            "startSec": 3.7218181818181817,
+            "durationSec": 1.0909090909090908,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.21559999999999999,
+              0.4704,
+              0.9603999999999999,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.15,
+            "speed": 4,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.62
               },
               {
-                "timeSec": 7.1845454545454555,
-                "value": 0.44
+                "timeSec": 1.0909090909090908,
+                "value": 0.72
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp3-0",
+            "startSec": 4.8127272727272725,
+            "durationSec": 1.0909090909090908,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.22,
+              0.48,
+              0.98,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.2,
+            "speed": 8,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.72
               },
               {
-                "timeSec": 7.534545454545455,
-                "value": 0.374
+                "timeSec": 1.0909090909090908,
+                "value": 0.8
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp4-0",
+            "startSec": 5.903636363636363,
+            "durationSec": 1.0909090909090908,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.22,
+              0.48,
+              0.98,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.25,
+            "speed": 16,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.8
+              },
+              {
+                "timeSec": 1.0909090909090908,
+                "value": 0.88
               }
             ]
           },
           {
             "id": "wash-drop-rip-1",
-            "startSec": 8.08,
-            "durationSec": 114.55,
+            "startSec": 7.54,
+            "durationSec": 115.09,
             "preset": "ripple",
             "targets": [
               "C1",
@@ -379,19 +522,19 @@
                 "value": 1
               },
               {
-                "timeSec": 114.36999999999999,
+                "timeSec": 114.91,
                 "value": 1
               },
               {
-                "timeSec": 114.55,
+                "timeSec": 115.09,
                 "value": 0.9
               }
             ]
           },
           {
-            "id": "wash-out-2",
+            "id": "wash-brk-wave-2-0",
             "startSec": 122.63,
-            "durationSec": 4.466999999999999,
+            "durationSec": 2.1818181818181817,
             "preset": "wave",
             "targets": [
               "L1",
@@ -408,21 +551,193 @@
               0
             ],
             "driver": "other",
-            "driverGain": 0.95,
+            "driverGain": 0.98,
             "speed": 1,
             "timing": "beat",
             "keyframes": [
               {
                 "timeSec": 0,
-                "value": 0.5
+                "value": 0.18000000000000002
               },
               {
-                "timeSec": 3.796949999999999,
-                "value": 0.22
+                "timeSec": 0.35,
+                "value": 0.4
               },
               {
-                "timeSec": 4.466999999999999,
-                "value": 0.15
+                "timeSec": 1.8318181818181816,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.1818181818181817,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-rain-2-1",
+            "startSec": 124.81181818181818,
+            "durationSec": 2.1818181818181817,
+            "preset": "rain",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.017,
+              0.23800000000000002,
+              0.6375,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 1.8318181818181816,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.1818181818181817,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-sparkle-2-2",
+            "startSec": 126.99363636363637,
+            "durationSec": 2.1818181818181817,
+            "preset": "sparkle",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.017,
+              0.23800000000000002,
+              0.6375,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 1.8318181818181816,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.1818181818181817,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-sweep-2-3",
+            "startSec": 129.17545454545456,
+            "durationSec": 2.1818181818181817,
+            "preset": "sweep",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.017,
+              0.23800000000000002,
+              0.6375,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 1.8318181818181816,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.1818181818181817,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-wave-2-4",
+            "startSec": 131.35727272727274,
+            "durationSec": 0.7677272727272566,
+            "preset": "wave",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.017,
+              0.23800000000000002,
+              0.6375,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.13819090909090617,
+                "value": 0.4
+              },
+              {
+                "timeSec": 0.6295363636363505,
+                "value": 0.4
+              },
+              {
+                "timeSec": 0.7677272727272566,
+                "value": 0.13999999999999999
               }
             ]
           }
@@ -437,9 +752,49 @@
         "opacity": 0.82,
         "clips": [
           {
+            "id": "bass-bld-chL-0",
+            "startSec": 2.630909090909091,
+            "durationSec": 4.363636363636363,
+            "preset": "chase",
+            "targets": [
+              "L1",
+              "L2",
+              "L3"
+            ],
+            "color": [
+              0.22,
+              0.48,
+              0.98,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.25,
+            "speed": 16,
+            "timing": "4bar",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.6
+              },
+              {
+                "timeSec": 4.363636363636363,
+                "value": 0.88
+              }
+            ]
+          },
+          {
             "id": "bass-drop-1",
-            "startSec": 8.08,
-            "durationSec": 114.55,
+            "startSec": 7.54,
+            "durationSec": 115.09,
             "preset": "pulse",
             "targets": [
               "L3",
@@ -466,11 +821,11 @@
                 "value": 1
               },
               {
-                "timeSec": 114.36999999999999,
+                "timeSec": 114.91,
                 "value": 1
               },
               {
-                "timeSec": 114.55,
+                "timeSec": 115.09,
                 "value": 0.9
               }
             ]
@@ -486,52 +841,45 @@
         "opacity": 0.72,
         "clips": [
           {
-            "id": "syn-intro-0",
+            "id": "syn-bld-bnc-0",
             "startSec": 0,
-            "durationSec": 7.534545454545455,
-            "preset": "pulse",
+            "durationSec": 2.630909090909091,
+            "preset": "bounce",
             "targets": [
               "C1",
-              "C2",
+              "L2",
+              "R2",
               "C3"
             ],
             "color": [
-              0.017,
-              0.5780000000000001,
-              0.782,
+              0.019,
+              0.646,
+              0.874,
               0
             ],
-            "driver": "vocals",
-            "driverGain": 1,
+            "driver": "other",
+            "driverGain": 1.1,
             "speed": 1,
-            "timing": "bar",
+            "timing": "beat",
             "params": {
-              "floor": 0.18,
-              "curve": "swell"
+              "physics": "elastic",
+              "axis": "horiz"
             },
             "keyframes": [
               {
                 "timeSec": 0,
-                "value": 0.20700000000000002
+                "value": 0.45
               },
               {
-                "timeSec": 0.35,
-                "value": 0.46
-              },
-              {
-                "timeSec": 7.1845454545454555,
-                "value": 0.46
-              },
-              {
-                "timeSec": 7.534545454545455,
-                "value": 0.391
+                "timeSec": 2.630909090909091,
+                "value": 0.64
               }
             ]
           },
           {
             "id": "syn-drop-rn1-1",
-            "startSec": 8.08,
-            "durationSec": 57,
+            "startSec": 7.54,
+            "durationSec": 58.00000000000001,
             "preset": "chase",
             "targets": [
               "L1",
@@ -557,19 +905,19 @@
                 "value": 1
               },
               {
-                "timeSec": 56.82,
+                "timeSec": 57.82000000000001,
                 "value": 1
               },
               {
-                "timeSec": 57,
+                "timeSec": 58.00000000000001,
                 "value": 0.9
               }
             ]
           },
           {
             "id": "syn-drop-sw2-1",
-            "startSec": 65.08,
-            "durationSec": 57.55,
+            "startSec": 65.54,
+            "durationSec": 57.09,
             "preset": "sweep",
             "targets": [
               "L1",
@@ -595,47 +943,55 @@
                 "value": 1
               },
               {
-                "timeSec": 57.37,
+                "timeSec": 56.910000000000004,
                 "value": 1
               },
               {
-                "timeSec": 57.55,
+                "timeSec": 57.09,
                 "value": 0.9
               }
             ]
           },
           {
-            "id": "syn-out-2",
+            "id": "syn-brk-vox-2",
             "startSec": 122.63,
-            "durationSec": 4.466999999999999,
-            "preset": "rain",
+            "durationSec": 9.495000000000005,
+            "preset": "pulse",
             "targets": [
               "C1",
               "C2",
               "C3"
             ],
             "color": [
-              0.187,
-              0.408,
-              0.833,
+              0.1936,
+              0.4224,
+              0.8623999999999999,
               0
             ],
             "driver": "vocals",
-            "driverGain": 0.95,
+            "driverGain": 1.05,
             "speed": 1,
-            "timing": "beat",
+            "timing": "bar",
+            "params": {
+              "floor": 0.2,
+              "curve": "breath"
+            },
             "keyframes": [
               {
                 "timeSec": 0,
-                "value": 0.5
+                "value": 0.20700000000000002
               },
               {
-                "timeSec": 3.796949999999999,
-                "value": 0.22
+                "timeSec": 0.35,
+                "value": 0.46
               },
               {
-                "timeSec": 4.466999999999999,
-                "value": 0.15
+                "timeSec": 9.145000000000005,
+                "value": 0.46
+              },
+              {
+                "timeSec": 9.495000000000005,
+                "value": 0.161
               }
             ]
           }
@@ -650,9 +1006,83 @@
         "opacity": 0.82,
         "clips": [
           {
+            "id": "rhy-bld-open-0",
+            "startSec": 0,
+            "durationSec": 2.630909090909091,
+            "preset": "chase",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.019,
+              0.266,
+              0.7124999999999999,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 1.1,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.45
+              },
+              {
+                "timeSec": 2.630909090909091,
+                "value": 0.64
+              }
+            ]
+          },
+          {
+            "id": "rhy-bld-chR-0",
+            "startSec": 2.630909090909091,
+            "durationSec": 4.363636363636363,
+            "preset": "chase",
+            "targets": [
+              "R1",
+              "R2",
+              "R3"
+            ],
+            "color": [
+              0.22,
+              0.48,
+              0.98,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.25,
+            "speed": 16,
+            "timing": "4bar",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.6
+              },
+              {
+                "timeSec": 4.363636363636363,
+                "value": 0.88
+              }
+            ]
+          },
+          {
             "id": "rhy-drop-kick-1",
-            "startSec": 8.08,
-            "durationSec": 114.55,
+            "startSec": 7.54,
+            "durationSec": 115.09,
             "preset": "pulse",
             "targets": "all",
             "color": [
@@ -684,12 +1114,232 @@
                 "value": 1
               },
               {
-                "timeSec": 114.36999999999999,
+                "timeSec": 114.91,
                 "value": 1
               },
               {
-                "timeSec": 114.55,
+                "timeSec": 115.09,
                 "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-2-0",
+            "startSec": 122.63,
+            "durationSec": 1.0909090909090908,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.14759999999999998,
+              0.3444,
+              0.615,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.19636363636363635,
+                "value": 0.38
+              },
+              {
+                "timeSec": 0.8945454545454545,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.0909090909090908,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-2-1",
+            "startSec": 124.81181818181818,
+            "durationSec": 1.0909090909090908,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.14759999999999998,
+              0.3444,
+              0.615,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.19636363636363635,
+                "value": 0.38
+              },
+              {
+                "timeSec": 0.8945454545454545,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.0909090909090908,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-2-2",
+            "startSec": 126.99363636363637,
+            "durationSec": 1.0909090909090908,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.14759999999999998,
+              0.3444,
+              0.615,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.19636363636363635,
+                "value": 0.38
+              },
+              {
+                "timeSec": 0.8945454545454545,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.0909090909090908,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-2-3",
+            "startSec": 129.17545454545456,
+            "durationSec": 1.0909090909090908,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.14759999999999998,
+              0.3444,
+              0.615,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.19636363636363635,
+                "value": 0.38
+              },
+              {
+                "timeSec": 0.8945454545454545,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.0909090909090908,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-2-4",
+            "startSec": 131.35727272727274,
+            "durationSec": 0.7677272727272566,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.14759999999999998,
+              0.3444,
+              0.615,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.13819090909090617,
+                "value": 0.38
+              },
+              {
+                "timeSec": 0.6295363636363505,
+                "value": 0.38
+              },
+              {
+                "timeSec": 0.7677272727272566,
+                "value": 0.13299999999999998
               }
             ]
           }
@@ -704,89 +1354,44 @@
         "opacity": 0.88,
         "clips": [
           {
-            "id": "acc-intro-sw1-0",
-            "startSec": 5.3527272727272734,
-            "durationSec": 2.1818181818181817,
-            "preset": "sweep",
-            "targets": [
-              "L1",
-              "R1",
-              "L2",
-              "R2",
-              "L3",
-              "R3"
-            ],
+            "id": "acc-bld-fl-0",
+            "startSec": 2.630909090909091,
+            "durationSec": 4.363636363636363,
+            "preset": "flash",
+            "targets": "all",
             "color": [
-              0.198,
-              0.432,
-              0.882,
+              0.18,
+              0.42,
+              0.75,
               0
             ],
-            "driver": "drums",
-            "driverGain": 1.02,
-            "speed": 1,
+            "driver": "band",
+            "driverGain": 1.3,
+            "speed": 0.5,
             "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 180,
+              "highHz": 450,
+              "threshold": 0.6,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.12
+            },
             "keyframes": [
               {
                 "timeSec": 0,
-                "value": 0.216
+                "value": 0.55
               },
               {
-                "timeSec": 0.35,
-                "value": 0.48
-              },
-              {
-                "timeSec": 1.8318181818181816,
-                "value": 0.48
-              },
-              {
-                "timeSec": 2.1818181818181817,
-                "value": 0.408
-              }
-            ]
-          },
-          {
-            "id": "acc-intro-sw2-0",
-            "startSec": 6.98909090909091,
-            "durationSec": 0.5454545454545454,
-            "preset": "sweep",
-            "targets": [
-              "C1",
-              "C2",
-              "C3"
-            ],
-            "color": [
-              0.22,
-              0.48,
-              0.98,
-              0
-            ],
-            "driver": "drums",
-            "driverGain": 1.05,
-            "speed": 1,
-            "timing": "beat",
-            "keyframes": [
-              {
-                "timeSec": 0,
-                "value": 0.234
-              },
-              {
-                "timeSec": 0.09818181818181818,
-                "value": 0.52
-              },
-              {
-                "timeSec": 0.44727272727272727,
-                "value": 0.52
-              },
-              {
-                "timeSec": 0.5454545454545454,
-                "value": 0.442
+                "timeSec": 4.363636363636363,
+                "value": 0.88
               }
             ]
           },
           {
             "id": "acc-drop-hit-1",
-            "startSec": 8.08,
+            "startSec": 7.54,
             "durationSec": 0.06,
             "preset": "flash",
             "targets": "all",
@@ -821,7 +1426,7 @@
           },
           {
             "id": "acc-drop-str-1",
-            "startSec": 8.08,
+            "startSec": 7.54,
             "durationSec": 6.32,
             "preset": "strobe",
             "targets": [
@@ -861,8 +1466,8 @@
           },
           {
             "id": "acc-drop-fl-1",
-            "startSec": 14.4,
-            "durationSec": 108.22999999999999,
+            "startSec": 13.86,
+            "durationSec": 108.77000000000001,
             "preset": "flash",
             "targets": [
               "L1",
@@ -899,11 +1504,11 @@
                 "value": 1
               },
               {
-                "timeSec": 108.04999999999998,
+                "timeSec": 108.59,
                 "value": 1
               },
               {
-                "timeSec": 108.22999999999999,
+                "timeSec": 108.77000000000001,
                 "value": 0.9
               }
             ]

@@ -156,7 +156,7 @@ const bpmTapBtn = h('button', {
 }, 'TAP');
 
 const bpmNumber = createDragNumber({ id: 'bpm', label: 'BPM', value: 120, min: 40, max: 240, step: .5, decimals: 1, onChange: v => { if (!hasTrack()) return; store.commit('Tempo', t => { t.bpm = v; t.gridMode = 'manual'; }); updateGridButton(); } });
-const masterKnob = createKnob({ label: 'MASTER', value: 70, min: 0, max: 100, step: 1, size: 40, reset: 70, warnAbove: 70, format: v => `${Math.round(v)}%`, title: 'Master svjetlina (0–100%). Crveno iznad 70% označava visoku snagu.', onInput: v => { live.setBrightness(v); mixer.setMaster(v); } });
+const masterKnob = createKnob({ label: 'MASTER', value: 100, min: 0, max: 100, step: 1, size: 40, reset: 100, warnAbove: 85, format: v => `${Math.round(v)}%`, title: 'Master svjetlina (0–100%). Puna snaga na 100%.', onInput: v => { live.setBrightness(v); mixer.setMaster(v); } });
 
 const header = h('header', { class: 'topbar' },
   h('div', { class: 'brand' }, h('span', { class: 'mark' }, 'L', h('i', {}, '•')), h('div', {}, h('strong', {}, 'LEDicated'), h('small', {}, 'SHOW STUDIO'))),
@@ -354,7 +354,14 @@ const performDesk = createPerformancePanel(performancePane, {
   seek, commitSeek, setLoop, loop: () => s.loop ? { ...s.loop, on: s.loopOn } : null,
   blackout: () => live.engine.state.blackout,
   recorder,
-  toggleRecord: () => recBtn.click()
+  toggleRecord: () => recBtn.click(),
+  onPadsChange: (pads, quantize) => {
+    fetch('/api/live/pads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, clientName, pads, quantize })
+    }).catch(() => {});
+  }
 });
 recorder.desk = performDesk.desk;
 
@@ -433,12 +440,15 @@ async function togglePlay() {
     if (!lanState.stageOwnerId && !lanState.isRemoteStageOwner) {
       lanState.manuallyReleased = false;
     }
+    if ((lanState.outputMode === 'ambient' || output.outputMode === 'ambient') && !live.engine.state.blackout && !lanState.isRemoteStageOwner) {
+      claimStage(false).catch(() => {});
+    }
     s.playFrom = s.scrubSec; audio.currentTime = s.scrubSec;
     playPending = true;
     try {
       await audio.play();
       if (recorder?.isArmed) recorder.startRecording();
-      if (lanState.stageOwnerId && lanState.stageOwnerId !== clientId) {
+      if (lanState.stageOwnerId && lanState.stageOwnerId !== clientId && lanState.outputMode !== 'ambient') {
         toast(`🎧 Solo Preview — na stageu je ${lanState.stageOwnerName || 'kolega'}. Klikni „⚡ Preuzmi Stage” ako želiš prebaciti zid na sebe.`, 'info');
       }
     } catch (error) { toast(`Reprodukcija nije uspjela: ${error.message}`, 'error'); }
@@ -760,7 +770,80 @@ function switchDock(id) {
 }
 document.getElementById('out-open').onclick = () => output.openSettings();
 const performOpen = h('button', { type: 'button', id: 'perform-open', class: 'txt-btn', title: 'Otvori izvedbeni board (tipka P)', onClick: () => switchDock('perform') }, 'LIVE BOARD');
-document.getElementById('out-open').before(performOpen);
+const mobileDialog = h('dialog', { id: 'mobile-companion-dialog', class: 'help lan-modal', closedby: 'any', 'aria-label': 'iPhone Live Pad Companion' });
+document.body.append(mobileDialog);
+if (!('closedBy' in HTMLDialogElement.prototype)) {
+  mobileDialog.addEventListener('click', event => {
+    if (event.target !== mobileDialog) return;
+    const rect = mobileDialog.getBoundingClientRect();
+    const isDialogContent = rect.top <= event.clientY && event.clientY <= rect.top + rect.height && rect.left <= event.clientX && event.clientX <= rect.left + rect.width;
+    if (!isDialogContent) mobileDialog.close();
+  });
+}
+async function openMobileCompanionModal() {
+  try {
+    const res = await fetch('/api/lan/status').then(r => r.json());
+    if (res.ok) applyLanPresence(res);
+  } catch {}
+  const baseLan = (lanState.lanUrls || []).find(u => !u.includes('.local')) || lanState.lanUrls?.[0] || window.location.origin;
+  const padUrl = `${baseLan.replace(/\/$/, '')}/pad`;
+  const localMdnsUrl = (lanState.lanUrls || []).find(u => u.includes('.local'));
+  const mdnsPadUrl = localMdnsUrl ? `${localMdnsUrl.replace(/\/$/, '')}/pad` : null;
+  const mobilePeers = (lanState.peers || []).filter(p => p.source === 'pad' || p.source === 'ios');
+
+  mobileDialog.replaceChildren(
+    h('div', { class: 'pane-title' },
+      h('b', {}, '📱 IPHONE LIVE PAD · COMPANION APP'),
+      h('button', { type: 'button', onClick: () => mobileDialog.close() }, 'Zatvori')
+    ),
+    h('div', { class: 'lan-modal-body', style: { display: 'grid', gap: '14px', padding: '14px 16px' } },
+      h('div', { style: { background: 'rgba(16, 22, 34, 0.85)', border: '1px solid rgba(76, 195, 255, 0.28)', borderRadius: '12px', padding: '14px' } },
+        h('div', { style: { fontSize: '11px', letterSpacing: '0.08em', color: '#4cc3ff', fontWeight: '700', marginBottom: '6px' } }, '1 · INSTANT WI-FI / HOME SCREEN APP (BEZ KABLA)'),
+        h('p', { style: { margin: '0 0 10px', fontSize: '13px', color: '#c8d6e8', lineHeight: '1.45' } },
+          'Otvori Safari na iPhoneu (na istoj Wi-Fi mreži) i upiši donju adresu. Za puni zaslon bez Safari traka dodirni Dijeli (Share) → „Add to Home Screen”.'
+        ),
+        h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' } },
+          h('code', { style: { flex: '1', padding: '9px 12px', background: '#07090e', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px', fontSize: '14px', color: '#00ffa3', fontWeight: '700', userSelect: 'all' } }, padUrl),
+          h('button', {
+            type: 'button',
+            class: 'txt-btn',
+            onClick: () => {
+              navigator.clipboard?.writeText(padUrl);
+              toast('Adresa za iPhone kopirana u međuspremnik.');
+            }
+          }, 'Kopiraj URL'),
+          h('a', {
+            href: '/pad',
+            target: '_blank',
+            rel: 'noopener',
+            class: 'txt-btn',
+            style: { textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }
+          }, 'Otvori Preview ↗')
+        ),
+        mdnsPadUrl ? h('small', { style: { display: 'block', marginTop: '6px', color: '#8499b2' } }, `Bonjour / mDNS alternativa: ${mdnsPadUrl}`) : null
+      ),
+      h('div', { style: { background: 'rgba(16, 22, 34, 0.85)', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: '12px', padding: '14px' } },
+        h('div', { style: { fontSize: '11px', letterSpacing: '0.08em', color: '#ffb34d', fontWeight: '700', marginBottom: '6px' } }, '2 · NATIVE IOS SWIFTUI APP (XCODE + COREHAPTICS)'),
+        h('p', { style: { margin: '0 0 8px', fontSize: '13px', color: '#c8d6e8', lineHeight: '1.45' } },
+          'Izvorni Swift 6 / SwiftUI projekt s CoreHaptics vibracijama, multi-touch 12-pad pločom i 60 FPS 3×3 pregledom spreman je u mapi:'
+        ),
+        h('code', { style: { display: 'block', padding: '8px 10px', background: '#07090e', borderRadius: '8px', fontSize: '12px', color: '#e6eef8', userSelect: 'all' } }, 'ios-companion/LEDicatedPad.xcodeproj'),
+        h('small', { style: { display: 'block', marginTop: '6px', color: '#8499b2', lineHeight: '1.4' } },
+          'Spoji iPhone USB-C kablom → u Xcodeu odaberi svoj Apple ID pod Signing & Capabilities (Team) → odaberi svoj iPhone na vrhu i pritisni ⌘R (Run).'
+        )
+      ),
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: '#8499b2' } },
+        h('span', {}, mobilePeers.length
+          ? `🟢 Spojeni mobilni uređaji (${mobilePeers.length}): ${mobilePeers.map(p => p.name).join(', ')}`
+          : '⚪ Čekam spajanje iPhonea na istoj Wi-Fi mreži…'),
+        h('span', {}, 'Sinkronizacija: SSE + <3ms LAN')
+      )
+    )
+  );
+  if (!mobileDialog.open) mobileDialog.showModal();
+}
+const mobileOpen = h('button', { type: 'button', id: 'mobile-open', class: 'txt-btn', title: 'Poveži iPhone Live Pad Companion aplikaciju', onClick: openMobileCompanionModal }, '📱 iPhone Pad');
+document.getElementById('out-open').before(performOpen, mobileOpen);
 switchDock('clip'); setTool('draw'); updateHistoryButtons(); updateGridButton();
 
 /* ------------------------------------------------------------ edit actions */
@@ -828,6 +911,7 @@ const lanState = {
   stageOwnerName: null,
   stageOwnerSource: null,
   stageState: 'idle',
+  outputMode: 'show',
   graceRemainingSec: 0,
   graceUpdatedAt: 0,
   isRemoteStageOwner: false,
@@ -865,21 +949,26 @@ function getLiveGraceRemaining() {
 }
 
 function renderStageLiveBanner() {
-  const isMyStage = lanState.stageOwnerId === clientId && !lanState.isRemoteStageOwner;
-  const isFree = !lanState.stageOwnerId && !lanState.isRemoteStageOwner;
+  const isAmbient = lanState.outputMode === 'ambient' || output.outputMode === 'ambient';
+  const isMyStage = !isAmbient && lanState.stageOwnerId === clientId && !lanState.isRemoteStageOwner;
+  const isFree = !isAmbient && !lanState.stageOwnerId && !lanState.isRemoteStageOwner;
   const graceSec = getLiveGraceRemaining();
   const np = lanState.nowPlaying;
 
   stageLiveBanner.className = `stage-live-banner ${
-    isMyStage
-      ? (lanState.stageState === 'grace' ? 'is-grace' : 'is-owner')
-      : isFree
-        ? (lanState.manuallyReleased ? 'is-solo' : 'is-idle')
-        : 'is-solo'
+    isAmbient
+      ? 'is-solo'
+      : isMyStage
+        ? (lanState.stageState === 'grace' ? 'is-grace' : 'is-owner')
+        : isFree
+          ? (lanState.manuallyReleased ? 'is-solo' : 'is-idle')
+          : 'is-solo'
   }`;
 
   let statusText = '⚪ STAGE SLOBODAN';
-  if (isMyStage) {
+  if (isAmbient) {
+    statusText = '💡 MENU BAR (UREDSKA RASVJETA)';
+  } else if (isMyStage) {
     statusText = lanState.stageState === 'grace'
       ? `🟡 PAUZA · ${graceSec}s (Ti)`
       : `🟢 ON AIR · ${clientName} (Ti)`;
@@ -895,34 +984,45 @@ function renderStageLiveBanner() {
   }
 
   const activeSource = isMyStage ? 'daw' : (np?.source || lanState.stageOwnerSource || 'daw');
-  const srcChip = (!isFree || isMyStage)
-    ? h('span', { class: `slb-source-chip src-${activeSource}` }, sourceLabel(activeSource))
-    : null;
+  const srcChip = isAmbient
+    ? h('span', { class: 'slb-source-chip src-daw' }, '💡 Uredsko svjetlo')
+    : (!isFree || isMyStage)
+      ? h('span', { class: `slb-source-chip src-${activeSource}` }, sourceLabel(activeSource))
+      : null;
 
-  const actionBtn = isMyStage
+  const actionBtn = isAmbient
     ? h('button', {
         type: 'button',
-        class: 'slb-btn release',
-        title: 'Prepusti Stage i prebaci se u Solo Preview mod',
-        onClick: () => claimStage(true)
-      }, 'Prepusti Stage')
-    : (!isFree || lanState.manuallyReleased)
+        class: 'slb-btn claim',
+        title: 'Preuzmi kontrolu nad 3×3 LED zidom i pusti Light Show',
+        onClick: () => claimStage(false)
+      }, '⚡ Preuzmi kontrolu (Light Show)')
+    : isMyStage
       ? h('button', {
           type: 'button',
-          class: 'slb-btn claim',
-          title: 'Preuzmi kontrolu nad fizičkim 3×3 LED barovima',
-          onClick: () => claimStage(false)
-        }, '⚡ Preuzmi Stage')
-      : h('button', {
-          type: 'button',
-          class: 'slb-btn lock',
-          title: 'Zaključaj Stage na sebe',
-          onClick: () => claimStage(false)
-        }, '⚡ Zaključaj');
+          class: 'slb-btn release',
+          title: 'Prepusti Stage i prebaci se u Solo Preview mod',
+          onClick: () => claimStage(true)
+        }, 'Prepusti Stage')
+      : (!isFree || lanState.manuallyReleased)
+        ? h('button', {
+            type: 'button',
+            class: 'slb-btn claim',
+            title: 'Preuzmi kontrolu nad fizičkim 3×3 LED barovima',
+            onClick: () => claimStage(false)
+          }, '⚡ Preuzmi Stage')
+        : h('button', {
+            type: 'button',
+            class: 'slb-btn lock',
+            title: 'Preuzmi kontrolu i pusti izlaz na 3×3 LED zid',
+            onClick: () => claimStage(false)
+          }, '⚡ Preuzmi izlaz');
 
-  const trackTitleText = isMyStage
-    ? (s.track?.title || s.track?.originalName || 'Uživo iz DAW-a')
-    : (np?.trackTitle || (isFree ? (s.track?.title ? `Spremno: ${s.track.title}` : 'Nema aktivne reprodukcije') : 'Uživo izlaz'));
+  const trackTitleText = isAmbient
+    ? (s.track?.title ? `Spremno u Studiju: ${s.track.title} (Klikni Preuzmi kontrolu za Light Show)` : 'Na zidu je trenutno statično uredsko svjetlo iz Menu Bara')
+    : isMyStage
+      ? (s.track?.title || s.track?.originalName || 'Uživo iz DAW-a')
+      : (np?.trackTitle || (isFree ? (s.track?.title ? `Spremno: ${s.track.title}` : 'Nema aktivne reprodukcije') : 'Uživo izlaz'));
 
   const curSec = isMyStage ? songTime() : Number(np?.timeSec || 0);
   const durSec = isMyStage ? duration() : Number(np?.durationSec || 0);
@@ -1014,8 +1114,15 @@ async function claimStage(release = false) {
       body: JSON.stringify({ clientId, name: clientName, source: 'daw', release })
     }).then(r => r.json());
     if (res.ok) {
+      if (!release) {
+        lanState.outputMode = 'show';
+        output.syncServerState?.({ armed: Boolean(res.armed ?? true), outputMode: 'show', ambientOverride: false });
+      }
       applyLanPresence(res);
-      toast(release ? 'Stage prepušten — sada si u Solo Preview modu.' : '🟢 Preuzeo si Stage (ON AIR)! Tvoj izlaz ide na 3×3 barove.', 'ok');
+      if (!release) {
+        output.send(currentOutputFrame, now());
+      }
+      toast(release ? 'Stage prepušten — sada si u Solo Preview modu.' : '🟢 Preuzeo si kontrolu (ON AIR)! Light Show ide na 3×3 barove.', 'ok');
     }
   } catch (err) {
     toast(err.message, 'error');
@@ -1030,13 +1137,21 @@ function applyLanPresence(data) {
   if ('stageOwnerName' in data) lanState.stageOwnerName = data.stageOwnerName;
   if ('stageOwnerSource' in data) lanState.stageOwnerSource = data.stageOwnerSource;
   if ('stageState' in data) lanState.stageState = data.stageState || 'idle';
+  if ('outputMode' in data) lanState.outputMode = data.outputMode || 'show';
+  if (typeof data.armed === 'boolean' || data.outputMode) {
+    output.syncServerState?.({
+      armed: data.armed,
+      outputMode: data.outputMode,
+      ambientOverride: data.ambientOverride
+    });
+  }
   if ('graceRemainingSec' in data) {
     lanState.graceRemainingSec = Number(data.graceRemainingSec) || 0;
     lanState.graceUpdatedAt = Date.now();
   }
   if ('isRemoteStageOwner' in data) lanState.isRemoteStageOwner = Boolean(data.isRemoteStageOwner);
   if ('nowPlaying' in data) lanState.nowPlaying = data.nowPlaying || null;
-  if (lanState.stageOwnerId === clientId && !lanState.isRemoteStageOwner) {
+  if (lanState.stageOwnerId === clientId && !lanState.isRemoteStageOwner && lanState.outputMode !== 'ambient') {
     lanState.manuallyReleased = false;
   }
   if (Array.isArray(data.lanUrls)) lanState.lanUrls = data.lanUrls;
@@ -1533,6 +1648,7 @@ function updateActiveNow(time) {
 }
 
 let lastText = '', lastPerformSignal = '', lastTickTime = 0;
+const extSyncAnchor = { songSec: 0, wallSec: 0, rate: 1, activeUntil: 0 };
 function currentOutputFrame(t = now()) {
   const blackoutOn = live.engine.state.blackout;
   if (blackoutOn) return live.frame(t);
@@ -1551,14 +1667,24 @@ setInterval(() => {
   if (!output.armed) return;
   const t = now();
   // Stream when document is hidden OR when macOS occludes the window and pauses requestAnimationFrame
-  if (!document.hidden && (t - lastTickTime) < 0.045) return;
+  if (!document.hidden && (t - lastTickTime) < 0.028) return;
+  if (audio.paused && !playPending && !scrubWasPlaying && extSyncAnchor.activeUntil > t && hasTrack()) {
+    s.scrubSec = clamp(extSyncAnchor.songSec + Math.max(0, t - extSyncAnchor.wallSec) * extSyncAnchor.rate, 0, duration());
+  }
+  const isActivelyPlaying = !audio.paused || performDesk.desk.active.size > 0 || Boolean(live.isExternalActive?.(t)) || extSyncAnchor.activeUntil > t;
+  if (!isActivelyPlaying) return;
   performDesk.tick(t);
   output.send(currentOutputFrame, t);
-}, 20);
+}, 16);
 function tick() {
   const t = now();
   lastTickTime = t;
   live.tick(t);
+  const extSyncedPlaying = audio.paused && !playPending && !scrubWasPlaying && extSyncAnchor.activeUntil > t && hasTrack();
+  if (extSyncedPlaying) {
+    s.scrubSec = clamp(extSyncAnchor.songSec + Math.max(0, t - extSyncAnchor.wallSec) * extSyncAnchor.rate, 0, duration());
+    playlist.redraw();
+  }
   if (s.loopOn && s.loop && !audio.paused && audio.currentTime >= s.loop.end) {
     if (recorder?.isRecording) recorder.handleLoopWrap(s.loop.start, s.loop.end);
     audio.currentTime = s.loop.start;
@@ -1568,7 +1694,7 @@ function tick() {
   if (hasTrack() && !live.engine.state.blackout) {
     const effTl = effectiveTimeline();
     showEngine.sync(effTl, s.analysis);
-    showEngine.warmLookahead(clamp((s.frozenSec ?? songTime()) + output.offsetSec, 0, duration()), audio.paused ? 24 : 8, 2.5);
+    showEngine.warmLookahead(clamp((s.frozenSec ?? songTime()) + output.offsetSec, 0, duration()), (audio.paused && !extSyncedPlaying) ? 24 : 8, 2.5);
   }
   const performSignal = `${performDesk.desk.active.size}|${performDesk.desk.pending.size}`;
   if (performSignal !== lastPerformSignal) {
@@ -1584,7 +1710,7 @@ function tick() {
   output.send(output.offsetSec === 0 ? frame : currentOutputFrame, t);
   const time = songTime(), text = formatBBT(hasTrack() ? Math.max(0, beatPosition(time, tl(), s.analysis)) : 0) + '|' + formatClock(time);
   if (text !== lastText) { lastText = text; const [bbt, clock] = text.split('|'); bbtEl.textContent = bbt; clockEl.textContent = clock; }
-  if (s.follow && !audio.paused) playlist.ensureVisible(time, true);
+  if (s.follow && (!audio.paused || extSyncedPlaying)) playlist.ensureVisible(time, true);
   if (s.dock === 'envelope' && !audio.paused) clipEditor.draw();
   if (s.dock === 'driver') driverEditor.tick();
   if (t - s.lastLevels > .08) {
@@ -1622,6 +1748,11 @@ function initLiveSync() {
       blackout: live.engine.state.blackout,
       armed: output.armed,
       activePads: [...performDesk.desk.active.keys()],
+      pendingPads: [...performDesk.desk.pending.keys()],
+      heldPads: [...performDesk.desk.held.keys()],
+      quantize: performDesk.desk.quantize,
+      pads: performDesk.desk.pads,
+      sections: s.analysis?.sections || null,
       activeClipsCount: tl().layers.reduce((acc, l) => acc + l.clips.filter(c => time >= c.startSec && time < clipEnd(c)).length, 0),
       layerCount: tl().layers.length,
       clipCount: tl().layers.reduce((acc, l) => acc + l.clips.length, 0)
@@ -1705,7 +1836,33 @@ function initLiveSync() {
       }
       sendLiveState();
     }
+    else if (cmd.type === 'pads_sync') {
+      if (cmd.clientId && cmd.clientId === clientId) return;
+      performDesk.syncRemotePads?.(cmd.pads, cmd.quantize);
+      sendLiveState();
+    }
     else if (cmd.type === 'live_pad') {
+      if (cmd.action === 'clear' || cmd.action === 'stop_all') {
+        performDesk.clear();
+        sendLiveState();
+        return;
+      }
+      if (cmd.action === 'release_all') {
+        performDesk.releaseAll();
+        sendLiveState();
+        return;
+      }
+      if (cmd.action === 'quantize') {
+        const nextQ = cmd.value !== undefined ? Boolean(cmd.value) : !performDesk.desk.quantize;
+        performDesk.setQuantize?.(nextQ, { fromRemote: true });
+        sendLiveState();
+        return;
+      }
+      if (cmd.action === 'move' && Number.isInteger(cmd.from) && Number.isInteger(cmd.to)) {
+        performDesk.movePadConfig?.(cmd.from, cmd.to, { fromRemote: true });
+        sendLiveState();
+        return;
+      }
       let idx = -1;
       if (typeof cmd.pad === 'number') idx = cmd.pad;
       else if (typeof cmd.pad === 'string') {
@@ -1714,11 +1871,21 @@ function initLiveSync() {
         if (idx < 0 && !isNaN(Number(cmd.pad))) idx = Number(cmd.pad);
       }
       if (idx >= 0 && idx < 12) {
-        if (cmd.action === 'hit' || !cmd.action) performDesk.hit(idx);
-        else if (cmd.action === 'loop') performDesk.toggle(idx);
-        else if (cmd.action === 'release') performDesk.release(idx);
-        else if (cmd.action === 'set' && cmd.effect) {
-          performDesk.desk.pads[idx] = { ...performDesk.desk.pads[idx], ...cmd.effect };
+        if (cmd.action === 'press') {
+          performDesk.press(idx, { select: false });
+        } else if (cmd.action === 'release') {
+          performDesk.release(idx, { cancel: Boolean(cmd.cancel) });
+        } else if (cmd.action === 'trigger' || cmd.action === 'hit' || !cmd.action) {
+          performDesk.trigger(idx, { select: false });
+        } else if (cmd.action === 'loop') {
+          if (performDesk.desk.pads[idx] && performDesk.desk.pads[idx].mode !== 'loop') {
+            performDesk.setPadConfig?.(idx, { mode: 'loop' }, { fromRemote: true });
+          }
+          performDesk.trigger(idx, { select: false });
+        } else if (cmd.action === 'set' && (cmd.effect || cmd.patch)) {
+          performDesk.setPadConfig?.(idx, cmd.effect || cmd.patch, { fromRemote: true });
+        } else if (cmd.action === 'remove') {
+          performDesk.removePadConfig?.(idx, { fromRemote: true });
         }
       }
       sendLiveState();
@@ -1755,12 +1922,20 @@ function initLiveSync() {
     }
     else if (cmd.type === 'ext_sync') {
       if (cmd.mode === 'idle' || cmd.liveMode === false || cmd.paused) {
+        extSyncAnchor.activeUntil = 0;
         live.clearExternal?.();
         return;
       }
       if (!audio.paused || playPending || scrubWasPlaying) return;
       if (cmd.mode === 'synced') {
         live.clearExternal?.();
+        const tNow = now();
+        if (Number.isFinite(cmd.currentTime)) {
+          extSyncAnchor.songSec = Number(cmd.currentTime);
+          extSyncAnchor.wallSec = tNow;
+          extSyncAnchor.rate = Number.isFinite(Number(cmd.playbackRate)) && Number(cmd.playbackRate) > 0 ? Number(cmd.playbackRate) : 1;
+          extSyncAnchor.activeUntil = tNow + 1.2;
+        }
         if (cmd.trackId && s.track?.id !== cmd.trackId) {
           browser.refresh().then(() => selectTrack(cmd.trackId)).catch(() => {});
         } else if (hasTrack() && Number.isFinite(cmd.currentTime)) {
@@ -1769,6 +1944,7 @@ function initLiveSync() {
           if (s.follow) playlist.ensureVisible(s.scrubSec, true);
         }
       } else if (cmd.mode === 'live_stream') {
+        extSyncAnchor.activeUntil = 0;
         live.pushExternalStems?.(cmd.stems, cmd.theme, now());
       }
     }

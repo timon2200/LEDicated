@@ -14,6 +14,13 @@ yarn-error.log*
 # App user data & generated caches (audio, analyses, local library)
 studio-light-baseline/app/data/
 studio-light-baseline/app/config.json
+logs/
+
+# Native app build artifacts
+macos-menubar/build/
+**/xcuserdata/
+**/DerivedData/
+*.xcworkspace/xcuserdata/
 
 # IDEs & editors
 .vscode/

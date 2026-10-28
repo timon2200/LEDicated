@@ -152,3 +152,113 @@ test('live endpoints: status, state reporting, frame preview, and command execut
   assert.ok(fullText.includes('timeline_op'));
   assert.ok(fullText.includes('transport'));
 });
+
+test('mobile companion pad: serves /pad assets and synchronizes 12-pad live board state', async t => {
+  const { base } = await fixture(t);
+
+  // 1. Verify /pad HTML, CSS, JS, and PWA manifest are served
+  const htmlRes = await fetch(`${base}/pad`);
+  assert.equal(htmlRes.status, 200);
+  const htmlText = await htmlRes.text();
+  assert.ok(htmlText.includes('LEDicated Pad'));
+  assert.ok(htmlText.includes('closedby="any"'));
+
+  const cssRes = await fetch(`${base}/pad.css`);
+  assert.equal(cssRes.status, 200);
+  const cssText = await cssRes.text();
+  assert.ok(cssText.includes('100dvh'));
+
+  const jsRes = await fetch(`${base}/pad.mjs`);
+  assert.equal(jsRes.status, 200);
+
+  const manifestRes = await fetch(`${base}/manifest.webmanifest`);
+  assert.equal(manifestRes.status, 200);
+  const manifestData = await manifestRes.json();
+  assert.equal(manifestData.display, 'standalone');
+
+  // 2. Fetch initial 12-pad deck from /api/live/pads
+  const padsRes1 = await fetch(`${base}/api/live/pads`);
+  assert.equal(padsRes1.status, 200);
+  const padsData1 = await padsRes1.json();
+  assert.equal(padsData1.ok, true);
+  assert.equal(padsData1.pads.length, 12);
+  assert.equal(padsData1.pads[0].key, 'Q');
+
+  // 3. Press pad 0 (Q) from iPhone companion and verify activePads + frame output
+  const pressRes = await fetch(`${base}/api/live/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientId: 'iphone-test-1',
+      type: 'live_pad',
+      action: 'press',
+      index: 0
+    })
+  });
+  assert.equal(pressRes.status, 200);
+  const pressData = await pressRes.json();
+  assert.equal(pressData.ok, true);
+  assert.ok(pressData.activePads.includes(0));
+  assert.ok(pressData.heldPads.includes(0));
+
+  // Verify standalone /api/live/frame renders non-zero RGBW pixels even without a loaded song
+  const frameRes = await fetch(`${base}/api/live/frame`);
+  assert.equal(frameRes.status, 200);
+  const frameData = await frameRes.json();
+  assert.equal(frameData.ok, true);
+  assert.ok(frameData.watts > 8);
+
+  // 4. Customize pad 1 (W) color & target bars from companion
+  const customPad = {
+    ...padsData1.pads[1],
+    name: 'iPhone Cyber Drop',
+    bars: ['L1', 'C1', 'R1'],
+    color: [0, 1, 0.8]
+  };
+  const setRes = await fetch(`${base}/api/live/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientId: 'iphone-test-1',
+      type: 'live_pad',
+      action: 'set',
+      index: 1,
+      pad: customPad
+    })
+  });
+  assert.equal(setRes.status, 200);
+  const setData = await setRes.json();
+  assert.equal(setData.pads[1].name, 'iPhone Cyber Drop');
+  assert.deepEqual(setData.pads[1].bars, ['L1', 'C1', 'R1']);
+
+  // 5. Release pad 0 and toggle quantize
+  const relRes = await fetch(`${base}/api/live/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientId: 'iphone-test-1',
+      type: 'live_pad',
+      action: 'release',
+      index: 0,
+      cancel: true
+    })
+  });
+  assert.equal(relRes.status, 200);
+  const relData = await relRes.json();
+  assert.ok(!relData.heldPads.includes(0));
+  assert.ok(!relData.activePads.includes(0));
+
+  const quantRes = await fetch(`${base}/api/live/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientId: 'iphone-test-1',
+      type: 'live_pad',
+      action: 'quantize',
+      value: true
+    })
+  });
+  const quantData = await quantRes.json();
+  assert.equal(quantData.quantize, true);
+});
+

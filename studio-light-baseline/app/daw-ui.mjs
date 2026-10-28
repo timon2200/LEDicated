@@ -45,7 +45,14 @@ export function h(tag, props = {}, ...children) {
   for (const [key, value] of Object.entries(props || {})) {
     if (value === undefined || value === null || value === false) continue;
     if (key === 'class') node.className = value;
-    else if (key === 'style') Object.assign(node.style, value);
+    else if (key === 'style') {
+      if (typeof value === 'string') node.style.cssText = value;
+      else for (const [sk, sv] of Object.entries(value)) {
+        if (sv === undefined || sv === null || sv === false) continue;
+        if (sk.startsWith('--') && typeof node.style?.setProperty === 'function') node.style.setProperty(sk, String(sv));
+        node.style[sk] = sv;
+      }
+    }
     else if (key === 'dataset') Object.assign(node.dataset, value);
     else if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2).toLowerCase(), value);
     else if (key in node && key !== 'list' && key !== 'type' && typeof value !== 'object') node[key] = value;

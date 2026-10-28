@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="35%" r="75%">
+      <stop offset="0%" stop-color="#181c2b" />
+      <stop offset="60%" stop-color="#0a0c13" />
+      <stop offset="100%" stop-color="#05060a" />
+    </radialGradient>
+    <linearGradient id="barCyan" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00f2ff" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+    <linearGradient id="barPink" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff2e93" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+    <linearGradient id="barAmber" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffb800" />
+      <stop offset="100%" stop-color="#ff5500" />
+    </linearGradient>
+    <filter id="neon" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bgGlow)" />
+  <rect x="24" y="24" width="464" height="464" rx="96" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3" />
+  <!-- 3x3 LED Bar Matrix -->
+  <g filter="url(#neon)">
+    <rect x="68" y="84" width="110" height="22" rx="11" fill="url(#barCyan)" />
+    <rect x="201" y="84" width="110" height="22" rx="11" fill="#ffffff" />
+    <rect x="334" y="84" width="110" height="22" rx="11" fill="url(#barCyan)" />
+
+    <rect x="68" y="132" width="110" height="22" rx="11" fill="url(#barPink)" />
+    <rect x="201" y="132" width="110" height="22" rx="11" fill="url(#barAmber)" />
+    <rect x="334" y="132" width="110" height="22" rx="11" fill="url(#barPink)" />
+
+    <rect x="68" y="180" width="110" height="22" rx="11" fill="url(#barAmber)" />
+    <rect x="201" y="180" width="110" height="22" rx="11" fill="url(#barCyan)" />
+    <rect x="334" y="180" width="110" height="22" rx="11" fill="url(#barAmber)" />
+  </g>
+  <!-- Tactile Live Pads -->
+  <g>
+    <rect x="68" y="236" width="84" height="84" rx="20" fill="#141926" stroke="#00f2ff" stroke-width="3" />
+    <rect x="166" y="236" width="84" height="84" rx="20" fill="#1e152a" stroke="#ff2e93" stroke-width="3" />
+    <rect x="264" y="236" width="84" height="84" rx="20" fill="#1f1b14" stroke="#ffb800" stroke-width="3" />
+    <rect x="362" y="236" width="82" height="84" rx="20" fill="#142229" stroke="#38bdf8" stroke-width="3" />
+
+    <rect x="68" y="336" width="84" height="84" rx="20" fill="#1d162b" stroke="#a855f7" stroke-width="3" />
+    <rect x="166" y="336" width="84" height="84" rx="20" fill="#00f2ff" fill-opacity="0.22" stroke="#00f2ff" stroke-width="4" />
+    <rect x="264" y="336" width="84" height="84" rx="20" fill="#141824" stroke="#ffffff" stroke-opacity="0.25" stroke-width="2.5" />
+    <rect x="362" y="336" width="82" height="84" rx="20" fill="#23141c" stroke="#ff2e93" stroke-width="3" />
+  </g>
+</svg>

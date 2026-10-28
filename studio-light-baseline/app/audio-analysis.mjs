@@ -6,8 +6,8 @@ import { detectSections } from './audio-sections.mjs';
 
 const execFileAsync = promisify(execFile);
 const SAMPLE_RATE = 11025;
-const FFT_SIZE = 2048;
-const HOP_SIZE = 512;
+const FFT_SIZE = 1024;
+const HOP_SIZE = 128;
 const HOP_SEC = HOP_SIZE / SAMPLE_RATE;
 const WINDOW = Float64Array.from({ length: FFT_SIZE }, (_, n) =>
   0.5 - 0.5 * Math.cos(2 * Math.PI * n / (FFT_SIZE - 1)));
@@ -56,7 +56,14 @@ function normalize(values) {
 
 function estimateBeats(drums, durationSec) {
   if (drums.length < 32 || !drums.some(value => value >= 0.08)) return { bpm: null, beatsSec: [] };
-  const onset = drums.map((value, i) => Math.max(0, value - (drums[i - 1] || 0)));
+  const rawOnset = drums.map((value, i) => Math.max(0, value - (drums[i - 1] || 0)));
+  const onset = rawOnset.map((_, i) => (
+    (rawOnset[i - 2] || 0) * 0.25 +
+    (rawOnset[i - 1] || 0) * 0.6 +
+    rawOnset[i] +
+    (rawOnset[i + 1] || 0) * 0.6 +
+    (rawOnset[i + 2] || 0) * 0.25
+  ));
   const minLag = Math.round(60 / (185 * HOP_SEC));
   const maxLag = Math.round(60 / (70 * HOP_SEC));
   let best = { lag: 0, score: 0 };
@@ -90,7 +97,7 @@ function estimateBeats(drums, durationSec) {
   const maxBpm = Math.min(190, coarseBpm + 8);
   let bestBpm = coarseBpm;
   let maxResonance = -1;
-  const maxI = Math.min(onset.length, 5000);
+  const maxI = Math.min(onset.length, Math.round(240 / HOP_SEC));
 
   for (let bpm = minBpm; bpm <= maxBpm + 1e-5; bpm += 0.05) {
     const period = 60 / bpm;

@@ -13,7 +13,7 @@
     ledicatedTheme: 'midnight',
     ledicatedUseGemini: true,
     ledicatedMaster: 70,
-    ledicatedAutoImport: true,
+    ledicatedAutoImport: false,
     ledicatedServerUrl: 'http://127.0.0.1:8787',
     ledicatedClientId: '',
     ledicatedUserName: ''
@@ -25,6 +25,8 @@
     liveMode: false,
     popoverOpen: false,
     mode: 'idle', // 'idle' | 'live_stream' | 'timeline'
+    outputMode: 'show', // 'show' | 'ambient'
+    pendingTakeover: false,
     track: null,
     importJob: null,
     master: 70,
@@ -83,6 +85,39 @@
     { id: 'mono', label: 'Čisti stroboskop (Mono)' }
   ];
 
+  let trustedHtmlPolicy = null;
+  function setSafeHtml(el, html) {
+    if (!el) return;
+    try {
+      el.innerHTML = html;
+      return;
+    } catch (_) {
+      // Fallback when TrustedHTML is enforced
+    }
+    try {
+      if (!trustedHtmlPolicy && window.trustedTypes && window.trustedTypes.createPolicy) {
+        const policyNames = ['yt-plus-ledicated', 'default'];
+        for (const name of policyNames) {
+          try {
+            trustedHtmlPolicy = window.trustedTypes.createPolicy(name, {
+              createHTML: (s) => s
+            });
+            break;
+          } catch (_) {}
+        }
+      }
+      if (trustedHtmlPolicy) {
+        el.innerHTML = trustedHtmlPolicy.createHTML(html);
+        return;
+      }
+    } catch (_) {}
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      el.replaceChildren(...Array.from(doc.body.childNodes));
+    } catch (_) {}
+  }
+
   function sendRuntimeMessage(message) {
     return new Promise((resolve) => {
       try {
@@ -99,6 +134,38 @@
     });
   }
 
+  const verifiedTitlesByVideoId = new Map();
+  const oembedInFlight = new Map();
+  let lastKnownDomTitle = '';
+  let prevNavVideoId = '';
+  let prevNavVideoTitle = '';
+
+  function fetchOembedTitle(videoId) {
+    if (!videoId) return Promise.resolve('');
+    if (verifiedTitlesByVideoId.has(videoId)) {
+      return Promise.resolve(verifiedTitlesByVideoId.get(videoId));
+    }
+    if (oembedInFlight.has(videoId)) {
+      return oembedInFlight.get(videoId);
+    }
+    const p = fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const t = typeof data?.title === 'string' ? data.title.trim() : '';
+        if (t) {
+          verifiedTitlesByVideoId.set(videoId, t);
+          if (getVideoId() === videoId) updateLedicatedUI();
+        }
+        return t;
+      })
+      .catch(() => '')
+      .finally(() => {
+        oembedInFlight.delete(videoId);
+      });
+    oembedInFlight.set(videoId, p);
+    return p;
+  }
+
   function getVideoId() {
     const urlParams = new URLSearchParams(window.location.search);
     let id = urlParams.get('v');
@@ -109,14 +176,62 @@
   }
 
   function getVideoTitle() {
-    const titleEl = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1.title yt-formatted-string');
-    if (titleEl && titleEl.textContent.trim()) {
-      return titleEl.textContent.trim();
+    const vid = getVideoId();
+    if (vid && verifiedTitlesByVideoId.has(vid)) {
+      return verifiedTitlesByVideoId.get(vid);
     }
-    if (currentVideoData.title && currentVideoData.title !== 'YouTube_Video') {
+    if (vid && currentVideoData.videoId === vid && currentVideoData.title && currentVideoData.isPlayerSynced) {
+      const clean = currentVideoData.title.trim();
+      if (clean && clean !== 'YouTube_Video') {
+        verifiedTitlesByVideoId.set(vid, clean);
+        return clean;
+      }
+    }
+    if (vid) {
+      fetchOembedTitle(vid);
+    }
+    const titleEl = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, #title h1 yt-formatted-string, h1.title yt-formatted-string');
+    const domTitle = titleEl && titleEl.textContent ? titleEl.textContent.trim() : '';
+    if (domTitle) {
+      lastKnownDomTitle = domTitle;
+      // Do not return stale DOM h1 from the previous video right after SPA navigation
+      if (vid && prevNavVideoId && vid !== prevNavVideoId && domTitle === prevNavVideoTitle) {
+        return '';
+      }
+      for (const [otherVid, otherTitle] of verifiedTitlesByVideoId.entries()) {
+        if (vid && otherVid !== vid && otherTitle === domTitle) {
+          return '';
+        }
+      }
+      return domTitle;
+    }
+    if (!vid && currentVideoData.title && currentVideoData.title !== 'YouTube_Video') {
       return currentVideoData.title;
     }
-    return document.title.replace(' - YouTube', '').trim() || 'YouTube_Video';
+    const docTitle = document.title.replace(' - YouTube', '').trim();
+    if (vid && prevNavVideoId && vid !== prevNavVideoId && docTitle === prevNavVideoTitle) {
+      return '';
+    }
+    return docTitle || '';
+  }
+
+  async function resolveAccurateVideoTitle(videoId) {
+    const vid = videoId || getVideoId();
+    if (!vid) return getVideoTitle() || 'YouTube_Video';
+    if (verifiedTitlesByVideoId.has(vid)) {
+      return verifiedTitlesByVideoId.get(vid);
+    }
+    requestPlayerData();
+    if (currentVideoData.videoId === vid && currentVideoData.title && currentVideoData.isPlayerSynced) {
+      const clean = currentVideoData.title.trim();
+      if (clean && clean !== 'YouTube_Video') {
+        verifiedTitlesByVideoId.set(vid, clean);
+        return clean;
+      }
+    }
+    const oembedTitle = await fetchOembedTitle(vid);
+    if (oembedTitle) return oembedTitle;
+    return getVideoTitle() || vid;
   }
 
   function getCleanWatchUrl() {
@@ -137,7 +252,12 @@
   }
 
   window.addEventListener('YT_PLUS_PLAYER_DATA_RESPONSE', function(e) {
-    if (e.detail) currentVideoData = e.detail;
+    if (e.detail) {
+      currentVideoData = e.detail;
+      if (e.detail.videoId && e.detail.title && e.detail.isPlayerSynced && e.detail.title !== 'YouTube_Video') {
+        verifiedTitlesByVideoId.set(e.detail.videoId, e.detail.title.trim());
+      }
+    }
   });
 
   window.addEventListener('YT_PLUS_STEMS_RESPONSE', function(e) {
@@ -203,7 +323,7 @@
 
         const analyser = audioTap.audioCtx.createAnalyser();
         analyser.fftSize = 1024;
-        analyser.smoothingTimeConstant = 0.35;
+        analyser.smoothingTimeConstant = 0.25;
 
         const source = audioTap.audioCtx.createMediaStreamSource(stream);
         source.connect(analyser);
@@ -391,10 +511,14 @@
       if (typeof res.master === 'number') ledicatedState.master = res.master;
       if (typeof res.blackout === 'boolean') ledicatedState.blackout = res.blackout;
       if (typeof res.armed === 'boolean') ledicatedState.armed = res.armed;
+      if (res.outputMode) ledicatedState.outputMode = res.outputMode;
       if (res.theme) ledicatedState.theme = res.theme;
       if (res.mode) ledicatedState.mode = res.mode;
       if (typeof res.isStageOwner === 'boolean') ledicatedState.isStageOwner = res.isStageOwner;
-      if (res.lan) ledicatedState.lan = res.lan;
+      if (res.lan) {
+        ledicatedState.lan = res.lan;
+        if (res.lan.outputMode) ledicatedState.outputMode = res.lan.outputMode;
+      }
     } else {
       ledicatedState.online = false;
     }
@@ -406,15 +530,21 @@
   async function triggerSongImport({ autoTriggered = false } = {}) {
     requestPlayerData();
     const videoId = getVideoId();
-    const title = getVideoTitle();
     const url = getCleanWatchUrl();
 
     if (!videoId && !url.includes('youtube.com/')) {
       return;
     }
 
-    if (autoTriggered && videoId) {
-      ledicatedState.autoImportedVideoIds.add(videoId);
+    if (autoTriggered) {
+      const video = getMainVideoElement();
+      const dur = video && Number.isFinite(video.duration) ? Number(video.duration) : 0;
+      if (dur > 720) {
+        return; // Never auto-download videos longer than 12 minutes
+      }
+      if (videoId) {
+        ledicatedState.autoImportedVideoIds.add(videoId);
+      }
     }
 
     // Turn ON Live Show mode if not already on so lights dance immediately while importing!
@@ -429,6 +559,8 @@
       message: 'Preuzimanje…'
     };
     updateLedicatedUI();
+
+    const title = await resolveAccurateVideoTitle(videoId);
 
     const res = await sendRuntimeMessage({
       action: 'LEDICATED_IMPORT',
@@ -483,21 +615,33 @@
 
     // Detect YouTube SPA video change while Live Mode is active
     if (videoId && videoId !== ledicatedState.lastVideoId) {
+      prevNavVideoId = ledicatedState.lastVideoId || '';
+      prevNavVideoTitle =
+        (prevNavVideoId && verifiedTitlesByVideoId.get(prevNavVideoId)) ||
+        lastKnownDomTitle ||
+        currentVideoData.title ||
+        '';
       ledicatedState.lastVideoId = videoId;
       ledicatedState.track = null;
       ledicatedState.importJob = null;
-      refreshLedicatedStatus().then((statusRes) => {
-        if (
-          ledicatedState.liveMode &&
-          userSettings.ledicatedAutoImport &&
-          statusRes &&
-          statusRes.online &&
-          !statusRes.track &&
-          !statusRes.importJob &&
-          !ledicatedState.autoImportedVideoIds.has(videoId)
-        ) {
-          triggerSongImport({ autoTriggered: true });
-        }
+      currentVideoData = { videoId: '', title: '', isPlayerSynced: false };
+      requestPlayerData();
+      resolveAccurateVideoTitle(videoId).then(() => {
+        if (getVideoId() !== videoId) return;
+        refreshLedicatedStatus().then((statusRes) => {
+          if (
+            getVideoId() === videoId &&
+            ledicatedState.liveMode &&
+            userSettings.ledicatedAutoImport &&
+            statusRes &&
+            statusRes.online &&
+            !statusRes.track &&
+            !statusRes.importJob &&
+            !ledicatedState.autoImportedVideoIds.has(videoId)
+          ) {
+            triggerSongImport({ autoTriggered: true });
+          }
+        });
       });
     }
 
@@ -511,12 +655,15 @@
 
     if (
       paused &&
+      !ledicatedState.pendingTakeover &&
       ledicatedState.lastSentPaused === true &&
       Math.abs(currentTime - (ledicatedState.lastSentTime || 0)) < 0.08 &&
       videoId === ledicatedState.lastSentVideoId
     ) {
       return;
     }
+    const sendTakeover = Boolean(ledicatedState.pendingTakeover);
+    ledicatedState.pendingTakeover = false;
     ledicatedState.lastSentPaused = paused;
     ledicatedState.lastSentTime = currentTime;
     ledicatedState.lastSentVideoId = videoId;
@@ -534,6 +681,7 @@
           paused,
           playbackRate,
           liveMode: true,
+          takeover: sendTakeover,
           theme: ledicatedState.theme,
           stems
         }
@@ -542,16 +690,21 @@
       if (res && res.online) {
         const prevTrack = ledicatedState.track;
         const prevOwner = ledicatedState.isStageOwner;
+        const prevMode = ledicatedState.outputMode;
         ledicatedState.online = true;
         if (res.mode) ledicatedState.mode = res.mode;
+        if (res.outputMode) ledicatedState.outputMode = res.outputMode;
         if (res.track !== undefined) ledicatedState.track = res.track;
         if (res.importJob !== undefined) ledicatedState.importJob = res.importJob;
         if (typeof res.armed === 'boolean') ledicatedState.armed = res.armed;
         if (typeof res.blackout === 'boolean') ledicatedState.blackout = res.blackout;
         if (typeof res.isStageOwner === 'boolean') ledicatedState.isStageOwner = res.isStageOwner;
-        if (res.lan) ledicatedState.lan = res.lan;
+        if (res.lan) {
+          ledicatedState.lan = res.lan;
+          if (res.lan.outputMode) ledicatedState.outputMode = res.lan.outputMode;
+        }
 
-        if ((!prevTrack && ledicatedState.track) || prevOwner !== ledicatedState.isStageOwner || ledicatedState.popoverOpen) {
+        if ((!prevTrack && ledicatedState.track) || prevOwner !== ledicatedState.isStageOwner || prevMode !== ledicatedState.outputMode || ledicatedState.popoverOpen) {
           updateLedicatedUI();
         }
       } else {
@@ -578,10 +731,15 @@
       const video = getMainVideoElement();
       if (video) ensureAudioTap(video);
       ledicatedState.lastVideoId = getVideoId();
+      ledicatedState.outputMode = 'show';
+      ledicatedState.armed = true;
+      ledicatedState.pendingTakeover = true;
 
-      // Start 20 Hz (50ms) real-time sync loop immediately
+      sendControlUpdate({ claimStage: true, armed: true, takeover: true, outputMode: 'show' }, true);
+
+      // Start 40 Hz (25ms) real-time sync loop immediately (server interpolates DDP at 60+ Hz)
       sendSyncTick();
-      ledicatedState.syncTimer = setInterval(sendSyncTick, 50);
+      ledicatedState.syncTimer = setInterval(sendSyncTick, 25);
 
       // Poll status every 1.5s to track background stem split / show creation
       ledicatedState.statusTimer = setInterval(refreshLedicatedStatus, 1500);
@@ -649,10 +807,14 @@
         if (typeof res.master === 'number') ledicatedState.master = res.master;
         if (typeof res.blackout === 'boolean') ledicatedState.blackout = res.blackout;
         if (typeof res.armed === 'boolean') ledicatedState.armed = res.armed;
+        if (res.outputMode) ledicatedState.outputMode = res.outputMode;
         if (res.theme) ledicatedState.theme = res.theme;
         if (res.track) ledicatedState.track = res.track;
         if (typeof res.isStageOwner === 'boolean') ledicatedState.isStageOwner = res.isStageOwner;
-        if (res.lan) ledicatedState.lan = res.lan;
+        if (res.lan) {
+          ledicatedState.lan = res.lan;
+          if (res.lan.outputMode) ledicatedState.outputMode = res.lan.outputMode;
+        }
         updateLedicatedUI();
       }
     };
@@ -675,7 +837,7 @@
     bar.className = 'yt-plus-bar';
     bar.id = 'yt-plus-share-section';
 
-    bar.innerHTML = `
+    setSafeHtml(bar, `
       <!-- Video MP4 Chip -->
       <div class="yt-plus-group">
         <button class="yt-plus-btn" id="yt-plus-btn-video" type="button" title="Download MP4 Video">
@@ -718,7 +880,7 @@
 
       <!-- Minimal Status Message -->
       <div class="yt-plus-status" id="yt-plus-status" style="display: none;"></div>
-    `;
+    `);
 
     const vBtn = bar.querySelector('#yt-plus-btn-video');
     const aBtn = bar.querySelector('#yt-plus-btn-audio');
@@ -763,7 +925,7 @@
         if (!res || !res.success || !res.job) {
           clearInterval(pollInterval);
           btnElement.disabled = false;
-          btnElement.innerHTML = origHtml;
+          setSafeHtml(btnElement, origHtml);
           return;
         }
 
@@ -775,9 +937,9 @@
           } else if (job.status === 'finished') {
             clearInterval(pollInterval);
             btnElement.disabled = false;
-            btnElement.innerHTML = origHtml;
+            setSafeHtml(btnElement, origHtml);
             statusEl.className = 'yt-plus-status is-success';
-            statusEl.innerHTML = `${SVG_CHECK} Saved to Downloads! <a href="#" id="yt-plus-open-folder" style="color:#3ea6ff;margin-left:6px;text-decoration:underline;">Open Folder</a>`;
+            setSafeHtml(statusEl, `${SVG_CHECK} Saved to Downloads! <a href="#" id="yt-plus-open-folder" style="color:#3ea6ff;margin-left:6px;text-decoration:underline;">Open Folder</a>`);
 
             const openFolderBtn = document.getElementById('yt-plus-open-folder');
             if (openFolderBtn) {
@@ -789,7 +951,7 @@
           } else if (job.status === 'error') {
             clearInterval(pollInterval);
             btnElement.disabled = false;
-            btnElement.innerHTML = origHtml;
+            setSafeHtml(btnElement, origHtml);
             statusEl.className = 'yt-plus-status is-error';
             statusEl.textContent = job.error || 'Download failed';
           }
@@ -805,7 +967,7 @@
     const origHtml = btnElement.innerHTML;
 
     btnElement.disabled = true;
-    btnElement.innerHTML = `<span class="yt-plus-spinner"></span> <span>${type.toUpperCase()}</span>`;
+    setSafeHtml(btnElement, `<span class="yt-plus-spinner"></span> <span>${type.toUpperCase()}</span>`);
 
     if (statusEl) {
       statusEl.style.display = 'inline-flex';
@@ -814,7 +976,7 @@
     }
 
     const videoId = getVideoId();
-    const title = getVideoTitle();
+    const title = await resolveAccurateVideoTitle(videoId);
     const cleanUrl = getCleanWatchUrl();
 
     chrome.runtime.sendMessage({
@@ -831,7 +993,7 @@
         pollJobProgress(res.jobId, btnElement, origHtml, type);
       } else {
         btnElement.disabled = false;
-        btnElement.innerHTML = origHtml;
+        setSafeHtml(btnElement, origHtml);
         if (statusEl) {
           statusEl.className = 'yt-plus-status is-error';
           statusEl.textContent = res?.error || 'Companion server offline';
@@ -879,7 +1041,7 @@
       (t) => `<option value="${t.id}">${t.label}</option>`
     ).join('');
 
-    popover.innerHTML = `
+    setSafeHtml(popover, `
       <div class="yt-led-header">
         <div class="yt-led-brand">
           <span class="yt-led-matrix-icon" aria-hidden="true">
@@ -908,7 +1070,7 @@
       <div class="yt-led-primary-row">
         <div class="yt-led-primary-info">
           <span class="yt-led-primary-title">Uživo svjetlo / Sync</span>
-          <span class="yt-led-primary-desc" id="yt-ledicated-mode-sub">Instant 20 Hz audio-reaktivni stream + sinkronizacija</span>
+          <span class="yt-led-primary-desc" id="yt-ledicated-mode-sub">Instant 60 Hz audio-reaktivni stream + sinkronizacija</span>
         </div>
         <label class="yt-led-switch" title="Uključi ili isključi Light Show">
           <input type="checkbox" id="yt-ledicated-live-toggle">
@@ -1012,7 +1174,7 @@
           Otvori Studio ↗
         </a>
       </div>
-    `;
+    `);
 
     document.body.appendChild(popover);
 
@@ -1027,11 +1189,21 @@
       stageBtn.addEventListener('click', () => {
         const lan = ledicatedState.lan;
         const myId = userSettings.ledicatedClientId;
-        const iHoldStage = Boolean(lan && lan.stageOwnerId && myId && lan.stageOwnerId === myId && !lan.isRemoteStageOwner);
+        const isAmbient = ledicatedState.outputMode === 'ambient' || lan?.outputMode === 'ambient';
+        const iHoldStage = Boolean(!isAmbient && ledicatedState.armed && lan && lan.stageOwnerId && myId && lan.stageOwnerId === myId && !lan.isRemoteStageOwner);
         if (iHoldStage) {
           sendControlUpdate({ releaseStage: true }, true);
         } else {
-          sendControlUpdate({ claimStage: true }, true);
+          ledicatedState.outputMode = 'show';
+          ledicatedState.armed = true;
+          ledicatedState.pendingTakeover = true;
+          if (!ledicatedState.liveMode) {
+            setLiveShowMode(true);
+          } else {
+            sendControlUpdate({ claimStage: true, armed: true, takeover: true, outputMode: 'show' }, true);
+            sendSyncTick();
+          }
+          updateLedicatedUI();
         }
       });
     }
@@ -1260,9 +1432,10 @@
   function updateLedicatedUI() {
     const lan = ledicatedState.lan;
     const myId = userSettings.ledicatedClientId;
-    const iHoldStage = Boolean(lan && lan.stageOwnerId && myId && lan.stageOwnerId === myId && !lan.isRemoteStageOwner);
-    const stageIsFree = !lan || (!lan.stageOwnerId && !lan.isRemoteStageOwner);
-    const canDrive = ledicatedState.isStageOwner !== false;
+    const isAmbient = ledicatedState.outputMode === 'ambient' || lan?.outputMode === 'ambient';
+    const iHoldStage = Boolean(!isAmbient && ledicatedState.armed && lan && lan.stageOwnerId && myId && lan.stageOwnerId === myId && !lan.isRemoteStageOwner);
+    const stageIsFree = !isAmbient && (!lan || (!lan.stageOwnerId && !lan.isRemoteStageOwner));
+    const canDrive = !isAmbient && ledicatedState.isStageOwner !== false;
 
     const isSyncedWithDb = Boolean(
       ledicatedState.liveMode &&
@@ -1274,12 +1447,14 @@
     // 1. Watch Bar Button (#yt-ledicated-btn)
     const watchBtn = document.getElementById('yt-ledicated-btn');
     if (watchBtn) {
-      watchBtn.classList.toggle('is-streaming', isLiveStreaming && canDrive);
-      watchBtn.classList.toggle('is-synced', isSyncedWithDb && canDrive);
-      watchBtn.classList.toggle('is-solo', Boolean(ledicatedState.liveMode && !canDrive));
+      watchBtn.classList.toggle('is-streaming', isLiveStreaming && canDrive && ledicatedState.armed);
+      watchBtn.classList.toggle('is-synced', isSyncedWithDb && canDrive && ledicatedState.armed);
+      watchBtn.classList.toggle('is-solo', Boolean(ledicatedState.liveMode && (!canDrive || isAmbient || !ledicatedState.armed)));
       const labelEl = watchBtn.querySelector('.yt-ledicated-btn-label');
       if (labelEl) {
-        if (ledicatedState.liveMode && !canDrive) {
+        if (ledicatedState.liveMode && isAmbient) {
+          labelEl.textContent = '💡 Menu Bar · Preuzmi';
+        } else if (ledicatedState.liveMode && !canDrive) {
           const ownerName = lan?.stageOwnerName || 'Kolega';
           labelEl.textContent = `Solo (${ownerName})`;
         } else if (isSyncedWithDb) {
@@ -1314,6 +1489,15 @@
         stageBadge.textContent = '⚪ SERVER OFFLINE';
         stageBtn.style.display = 'none';
         stageNow.textContent = 'Pokreni LEDicated Studio ili provjeri IP adresu servera.';
+      } else if (isAmbient || (!ledicatedState.armed && ledicatedState.liveMode)) {
+        stageCard.classList.add('is-solo');
+        stageBadge.textContent = isAmbient ? '💡 MENU BAR (UREDSKA RASVJETA)' : '⚪ WLED IZLAZ PAUZIRAN';
+        stageBtn.style.display = 'inline-flex';
+        stageBtn.textContent = '⚡ Preuzmi kontrolu (Show)';
+        stageBtn.className = 'yt-led-stage-btn is-claim';
+        stageNow.textContent = isAmbient
+          ? 'Menu Bar drži statično svjetlo na E8. Klikni Preuzmi kontrolu za povratak Light Showa na zid.'
+          : 'Klikni Preuzmi kontrolu kako bi YouTube Light Show preuzeo 3×3 LED zid.';
       } else if (iHoldStage) {
         stageCard.classList.add(lan?.stageState === 'grace' ? 'is-grace' : 'is-owner');
         stageBadge.textContent = lan?.stageState === 'grace'
@@ -1327,9 +1511,9 @@
         stageCard.classList.add('is-idle');
         stageBadge.textContent = '⚪ STAGE SLOBODAN';
         stageBtn.style.display = 'inline-flex';
-        stageBtn.textContent = '⚡ Preuzmi Stage';
+        stageBtn.textContent = '⚡ Preuzmi kontrolu (Show)';
         stageBtn.className = 'yt-led-stage-btn is-claim';
-        stageNow.textContent = 'Uključi Uživo svjetlo za automatsko preuzimanje zida.';
+        stageNow.textContent = 'Klikni Preuzmi kontrolu ili uključi Uživo svjetlo za izlaz na zid.';
       } else {
         stageCard.classList.add('is-solo');
         const ownerName = lan?.stageOwnerName || np?.ownerName || 'Kolega';
@@ -1337,12 +1521,12 @@
           ? `🎧 SOLO · 🟡 ${ownerName} (${lan.graceRemainingSec || 20}s)`
           : `🎧 SOLO · 🟢 Na stageu: ${ownerName}`;
         stageBtn.style.display = 'inline-flex';
-        stageBtn.textContent = '⚡ Preuzmi Stage';
+        stageBtn.textContent = '⚡ Preuzmi kontrolu (Show)';
         stageBtn.className = 'yt-led-stage-btn is-claim';
         const srcTag = np?.source === 'youtube' ? 'YouTube' : 'DAW';
         stageNow.textContent = np?.trackTitle
           ? `${np.isPlaying ? '▶' : '⏸'} ${np.trackTitle} (${srcTag})`
-          : `Zid trenutno drži ${ownerName}. Klikni Preuzmi Stage za prebacivanje na sebe.`;
+          : `Zid trenutno drži ${ownerName}. Klikni Preuzmi kontrolu za prebacivanje na sebe.`;
       }
     }
 
@@ -1386,7 +1570,7 @@
       } else if (isLiveStreaming) {
         modeSub.textContent = 'Uživo 4-stem stream aktivan (fallback dok se show sprema)';
       } else {
-        modeSub.textContent = 'Instant 20 Hz audio-reaktivni stream + sinkronizacija';
+        modeSub.textContent = 'Instant 60 Hz audio-reaktivni stream + sinkronizacija';
       }
     }
 
@@ -1476,55 +1660,96 @@
     }
   }
 
+  // Resolve the visible watch-page action menu (never playlist/comment/card menus)
+  function findWatchActionMenu() {
+    const selectors = [
+      'ytd-watch-metadata #actions-inner #top-level-buttons-computed',
+      'ytd-watch-metadata #actions #top-level-buttons-computed',
+      'ytd-watch-metadata #top-level-buttons-computed',
+      'ytd-watch-flexy #info-contents ytd-video-primary-info-renderer #top-level-buttons-computed',
+      'ytd-watch-metadata #actions-inner ytd-menu-renderer'
+    ];
+
+    let fallback = null;
+    for (const sel of selectors) {
+      const nodes = document.querySelectorAll(sel);
+      for (const node of nodes) {
+        if (
+          node.closest(
+            'ytd-playlist-panel-renderer, ytd-comment-thread-renderer, ytd-engagement-panel-section-list-renderer, ytd-rich-grid-media, ytd-compact-video-renderer'
+          )
+        ) {
+          continue;
+        }
+        const rect = node.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          return node;
+        }
+        if (!fallback && node.closest('ytd-watch-metadata')) {
+          fallback = node;
+        }
+      }
+    }
+    return fallback;
+  }
+
   // Quick Action Buttons on Watch Page (#yt-plus-quick-button & #yt-ledicated-btn)
   function injectQuickButton() {
-    const actionMenu = document.querySelector(
-      'ytd-watch-metadata #top-level-buttons-computed, #top-level-buttons-computed'
-    );
+    const actionMenu = findWatchActionMenu();
     if (!actionMenu) return;
 
     // 1. Existing YouTube Plus Download button
-    if (userSettings.showQuickButton && !document.getElementById('yt-plus-quick-button')) {
-      const btn = document.createElement('button');
-      btn.id = 'yt-plus-quick-button';
-      btn.className = 'yt-plus-quick-action-btn';
-      btn.type = 'button';
-      btn.title = 'Download Video / Audio';
-      btn.innerHTML = `
-        <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
-        <span>Download</span>
-      `;
+    let quickBtn = document.getElementById('yt-plus-quick-button');
+    if (userSettings.showQuickButton) {
+      if (!quickBtn) {
+        quickBtn = document.createElement('button');
+        quickBtn.id = 'yt-plus-quick-button';
+        quickBtn.className = 'yt-plus-quick-action-btn';
+        quickBtn.type = 'button';
+        quickBtn.title = 'Download Video / Audio';
+        setSafeHtml(quickBtn, `
+          <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+          <span>Download</span>
+        `);
 
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const shareBtn = Array.from(actionMenu.querySelectorAll('button, yt-button-shape')).find((b) => {
-          const t = b.textContent?.toLowerCase() || '';
-          const l = b.getAttribute('aria-label')?.toLowerCase() || '';
-          return t.includes('share') || l.includes('share') || t.includes('podijeli') || l.includes('podijeli');
+        quickBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const currentMenu = findWatchActionMenu() || actionMenu;
+          const shareContainer = currentMenu.closest('ytd-menu-renderer, #actions-inner, ytd-watch-metadata') || currentMenu;
+          const shareBtn = Array.from(shareContainer.querySelectorAll('button, yt-button-shape')).find((b) => {
+            if (b.id === 'yt-plus-quick-button' || b.id === 'yt-ledicated-btn') return false;
+            const t = b.textContent?.toLowerCase() || '';
+            const l = b.getAttribute('aria-label')?.toLowerCase() || '';
+            return t.includes('share') || l.includes('share') || t.includes('podijeli') || l.includes('podijeli');
+          });
+          if (shareBtn) {
+            const clickable = shareBtn.tagName === 'BUTTON' ? shareBtn : (shareBtn.querySelector('button') || shareBtn);
+            clickable.click();
+          } else {
+            startDownloadProcess('mp4', userSettings.defaultVideoQuality || '1080', quickBtn);
+          }
         });
-        if (shareBtn) {
-          shareBtn.click();
-        } else {
-          startDownloadProcess('mp4', userSettings.defaultVideoQuality || '1080', btn);
-        }
-      });
+      }
 
-      actionMenu.appendChild(btn);
+      if (quickBtn.parentNode !== actionMenu) {
+        actionMenu.appendChild(quickBtn);
+      }
     }
 
     // 2. LEDicated Light Show button (#yt-ledicated-btn) right next to #yt-plus-quick-button
-    if (!document.getElementById('yt-ledicated-btn')) {
-      const ledBtn = document.createElement('button');
+    let ledBtn = document.getElementById('yt-ledicated-btn');
+    if (!ledBtn) {
+      ledBtn = document.createElement('button');
       ledBtn.id = 'yt-ledicated-btn';
       ledBtn.className = 'yt-plus-quick-action-btn yt-ledicated-btn';
       ledBtn.type = 'button';
       ledBtn.title = 'LEDicated Studio — Uživo Light Show & Sinkronizacija';
-      ledBtn.innerHTML = `
+      setSafeHtml(ledBtn, `
         <span class="yt-ledicated-dot"></span>
         ${SVG_LIGHTSHOW}
         <span class="yt-ledicated-btn-label">Light Show</span>
-      `;
+      `);
 
       ledBtn.addEventListener('click', (e) => {
         e.preventDefault();
@@ -1532,14 +1757,14 @@
         ensureLedicatedPopover();
         toggleLedicatedPopover();
       });
+    }
 
-      const quickBtn = document.getElementById('yt-plus-quick-button');
+    if (ledBtn.parentNode !== actionMenu) {
       if (quickBtn && quickBtn.parentNode === actionMenu) {
         quickBtn.insertAdjacentElement('afterend', ledBtn);
       } else {
         actionMenu.appendChild(ledBtn);
       }
-
       ensureLedicatedPopover();
       updateLedicatedUI();
     }
@@ -1586,6 +1811,7 @@
 
   window.addEventListener('yt-navigate-finish', () => {
     requestPlayerData();
+    injectQuickButton();
     setTimeout(() => {
       injectQuickButton();
       injectIntoShareModal();
@@ -1593,6 +1819,11 @@
     }, 300);
   });
 
+  window.addEventListener('yt-page-data-updated', () => {
+    injectQuickButton();
+  });
+
   injectPageScript();
   loadSettings();
+  injectQuickButton();
 })();

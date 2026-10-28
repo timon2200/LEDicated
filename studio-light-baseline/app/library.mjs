@@ -279,11 +279,17 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
   function updateTrack(id, patch) {
     return serialized(async () => {
       const track = trackById(id);
-      if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).some(key => !['title', 'author'].includes(key))) throw new Error('Dopušteno je mijenjati samo naslov pjesme.');
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).some(key => !['title', 'author', 'videoId', 'sourceUrl'].includes(key))) throw new Error('Dopušteno je mijenjati samo naslov pjesme.');
+      const nextTitle = patch.title !== undefined ? label(patch.title, 'naziv pjesme') : undefined;
+      const nextOriginalName = nextTitle !== undefined
+        ? `${nextTitle.replace(/[\\/\x00-\x1f\x7f]+/g, ' ').trim()}${track.extension || '.mp3'}`
+        : undefined;
       const nextTrack = {
         ...track,
-        ...(patch.title !== undefined ? { title: label(patch.title, 'naziv pjesme') } : {}),
+        ...(nextTitle !== undefined ? { title: nextTitle, originalName: nextOriginalName } : {}),
         ...(typeof patch.author === 'string' ? { author: patch.author.trim().slice(0, 80) } : {}),
+        ...(typeof patch.videoId === 'string' && patch.videoId.trim() ? { videoId: patch.videoId.trim() } : {}),
+        ...(typeof patch.sourceUrl === 'string' && patch.sourceUrl.trim() ? { sourceUrl: patch.sourceUrl.trim() } : {}),
         updatedAt: new Date().toISOString()
       };
       await commit({ ...index, tracks: index.tracks.map(item => item.id === id ? nextTrack : item) });

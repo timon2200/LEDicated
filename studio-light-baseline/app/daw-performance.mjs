@@ -59,7 +59,10 @@ export function createPerformancePanel(host, ctx) {
   }
   const desk = createPerformance(Array.isArray(saved) ? saved : DEFAULT_PADS);
   let selected = 0, lastPaint = 0, lastPads = '', lastTrack = null, effectPickerOpen = false;
-  const save = () => { try { localStorage.setItem(STORAGE, JSON.stringify(desk.pads)); } catch { toast('Postavke padova nije moguće spremiti.', 'error'); } };
+  const save = (fromRemote = false) => {
+    try { localStorage.setItem(STORAGE, JSON.stringify(desk.pads)); } catch { toast('Postavke padova nije moguće spremiti.', 'error'); }
+    if (!fromRemote) ctx.onPadsChange?.(desk.pads, desk.quantize);
+  };
   const title = h('strong', { class: 'pf-track' }, 'Odaberi pjesmu');
   const section = h('span', { class: 'pf-section' }, 'Dionice čekaju analizu');
   const next = h('span', { class: 'pf-next' }, 'Sljedeća dionica');
@@ -69,8 +72,15 @@ export function createPerformancePanel(host, ctx) {
   const feedback = h('div', { class: 'pf-feedback', role: 'status', 'aria-live': 'polite' }, 'Kratko = okini / uključi. Drži = svira do otpuštanja. ⠿ premješta pad.');
   const pads = h('div', { class: 'pf-pads', role: 'group', 'aria-label': 'Mreža izvedbenih padova' });
   const inspector = h('div', { class: 'pf-inspector' });
+  function setQuantize(value, { fromRemote = false } = {}) {
+    desk.setQuantize(Boolean(value));
+    quant.classList.toggle('on', desk.quantize);
+    quant.setAttribute('aria-pressed', String(desk.quantize));
+    quant.textContent = desk.quantize ? '● Beat sync' : '○ Odmah';
+    if (!fromRemote) ctx.onPadsChange?.(desk.pads, desk.quantize);
+  }
   const quant = h('button', { type: 'button', class: 'pf-quant', title: 'Pad počinje na idućem beatu tijekom reprodukcije', 'aria-pressed': 'false', onClick: () => {
-    desk.setQuantize(!desk.quantize); quant.classList.toggle('on', desk.quantize); quant.setAttribute('aria-pressed', String(desk.quantize)); quant.textContent = desk.quantize ? '● Beat sync' : '○ Odmah';
+    setQuantize(!desk.quantize);
   } }, '○ Odmah');
   const stopAll = h('button', { type: 'button', class: 'pf-stop', title: 'Ugasi izvedbene efekte; spremljeni show ostaje', onClick: () => { desk.clear(); paintPads(); feedback.textContent = 'Svi izvedbeni efekti ugašeni.'; ctx.status('Izvedbeni efekti ugašeni.'); } }, 'Stop FX');
   const recSessionBtn = h('button', {
@@ -248,7 +258,7 @@ export function createPerformancePanel(host, ctx) {
     const before = [...pads.children].map(cell => ({ active: cell.classList.contains('active'), queued: cell.classList.contains('queued'), label: cell.getAttribute('aria-label'), targets: cell.dataset.targets }));
     pads.replaceChildren(...desk.pads.map((pad, index) => {
       const state = desk.pending.has(index) ? 'queued' : desk.active.has(index) ? 'active' : '';
-      const cell = h('div', { class: `pf-cell pf-pad ${pad ? '' : 'empty '}${state}${desk.held.has(index) ? ' held' : ''}${selected === index ? ' selected' : ''}`,
+      const cell = h('div', { class: `pf-cell pf-pad ${pad ? `${pad.mode} ` : 'empty '}${state}${desk.held.has(index) ? ' held' : ''}${selected === index ? ' selected' : ''}`,
         role: 'button', tabIndex: 0, dataset: { index, targets: pad ? (pad.targets === 'all' ? 'all' : pad.targets.join(',')) : 'empty' }, style: { '--pad-color': pad ? rgbHex(pad.color) : '#52728e' },
         'aria-label': pad ? `${PAD_KEYS[index].toUpperCase()} ${PRESET_LABELS[pad.preset]} ${pad.mode === 'hit' ? 'udar' : 'petlja'}${desk.held.has(index) ? ' pritisnut' : ''}` : `${PAD_KEYS[index].toUpperCase()} prazno polje`,
         'aria-pressed': String(desk.active.has(index)),
@@ -266,7 +276,7 @@ export function createPerformancePanel(host, ctx) {
         onDragLeave: () => cell.classList.remove('drop'),
         onDrop: e => { e.preventDefault(); cell.classList.remove('drop'); assignPreset(e.dataTransfer.getData('application/x-ledicated-preset'), index); }
       },
-      h('span', { class: 'pf-pad-top' }, h('kbd', {}, PAD_KEYS[index].toUpperCase()), h('span', { class: `pf-pad-state ${pad?.mode || ''}`, title: pad ? (desk.held.has(index) ? 'Drži · prestaje pri otpuštanju' : state === 'queued' ? 'Čeka beat' : state === 'active' ? 'Aktivan efekt' : pad.mode === 'hit' ? 'Udar · svira jednom' : 'Petlja · klik pali/gasi') : 'Slobodno mjesto', 'aria-label': pad ? (pad.mode === 'hit' ? 'Udar' : 'Petlja') : 'Slobodno' }, pad ? (desk.held.has(index) ? '●' : state === 'queued' ? '◌' : pad.mode === 'hit' ? '✦' : '↻') : '·')),
+      h('span', { class: 'pf-pad-top' }, h('kbd', {}, PAD_KEYS[index].toUpperCase()), h('span', { class: `pf-pad-state ${pad?.mode || ''}`, title: pad ? (desk.held.has(index) ? 'Drži · prestaje pri otpuštanju' : state === 'queued' ? 'Čeka beat' : state === 'active' ? 'Aktivan efekt' : pad.mode === 'hit' ? 'Udar · svira jednom' : 'Petlja · klik pali/gasi') : 'Slobodno mjesto', 'aria-label': pad ? (pad.mode === 'hit' ? 'Udar' : 'Petlja') : 'Slobodno' }, pad ? (desk.held.has(index) ? '●' : state === 'queued' ? '◌' : state === 'active' ? (pad.mode === 'loop' ? '↻ ON' : '✦ ON') : pad.mode === 'hit' ? '✦' : '↻') : '·')),
       h('span', { class: 'pf-pad-glyph', 'aria-hidden': 'true' }, pad ? GLYPHS[pad.preset] || '✦' : '+'),
       h('span', { class: 'pf-pad-bottom' }, h('strong', {}, pad ? PRESET_LABELS[pad.preset] || pad.preset : 'Prazno'),
         pad ? h('span', { class: 'pf-pad-zone', 'aria-hidden': 'true', title: 'Odabrani barovi' }, ...BAR_IDS.map(id => h('i', { class: pad.targets === 'all' || pad.targets.includes(id) ? 'on' : '' }))) : null),
@@ -296,11 +306,12 @@ export function createPerformancePanel(host, ctx) {
       const newlyPressed = pressed && !cell.classList.contains('held');
       const newlyActive = active && !cell.classList.contains('active');
       cell.classList.toggle('active', active); cell.classList.toggle('queued', queued); cell.classList.toggle('held', pressed);
+      cell.classList.toggle('loop', pad?.mode === 'loop'); cell.classList.toggle('hit', pad?.mode === 'hit');
       cell.setAttribute('aria-pressed', String(active));
       if (pad) {
         cell.setAttribute('aria-label', `${PAD_KEYS[index].toUpperCase()} ${PRESET_LABELS[pad.preset]} ${pad.mode === 'hit' ? 'udar' : 'petlja'}${pressed ? ' pritisnut' : ''}`);
         const badge = cell.querySelector('.pf-pad-state');
-        badge.textContent = pressed ? '●' : queued ? '◌' : pad.mode === 'hit' ? '✦' : '↻';
+        badge.textContent = pressed ? '●' : queued ? '◌' : active ? (pad.mode === 'loop' ? '↻ ON' : '✦ ON') : pad.mode === 'hit' ? '✦' : '↻';
         badge.title = pressed ? 'Drži · prestaje pri otpuštanju' : queued ? 'Čeka beat' : active ? 'Aktivan efekt' : pad.mode === 'hit' ? 'Udar · svira jednom' : 'Petlja · klik pali/gasi';
       }
       if ((newlyPressed || newlyActive) && !reducedMotion()) cell.animate([
@@ -764,6 +775,47 @@ export function createPerformancePanel(host, ctx) {
     recSessionBtn.setAttribute('aria-pressed', String(Boolean(isArm || isRec)));
     recSessionBtn.textContent = isRec ? '● SNIMA SE' : isArm ? '● REC SPREMAN' : '● REC';
   }
+  function setPadConfig(index, patch, { fromRemote = false } = {}) {
+    if (!desk.setPad(index, patch)) return false;
+    ctx.recorder?.onPadChange(index, desk.pads[index], ctx.songTime());
+    save(fromRemote);
+    paintPads();
+    if (selected === index) renderInspector({ keepScroll: true });
+    return true;
+  }
+  function removePadConfig(index, { fromRemote = false } = {}) {
+    if (!desk.removePad(index)) return false;
+    save(fromRemote);
+    paintPads();
+    if (selected === index) renderInspector();
+    return true;
+  }
+  function movePadConfig(from, to, { fromRemote = false } = {}) {
+    if (!desk.movePad(from, to)) return false;
+    save(fromRemote);
+    paintPads();
+    renderInspector({ keepScroll: true });
+    return true;
+  }
+  function syncRemotePads(remotePads, remoteQuantize) {
+    if (Array.isArray(remotePads) && remotePads.length === 12) {
+      for (let i = 0; i < 12; i++) {
+        if (remotePads[i] === null) desk.removePad(i);
+        else desk.setPad(i, remotePads[i]);
+      }
+      save(true);
+    }
+    if (typeof remoteQuantize === 'boolean') {
+      setQuantize(remoteQuantize, { fromRemote: true });
+    }
+    paintPads();
+    renderInspector({ keepScroll: true });
+  }
   paintPads(); renderInspector();
-  return { desk, tick, trigger, press, release, releaseAll, assignPreset, syncRecState, clear: () => { desk.clear(); syncPadStates(); feedback.textContent = 'Izvedbeni efekti ugašeni.'; }, render: (base, clockTime, bpm, scale, analysis, songTime) => desk.render(base, clockTime, bpm, scale, analysis, songTime) };
+  return {
+    desk, tick, trigger, press, release, releaseAll, assignPreset, syncRecState,
+    setPadConfig, removePadConfig, movePadConfig, setQuantize, syncRemotePads,
+    clear: () => { desk.clear(); syncPadStates(); feedback.textContent = 'Izvedbeni efekti ugašeni.'; },
+    render: (base, clockTime, bpm, scale, analysis, songTime) => desk.render(base, clockTime, bpm, scale, analysis, songTime)
+  };
 }

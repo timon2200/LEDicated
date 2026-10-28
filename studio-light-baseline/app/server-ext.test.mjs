@@ -141,8 +141,8 @@ test('POST /api/ext/sync handles live_stream 4-stem fallback (including headless
   assert.equal(liveSync.data.mode, 'live_stream');
   assert.equal(liveSync.data.trackId, null);
 
-  await new Promise(done => setTimeout(done, 25));
-  assert.ok(packets.length >= 1, 'Expected server to send live 4-stem DDP frame when armed with 0 browser clients');
+  await new Promise(done => setTimeout(done, 180));
+  assert.ok(packets.length >= 8, `Expected server high-rate 60Hz loop to send >=8 DDP frames in 180ms, got ${packets.length}`);
   assert.ok(packets[0].subarray(10).some(v => v > 0), 'Expected non-zero RGBW channels in live stem frame');
 
   // Now add track to library and verify Case A: synced database mode

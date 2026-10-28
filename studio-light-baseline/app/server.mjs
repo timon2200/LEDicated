@@ -2,7 +2,7 @@ import http from 'node:http';
 import dgram from 'node:dgram';
 import { randomUUID } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname as osHostname, networkInterfaces, tmpdir } from 'node:os';
 import { basename, dirname, resolve, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,8 +13,10 @@ import { createAutoShow, validateTimeline, renderTimelineFrame, SHOW_THEMES, PAL
 import { createDirectedShow } from './gemini-director.mjs';
 import { mapBarPixels } from './mapping.mjs';
 import { BAR_IDS, HARDWARE_PROFILES, hardwareProfile, routesForNode } from './hardware-topology.mjs';
+import { PIXELS_PER_BAR } from './engine.mjs';
 import { discoverWled, normalizeMac } from './wled-discovery.mjs';
 import { applyTimelineOp } from './daw-remote.mjs';
+import { createPerformance, DEFAULT_PADS, PAD_KEYS } from './live-performance-state.mjs';
 import { createLanCoordinator, DEFAULT_LAN_BUS_PORT } from './lan-coordinator.mjs';
 import {
   sanitizeFilename,
@@ -63,10 +65,43 @@ function renderLiveStemFrame(stems = {}, timeSec = 0, themeId = 'midnight', paus
   return { bars };
 }
 
+async function fetchYouTubeOembedMeta(videoId, targetUrl) {
+  const watchUrl = videoId
+    ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`
+    : (typeof targetUrl === 'string' && targetUrl.includes('youtube.com/') ? targetUrl : '');
+  if (!watchUrl) return null;
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`;
+    const res = await fetch(oembedUrl, { signal: AbortSignal.timeout(2500) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const cleanTitle = typeof data?.title === 'string' ? data.title.trim() : '';
+    const cleanAuthor = typeof data?.author_name === 'string' ? data.author_name.trim() : '';
+    return cleanTitle ? { title: cleanTitle, author: cleanAuthor } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readYtDlpInfoMeta(tempDir, jobId) {
+  try {
+    const files = await readdir(tempDir);
+    const infoFile = files.find(f => f === `${jobId}.info.json`) || files.find(f => f.endsWith('.info.json'));
+    if (!infoFile) return null;
+    const raw = await readFile(join(tempDir, infoFile), 'utf8');
+    const info = JSON.parse(raw);
+    const cleanTitle = typeof info?.title === 'string' ? info.title.trim() : '';
+    const cleanAuthor = typeof info?.uploader === 'string' ? info.uploader.trim() : (typeof info?.channel === 'string' ? info.channel.trim() : '');
+    return cleanTitle ? { title: cleanTitle, author: cleanAuthor } : null;
+  } catch {
+    return null;
+  }
+}
+
 function downloadWithYtDlp(url, tempDir, jobId, onProgress) {
   const bin = existsSync('/opt/homebrew/bin/yt-dlp') ? '/opt/homebrew/bin/yt-dlp' : 'yt-dlp';
   const outTemplate = join(tempDir, `${jobId}.%(ext)s`);
-  const args = ['-x', '--audio-format', 'mp3', '--audio-quality', '192K', '--no-playlist', '--newline', '-o', outTemplate, url];
+  const args = ['-x', '--audio-format', 'mp3', '--audio-quality', '192K', '--no-playlist', '--write-info-json', '--js-runtimes', 'node', '--newline', '-o', outTemplate, url];
   return new Promise((resolveDownload, rejectDownload) => {
     const child = spawn(bin, args, {
       env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` },
@@ -106,6 +141,27 @@ function downloadWithYtDlp(url, tempDir, jobId, onProgress) {
 }
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
+export const LOG_DIR = resolve(ROOT, '../../logs');
+export const LOG_FILE_PATH = join(LOG_DIR, 'ledicated.log');
+const MAX_LOG_BYTES = 5 * 1024 * 1024;
+let logDirReady = false;
+
+async function writeDiskLogLine(line) {
+  try {
+    if (!logDirReady) {
+      await mkdir(LOG_DIR, { recursive: true, mode: 0o755 });
+      logDirReady = true;
+    }
+    try {
+      const st = await stat(LOG_FILE_PATH);
+      if (st.size > MAX_LOG_BYTES) {
+        await rename(LOG_FILE_PATH, `${LOG_FILE_PATH}.1`).catch(() => {});
+      }
+    } catch {}
+    await appendFile(LOG_FILE_PATH, `${line}\n`, 'utf8');
+  } catch {}
+}
+
 export const defaultConfig = (profileId = 'c3-five') => {
   const profile = hardwareProfile(profileId);
   if (!profile) throw new Error('Nepoznat raspored kontrolera.');
@@ -134,6 +190,7 @@ export function isAllowedLanHost(hostHeader, port) {
   if (!hostname) return false;
   if (hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]') return true;
   if (privateIP(hostname, true)) return true;
+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
   if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.local$/.test(hostname)) return true;
   return false;
 }
@@ -292,9 +349,12 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
   const library = customLibrary || createLibrary({ root: libraryRoot, ...(maxAudioBytes ? { maxAudioBytes } : {}) });
   let analysisRunning = false;
   let armed = false;
+  let outputMode = 'show'; // 'show' (live DDP from DAW / YouTube) | 'ambient' (static Menu Bar light)
   let reason = 'Pregled bez izlaza';
   let lastFrame = 0;
+  let lastClientFrame = -Infinity;
   let lastAcceptedFrame = -Infinity;
+  let framesSentSinceArm = 0;
   let sequence = 0;
   let closing = false;
   let discoveryPromise = null;
@@ -308,6 +368,131 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
   let stageLastActiveAt = 0;
   let yieldedToRemote = false;
   let latestLiveState = null;
+  const serverPerformDesk = createPerformance(DEFAULT_PADS);
+  let hadServerPadsActive = false;
+  const recentLogs = [];
+  const enableDiskLog = Boolean(configPath && !allowLoopback);
+
+  const getServerPerfContext = () => {
+    const nowMs = Date.now();
+    const isPlaying = Boolean(latestLiveState?.isPlaying && (nowMs - (latestLiveState.timestamp || 0) < 15000));
+    const elapsedSec = isPlaying ? Math.max(0, (nowMs - (latestLiveState.timestamp || nowMs)) / 1000) : 0;
+    const songTime = Math.max(0, (Number(latestLiveState?.timeSec) || 0) + elapsedSec);
+    return {
+      songTime,
+      clockTime: performance.now() / 1000,
+      playing: isPlaying,
+      bpm: Number(latestLiveState?.bpm) || 120,
+      beatOffsetSec: Number(latestLiveState?.beatOffsetSec) || 0,
+      beatTimes: null
+    };
+  };
+
+  const padCustomMeta = Array.from({ length: 12 }, (_, idx) => ({
+    key: PAD_KEYS[idx].toUpperCase(),
+    name: null
+  }));
+
+  const syncServerPadSlot = (idx, raw) => {
+    if (idx < 0 || idx >= 12) return;
+    if (!raw || typeof raw !== 'object') {
+      serverPerformDesk.removePad(idx);
+      padCustomMeta[idx].name = null;
+      return;
+    }
+    const patch = { ...raw };
+    if (Array.isArray(patch.bars)) {
+      patch.targets = patch.bars.length === 9 ? 'all' : patch.bars;
+    }
+    if (Array.isArray(patch.color) && patch.color.length === 3) {
+      patch.color = [patch.color[0], patch.color[1], patch.color[2], Number(patch.white ?? 0)];
+    }
+    if (typeof patch.name === 'string' && patch.name.trim()) {
+      padCustomMeta[idx].name = patch.name.trim();
+    }
+    serverPerformDesk.setPad(idx, patch);
+  };
+
+  const getPadsSnapshot = () => {
+    serverPerformDesk.tick(getServerPerfContext());
+    return {
+      pads: serverPerformDesk.pads.map((p, idx) => {
+        if (!p) return null;
+        return {
+          ...p,
+          key: PAD_KEYS[idx].toUpperCase(),
+          name: padCustomMeta[idx]?.name || p.name || `${p.preset.toUpperCase()} ${PAD_KEYS[idx].toUpperCase()}`,
+          bars: p.targets === 'all' ? [...BAR_IDS] : (Array.isArray(p.targets) ? [...p.targets] : [...BAR_IDS])
+        };
+      }),
+      activePads: [...serverPerformDesk.active.keys()],
+      pendingPads: [...serverPerformDesk.pending.keys()],
+      heldPads: [...serverPerformDesk.held.keys()],
+      quantize: serverPerformDesk.quantize
+    };
+  };
+
+  const applyServerPadCommand = cmd => {
+    const ctx = getServerPerfContext();
+    serverPerformDesk.tick(ctx);
+    if (cmd.action === 'clear' || cmd.action === 'stop_all') {
+      serverPerformDesk.clear();
+      return 'cleared';
+    }
+    if (cmd.action === 'release_all') {
+      serverPerformDesk.releaseAll();
+      return 'released_all';
+    }
+    if (cmd.action === 'quantize') {
+      const nextQ = cmd.value !== undefined ? Boolean(cmd.value) : !serverPerformDesk.quantize;
+      serverPerformDesk.setQuantize(nextQ);
+      return nextQ ? 'quantize_on' : 'quantize_off';
+    }
+    if (cmd.action === 'move' && Number.isInteger(cmd.from) && Number.isInteger(cmd.to)) {
+      return serverPerformDesk.movePad(cmd.from, cmd.to) ? 'moved' : 'invalid';
+    }
+    let idx = -1;
+    if (Number.isInteger(cmd.index)) idx = cmd.index;
+    else if (typeof cmd.pad === 'number') idx = cmd.pad;
+    else if (typeof cmd.pad === 'string') {
+      const lower = cmd.pad.toLowerCase();
+      idx = PAD_KEYS.indexOf(lower);
+      if (idx < 0 && !isNaN(Number(cmd.pad))) idx = Number(cmd.pad);
+    } else if (typeof cmd.key === 'string') {
+      idx = PAD_KEYS.indexOf(cmd.key.toLowerCase());
+    }
+    if (idx < 0 || idx >= 12) return 'invalid';
+    if (cmd.action === 'press') return serverPerformDesk.press(idx, ctx);
+    if (cmd.action === 'release') return serverPerformDesk.release(idx, { clockTime: ctx.clockTime, cancel: Boolean(cmd.cancel) });
+    if (cmd.action === 'trigger' || cmd.action === 'hit' || !cmd.action) return serverPerformDesk.trigger(idx, ctx);
+    if (cmd.action === 'loop') {
+      if (serverPerformDesk.pads[idx] && serverPerformDesk.pads[idx].mode !== 'loop') {
+        serverPerformDesk.setPad(idx, { mode: 'loop' });
+      }
+      return serverPerformDesk.trigger(idx, ctx);
+    }
+    const patchObj = cmd.effect || cmd.patch || (cmd.pad && typeof cmd.pad === 'object' ? cmd.pad : null);
+    if (cmd.action === 'set' && patchObj) {
+      syncServerPadSlot(idx, patchObj);
+      return 'updated';
+    }
+    if (cmd.action === 'remove') {
+      padCustomMeta[idx].name = null;
+      return serverPerformDesk.removePad(idx) ? 'removed' : 'invalid';
+    }
+    return 'ignored';
+  };
+
+  const logEvent = (category, action, details = {}) => {
+    const nowIso = new Date().toISOString();
+    const entry = { ts: nowIso, category, action, ...details };
+    recentLogs.push(entry);
+    if (recentLogs.length > 300) recentLogs.shift();
+    if (enableDiskLog) {
+      const detailStr = Object.keys(details).length ? ` ${JSON.stringify(details)}` : '';
+      writeDiskLogLine(`${nowIso} [${category}] ${action}${detailStr}`);
+    }
+  };
 
   const broadcastLive = (event, data) => {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -403,16 +588,71 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
   };
 
   const rearmAfterYield = () => {
-    if (!yieldedToRemote || armed || liveControl.state.blackout || testRunning) return;
+    if (!yieldedToRemote || armed || liveControl.state.blackout || testRunning || outputMode === 'ambient') return;
     const activeNodes = config.nodes.filter(n => n.host);
     if (activeNodes.length) {
       yieldedToRemote = false;
       armed = true;
+      framesSentSinceArm = 0;
       reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
       lastFrame = performance.now();
       lastAcceptedFrame = -Infinity;
       for (const node of activeNodes) wakeWled(node.host);
+      logEvent('WLED', 'REARM_AFTER_YIELD', { nodes: activeNodes.map(n => n.host) });
       broadcastLive('command', { type: 'hardware_sync', state: state() });
+    }
+  };
+
+  const activateShowOutput = ({ forceWake = true, clearBlackout = false, broadcast = true, source = 'system' } = {}) => {
+    if (testRunning) return false;
+    if (liveControl.state.blackout) {
+      if (!clearBlackout) return false;
+      liveControl.state.blackout = false;
+      liveControl.broadcastCommand({ type: 'blackout', value: false });
+    }
+    const prevMode = outputMode;
+    const wasArmed = armed;
+    outputMode = 'show';
+    yieldedToRemote = false;
+    const activeNodes = config.nodes.filter(n => n.host);
+    if (activeNodes.length) {
+      armed = true;
+      if (!wasArmed) framesSentSinceArm = 0;
+      reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
+      lastFrame = performance.now();
+      lastAcceptedFrame = -Infinity;
+      if (forceWake && (!wasArmed || prevMode !== 'show')) {
+        for (const node of activeNodes) wakeWled(node.host);
+      }
+    }
+    if (prevMode !== 'show' || !wasArmed) {
+      logEvent('MODE', 'ACTIVATE_SHOW', { source, prevMode, wasArmed, armed, forceWake });
+    }
+    if (broadcast) {
+      broadcastLive('command', { type: 'hardware_sync', state: state() });
+    }
+    return armed;
+  };
+
+  const activateAmbientOutput = ({ restorePresetOnE8 = false, broadcast = true, source = 'menubar' } = {}) => {
+    const prevMode = outputMode;
+    const wasArmed = armed;
+    outputMode = 'ambient';
+    armed = false;
+    framesSentSinceArm = 0;
+    yieldedToRemote = false;
+    reason = 'Uredska rasvjeta (Menu Bar)';
+    if (restorePresetOnE8) {
+      for (const node of config.nodes.filter(n => n.host)) {
+        restoreAmbientWled(node.host);
+      }
+    }
+    if (prevMode !== 'ambient' || wasArmed || restorePresetOnE8) {
+      logEvent('MODE', 'ACTIVATE_AMBIENT', { source, prevMode, wasArmed, restorePresetOnE8 });
+    }
+    if (broadcast) {
+      broadcastLive('command', { type: 'hardware_sync', state: state() });
+      broadcastLanPresence({ reason: 'mode_ambient' });
     }
   };
 
@@ -421,15 +661,20 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     const nowMs = Date.now();
     const prevOwner = stageOwnerId;
     const wasRemote = Boolean(remoteStageOwner);
+    const wasAmbient = outputMode === 'ambient';
     claimEpoch = Math.max(nowMs, claimEpoch + 1);
     stageOwnerId = peer.clientId;
     remoteStageOwner = null;
     stageLastActiveAt = nowMs;
     peer.lastActiveAt = nowMs;
     peer.releasedWhilePlaying = false;
-    rearmAfterYield();
+    if (takeover) {
+      activateShowOutput({ forceWake: true, broadcast: true });
+    } else {
+      rearmAfterYield();
+    }
     lanCoordinator?.broadcastClaim?.({ claimEpoch });
-    return prevOwner !== peer.clientId || wasRemote || takeover;
+    return prevOwner !== peer.clientId || wasRemote || wasAmbient || takeover;
   };
 
   const releaseStageForPeer = cid => {
@@ -585,9 +830,11 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
       serverId: lanCoordinator?.serverId || null,
       ...addrInfo,
       armed: Boolean(armed),
+      outputMode,
+      ambientOverride: outputMode === 'ambient',
       yieldedToRemote: Boolean(yieldedToRemote),
       blackout: Boolean(liveControl.state.blackout),
-      master: liveControl.state.master ?? 70,
+      master: liveControl.state.master ?? 100,
       stageState,
       graceRemainingSec,
       stageIdleSec: Math.round(stageIdleMs / 1000),
@@ -697,7 +944,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     lanCoordinator.start().catch(() => {});
   }
   const liveControl = {
-    state: { master: 70, blackout: false, trackId: null },
+    state: { master: 100, blackout: false, trackId: null },
     get clientCount() { return liveClients.size; },
     broadcastCommand(cmd) { broadcastLive('command', cmd); }
   };
@@ -705,10 +952,18 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
   const extState = {
     mode: 'idle',
     activeVideoId: null,
+    activeTrackId: null,
+    activeShow: null,
     theme: 'midnight',
     useGemini: false,
     lastSyncAt: 0,
-    liveStems: null
+    lastSyncPerfMs: 0,
+    lastTime: 0,
+    playbackRate: 1,
+    lastPaused: true,
+    dawPlayingLocally: false,
+    liveStems: null,
+    smoothedStems: null
   };
   const udp = dgram.createSocket('udp4');
   udp.on('error', () => {}); // Prevent unhandled UDP socket error events from crashing Node process
@@ -724,18 +979,35 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     const length = routes.reduce((sum, route) => sum + route.pixels * (config.transport === 'rgbw' ? 4 : 3), 0);
     return send(node.host, Array(length).fill(0));
   }));
-  const disarm = async message => {
+  const disarm = async (message, { sendZeros = true } = {}) => {
     const wasArmed = armed;
+    const sentCount = framesSentSinceArm;
     armed = false;
+    framesSentSinceArm = 0;
     reason = message;
-    if (wasArmed) await zeros().catch(() => {});
+    if (wasArmed) {
+      logEvent('WLED', 'DISARM', { message, sendZeros, framesSentSinceArm: sentCount, outputMode });
+    }
+    if (wasArmed && sendZeros) await zeros().catch(() => {});
   };
   const wakeWled = host => {
     if (probe === probeWled && host) {
+      logEvent('WLED', 'WAKE_SHOW', { host, lor: 0 });
       fetch(`http://${host}/json/state`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ on: true, bri: 255, transition: 0, seg: [{ id: 0, col: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], fx: 0 }] }),
+        body: JSON.stringify({ on: true, bri: 255, transition: 0, lor: 0 }),
+        signal: AbortSignal.timeout(800)
+      }).catch(() => {});
+    }
+  };
+  const restoreAmbientWled = host => {
+    if (probe === probeWled && host) {
+      logEvent('WLED', 'LOCK_AMBIENT', { host, lor: 2, ps: 1 });
+      fetch(`http://${host}/json/state`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lor: 2, ps: 1, transition: 2 }),
         signal: AbortSignal.timeout(800)
       }).catch(() => {});
     }
@@ -748,6 +1020,18 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         connected: false,
         yieldedToRemote: true,
         error: `Na stageu je ${remoteStageOwner.name || 'kolega na LAN-u'}.`,
+        ...state()
+      });
+    }
+    if (outputMode === 'ambient' && !forceTakeover) {
+      const e8 = config.nodes.find(n => n.id === 'E8-1') || config.nodes.find(n => n.host);
+      return Promise.resolve({
+        ok: true,
+        connected: Boolean(e8?.host),
+        armed: false,
+        ambientOverride: true,
+        host: e8?.host || null,
+        nodeId: e8?.id || null,
         ...state()
       });
     }
@@ -788,23 +1072,26 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               for (const node of config.nodes.filter(n => n.host)) {
                 if (node.id === e8Node.id) {
                   activeNodes.push(node);
-                  wakeWled(node.host);
                 } else {
                   try {
                     const other = await probe(node.host, { includeBuses: false });
                     if (other?.reachable && (!node.mac || !other.mac || other.mac === node.mac)) {
                       activeNodes.push(node);
-                      wakeWled(node.host);
                     }
                   } catch {}
                 }
               }
               if (activeNodes.length) {
+                if (outputMode === 'ambient' && !forceTakeover) {
+                  return { ok: true, connected: true, rebound: false, host: e8Node.host, nodeId: e8Node.id, ...state() };
+                }
                 armed = true;
+                framesSentSinceArm = 0;
                 yieldedToRemote = false;
                 reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
                 lastFrame = performance.now();
                 lastAcceptedFrame = -Infinity;
+                logEvent('WLED', 'AUTO_CONNECT_OK', { host: e8Node.host, rebound: false, outputMode });
                 broadcastLive('command', { type: 'hardware_sync', state: state() });
                 return { ok: true, connected: true, rebound: false, host: e8Node.host, nodeId: e8Node.id, ...state() };
               }
@@ -837,13 +1124,17 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             }, allowLoopback);
             updateConfig(next);
             if (configPath) await writeFile(configPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 }).catch(() => {});
-            wakeWled(matched.host);
             const activeNodes = config.nodes.filter(n => n.host);
+            if (outputMode === 'ambient' && !forceTakeover) {
+              return { ok: true, connected: true, rebound: true, host: matched.host, nodeId: e8Node.id, ...state() };
+            }
             armed = true;
+            framesSentSinceArm = 0;
             yieldedToRemote = false;
             reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
             lastFrame = performance.now();
             lastAcceptedFrame = -Infinity;
+            logEvent('WLED', 'AUTO_CONNECT_REBOUND', { host: matched.host, outputMode });
             broadcastLive('command', { type: 'hardware_sync', state: state() });
             return { ok: true, connected: true, rebound: true, host: matched.host, nodeId: e8Node.id, ...state() };
           }
@@ -855,8 +1146,8 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     })();
     return autoConnectPromise;
   };
-  const sendBarsToWled = async (bars, scale = 1) => {
-    if (!armed || remoteStageOwner || !bars || Object.keys(bars).length !== 9) return false;
+  const sendBarsToWled = async (bars, scale = 1, source = 'internal') => {
+    if (!armed || outputMode === 'ambient' || remoteStageOwner || !bars || Object.keys(bars).length !== 9) return false;
     const now = performance.now();
     if (now - lastAcceptedFrame < minFrameMs) return false;
     const values = new Map(config.nodes.map(node => [node.id, []]));
@@ -881,12 +1172,16 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         }
       }
     }
+    if (framesSentSinceArm === 0) {
+      logEvent('DDP', 'STREAM_FIRST_FRAME', { source, scale: masterScale });
+    }
+    framesSentSinceArm++;
     lastFrame = now;
     lastAcceptedFrame = now;
     await Promise.all(config.nodes.filter(node => node.host).map(node => send(node.host, values.get(node.id))));
     return true;
   };
-  const state = () => ({ armed, yieldedToRemote, reason, config, transport: config.transport === 'rgbw' ? 'DDP RGBW' : 'DDP RGB', ceiling: 255, maxFps: 120, watchdogMs });
+  const state = () => ({ armed, outputMode, ambientOverride: outputMode === 'ambient', yieldedToRemote, reason, config, transport: config.transport === 'rgbw' ? 'DDP RGBW' : 'DDP RGB', ceiling: 255, maxFps: 120, watchdogMs });
   const json = (response, status, data) => {
     if (response.headersSent || response.destroyed || response.writableEnded) return;
     response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -945,36 +1240,142 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     return entry;
   };
   let fallbackBusy = false;
-  const timer = setInterval(() => {
-    if (pruneLanPeers()) {
-      broadcastLanPresence({ reason: 'idle_timeout' });
+  const renderHighRateTick = () => {
+    if (!armed || outputMode === 'ambient' || remoteStageOwner || liveControl.state.blackout || testRunning) return;
+    const nowPerf = performance.now();
+    if (nowPerf - lastAcceptedFrame < 13) return;
+    const browserFrameIdleMs = nowPerf - lastClientFrame;
+    const nowMs = Date.now();
+    const perfCtx = getServerPerfContext();
+    serverPerformDesk.tick(perfCtx);
+    const hasServerPads = serverPerformDesk.active.size > 0;
+
+    const extActivelyPlaying = Boolean(
+      (extState.mode === 'synced' || extState.mode === 'live_stream') &&
+      !extState.lastPaused &&
+      !extState.dawPlayingLocally &&
+      (nowMs - (extState.lastSyncAt || 0) < 1200)
+    );
+    if (extActivelyPlaying && (liveControl.clientCount === 0 || browserFrameIdleMs > 35)) {
+      const elapsedSec = Math.max(0, (nowPerf - (extState.lastSyncPerfMs || nowPerf)) / 1000) * (extState.playbackRate || 1);
+      const interpTimeSec = Math.max(0, (Number(extState.lastTime) || 0) + elapsedSec);
+      const scale = clampVal((liveControl.state.master ?? 70) / 100, 0, 1);
+
+      if (extState.mode === 'synced') {
+        const show = (extState.activeTrackId && serverShowCache.get(extState.activeTrackId)) || extState.activeShow;
+        if (show?.timeline) {
+          const durationLimit = show.analysis?.durationSec || show.timeline?.durationSec || Infinity;
+          const tSec = Math.min(durationLimit, interpTimeSec);
+          let rendered = renderTimelineFrame(show.timeline, show.analysis, tSec, null, true);
+          if (hasServerPads) {
+            rendered = serverPerformDesk.render(rendered, perfCtx.clockTime, perfCtx.bpm, 1, show.analysis, tSec);
+          }
+          sendBarsToWled(rendered.bars, scale, 'ext_synced').catch(() => {});
+          return;
+        }
+      } else if (extState.mode === 'live_stream' && extState.liveStems) {
+        const target = extState.liveStems;
+        const cur = extState.smoothedStems ? { ...extState.smoothedStems } : { ...target };
+        for (const k of ['bass', 'drums', 'vocals', 'highs', 'other', 'energy', 'rms']) {
+          if (Number.isFinite(Number(target[k]))) {
+            const tv = Number(target[k]);
+            const cv = Number(cur[k]);
+            const prev = Number.isFinite(cv) ? cv : tv;
+            const alpha = tv >= prev ? 0.6 : 0.25;
+            cur[k] = prev + (tv - prev) * alpha;
+          }
+        }
+        extState.smoothedStems = cur;
+        let liveFrame = renderLiveStemFrame(cur, interpTimeSec, extState.theme, false);
+        if (hasServerPads) {
+          liveFrame = serverPerformDesk.render(liveFrame, perfCtx.clockTime, perfCtx.bpm, 1, null, interpTimeSec);
+        }
+        sendBarsToWled(liveFrame.bars, scale, 'ext_live_stream').catch(() => {});
+        return;
+      }
     }
-    if (!armed || remoteStageOwner) return;
-    const idleMs = performance.now() - lastFrame;
-    if (liveClients.size > 0 && !liveControl.state.blackout && idleMs > 80 && !fallbackBusy) {
+
+    const dawActivelyPlaying = Boolean(
+      latestLiveState?.isPlaying &&
+      (nowMs - (latestLiveState.timestamp || 0) < 15000)
+    );
+    if (liveClients.size > 0 && dawActivelyPlaying && browserFrameIdleMs > 40 && !fallbackBusy) {
       const trackId = latestLiveState?.trackId || liveControl.state.trackId;
       if (trackId) {
+        const cached = serverShowCache.get(trackId);
+        if (cached && nowMs - cached.loadedAt < 10000) {
+          const elapsedSec = Math.max(0, (nowMs - (latestLiveState.timestamp || nowMs)) / 1000);
+          const durationLimit = cached.analysis?.durationSec || cached.timeline?.durationSec || Infinity;
+          const tSec = Math.min(durationLimit, Math.max(0, (Number(latestLiveState?.timeSec) || 0) + elapsedSec));
+          let rendered = renderTimelineFrame(cached.timeline, cached.analysis, tSec, null, true);
+          if (hasServerPads) {
+            rendered = serverPerformDesk.render(rendered, perfCtx.clockTime, perfCtx.bpm, 1, cached.analysis, tSec);
+          }
+          const scale = clampVal((latestLiveState?.master ?? liveControl.state.master ?? 70) / 100, 0, 1);
+          sendBarsToWled(rendered.bars, scale, 'fallback_timer').catch(() => {});
+          return;
+        }
         fallbackBusy = true;
         getCachedShow(trackId)
           .then(show => {
-            if (!show || !armed || remoteStageOwner) return;
+            if (!show || !armed || outputMode === 'ambient' || remoteStageOwner) return;
             const elapsedSec = latestLiveState?.isPlaying
               ? Math.max(0, (Date.now() - (latestLiveState.timestamp || Date.now())) / 1000)
               : 0;
             const durationLimit = show.analysis?.durationSec || show.timeline?.durationSec || Infinity;
             const tSec = Math.min(durationLimit, Math.max(0, (Number(latestLiveState?.timeSec) || 0) + elapsedSec));
-            const rendered = renderTimelineFrame(show.timeline, show.analysis, tSec, null, true);
-            const scale = clampVal(( latestLiveState?.master ?? liveControl.state.master ?? 70 ) / 100, 0, 1);
-            return sendBarsToWled(rendered.bars, scale);
+            let rendered = renderTimelineFrame(show.timeline, show.analysis, tSec, null, true);
+            if (serverPerformDesk.active.size > 0) {
+              const pCtx = getServerPerfContext();
+              rendered = serverPerformDesk.render(rendered, pCtx.clockTime, pCtx.bpm, 1, show.analysis, tSec);
+            }
+            const scale = clampVal((latestLiveState?.master ?? liveControl.state.master ?? 70) / 100, 0, 1);
+            return sendBarsToWled(rendered.bars, scale, 'fallback_timer');
           })
           .catch(() => {})
           .finally(() => { fallbackBusy = false; });
         return;
       }
     }
-    const effectiveWatchdogMs = liveClients.size > 0 ? Math.max(watchdogMs * 20, 65000) : watchdogMs;
+
+    if (hasServerPads && browserFrameIdleMs > 35) {
+      hadServerPadsActive = true;
+      const darkBase = {
+        bars: Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])]))
+      };
+      const rendered = serverPerformDesk.render(darkBase, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime);
+      const scale = clampVal((latestLiveState?.master ?? liveControl.state.master ?? 70) / 100, 0, 1);
+      sendBarsToWled(rendered.bars, scale, 'companion_pads').catch(() => {});
+    } else if (hadServerPadsActive && !hasServerPads && browserFrameIdleMs > 35) {
+      hadServerPadsActive = false;
+      const darkBase = Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])]));
+      sendBarsToWled(darkBase, 1, 'companion_pads_clear').catch(() => {});
+    }
+  };
+  const renderTimer = setInterval(renderHighRateTick, 16);
+  renderTimer.unref();
+  const timer = setInterval(() => {
+    if (pruneLanPeers()) {
+      broadcastLanPresence({ reason: 'idle_timeout' });
+    }
+    if (!armed || outputMode === 'ambient' || remoteStageOwner) return;
+    const idleMs = performance.now() - lastFrame;
+    const hasKnownClient =
+      liveClients.size > 0 ||
+      lanPeers.size > 0 ||
+      Boolean(latestLiveState && Date.now() - (latestLiveState.timestamp || 0) < 30000);
+    const effectiveWatchdogMs = hasKnownClient ? Math.max(watchdogMs * 20, 65000) : watchdogMs;
     if (idleMs > effectiveWatchdogMs) {
-      disarm('Prekid veze: izlaz ugašen')
+      const sendZerosOnTimeout = framesSentSinceArm > 0 && config.profile !== 'e8-columns';
+      logEvent('WATCHDOG', 'IDLE_TIMEOUT', {
+        idleMs: Math.round(idleMs),
+        effectiveWatchdogMs,
+        framesSentSinceArm,
+        sendZeros: sendZerosOnTimeout,
+        liveClients: liveClients.size,
+        lanPeers: lanPeers.size
+      });
+      disarm('Prekid veze: izlaz ugašen', { sendZeros: sendZerosOnTimeout })
         .then(() => broadcastLive('command', { type: 'hardware_sync', state: state() }))
         .catch(() => {});
     }
@@ -1031,6 +1432,8 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             master: liveControl.state.master ?? 70,
             blackout: Boolean(liveControl.state.blackout),
             armed: Boolean(armed),
+            outputMode,
+            ambientOverride: outputMode === 'ambient',
             theme: extState.theme,
             themes: SHOW_THEMES.map(t => ({ id: t.id, name: t.name, description: t.description })),
             isStageOwner: clientId ? canClientDriveStage(clientId) : !remoteStageOwner,
@@ -1046,8 +1449,19 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         const input = JSON.parse(extBody || '{}');
         if (pathname === '/api/ext/import') {
           const { url, videoId, title, theme = 'midnight', allowedPresets, useGemini = false } = input;
-          const existing = library.findTrackByVideo({ videoId, title });
+          // If videoId is provided, never match a different videoId via a stale DOM title
+          let existing = videoId ? library.findTrackByVideo({ videoId }) : library.findTrackByVideo({ videoId, title });
+          if (!existing && !videoId && title) {
+            existing = library.findTrackByVideo({ title });
+          }
           if (existing && (existing.status === 'ready' || existing.hasAnalysis)) {
+            if (videoId && ytDownloader === downloadWithYtDlp) {
+              const oembed = await fetchYouTubeOembedMeta(videoId, url);
+              if (oembed?.title && oembed.title !== existing.title) {
+                existing = await library.updateTrack(existing.id, { title: oembed.title }).catch(() => existing);
+                broadcastLive('command', { type: 'library_updated', trackId: existing.id, action: 'rename' });
+              }
+            }
             liveControl.state.trackId = existing.id;
             liveControl.broadcastCommand({ type: 'select_track', trackId: existing.id });
             return json(response, 200, { ok: true, alreadyExists: true, status: 'ready', track: { ...existing, name: existing.title } });
@@ -1075,19 +1489,29 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             try {
               const targetUrl = url || (videoId ? `https://www.youtube.com/watch?v=${videoId}` : '');
               if (!targetUrl) throw new Error('Nedostaje YouTube URL ili videoId.');
+              const oembedPromise = (ytDownloader === downloadWithYtDlp && (videoId || targetUrl.includes('youtube.com/')))
+                ? fetchYouTubeOembedMeta(videoId, targetUrl)
+                : Promise.resolve(null);
               tempDir = await mkdtemp(join(tmpdir(), 'ledicated-yt-'));
               const finalMp3Path = await ytDownloader(targetUrl, tempDir, jobId, p => {
                 job.progress = Math.max(job.progress, Math.min(55, p));
               });
+              const infoMeta = await readYtDlpInfoMeta(tempDir, jobId);
+              const oembedMeta = infoMeta || (await oembedPromise);
+              const resolvedTitle = (infoMeta?.title || oembedMeta?.title || title || videoId || 'YouTube').trim();
+              job.title = resolvedTitle;
               job.status = 'analyzing';
               job.progress = 65;
               job.message = 'Analiza stemova, waveforma i dionica…';
-              const sharedMatch = await findSharedShow({ videoId, title });
-              const imported = await library.importTrack(finalMp3Path, `${title || videoId || 'YouTube'}.mp3`, {
+              const sharedMatch = await findSharedShow({ videoId, title: resolvedTitle });
+              const imported = await library.importTrack(finalMp3Path, `${resolvedTitle}.mp3`, {
                 videoId,
                 sourceUrl: targetUrl,
                 theme
               });
+              if (imported.title !== resolvedTitle) {
+                await library.updateTrack(imported.id, { title: resolvedTitle, ...(videoId ? { videoId, sourceUrl: targetUrl } : {}) }).catch(() => {});
+              }
               const analysis = await library.analyzeTrack(imported.id);
               job.status = 'generating_show';
               job.progress = 85;
@@ -1100,7 +1524,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
                 await library.saveTimeline(imported.id, sharedMatch.timeline);
               } else {
                 const directed = await createDirectedShow(analysis, {
-                  title: imported.title,
+                  title: resolvedTitle,
                   theme,
                   palette: theme,
                   allowedPresets,
@@ -1115,6 +1539,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               serverShowCache.delete(imported.id);
               const readyTrack = await library.getTrack(imported.id);
               liveControl.state.trackId = readyTrack.id;
+              broadcastLive('command', { type: 'library_updated', trackId: readyTrack.id, action: 'import' });
               liveControl.broadcastCommand({ type: 'select_track', trackId: readyTrack.id });
               job.status = 'ready';
               job.progress = 100;
@@ -1133,17 +1558,18 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           return json(response, 200, { ok: true, jobId, status: 'downloading', alreadyExists: false });
         }
         if (pathname === '/api/ext/sync') {
-          const { clientId, clientName, videoId, title, currentTime = 0, duration, paused = false, playbackRate = 1, liveMode, forceLiveStream = false, theme, stems } = input;
+          const { clientId, clientName, videoId, title, currentTime = 0, duration, paused = false, playbackRate = 1, liveMode, forceLiveStream = false, takeover = false, theme, stems } = input;
           const track = library.findTrackByVideo({ videoId, title });
           const sharedShow = (!track && !forceLiveStream) ? await findSharedShow({ videoId, title }) : null;
           const matched = track || sharedShow;
 
           let prevOwner = stageOwnerId;
           let prevPeerSnap = '';
+          let syncedPeer = null;
           if (clientId) {
             const existing = lanPeers.get(String(clientId).trim());
             prevPeerSnap = existing ? `${existing.name}|${existing.trackTitle}|${existing.isPlaying}` : '';
-            touchLanPeer(clientId, {
+            syncedPeer = touchLanPeer(clientId, {
               name: clientName,
               source: 'youtube',
               trackId: matched?.id || null,
@@ -1156,6 +1582,15 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             }, request);
           }
 
+          if (takeover === true && liveMode !== false) {
+            if (syncedPeer) {
+              claimStageForPeer(syncedPeer, { takeover: true });
+            } else {
+              activateShowOutput({ forceWake: true, broadcast: true });
+            }
+            broadcastLanPresence({ reason: 'claim' });
+          }
+
           if (liveMode === false) {
             const cid = clientId ? String(clientId).trim() : '';
             const wasOwner = !cid || stageOwnerId === cid;
@@ -1164,7 +1599,10 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             }
             if (wasOwner) {
               extState.mode = 'idle';
+              extState.activeShow = null;
+              extState.activeTrackId = null;
               extState.liveStems = null;
+              extState.smoothedStems = null;
               extState.lastPaused = true;
               liveControl.broadcastCommand({
                 type: 'ext_sync',
@@ -1210,6 +1648,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           }
 
           extState.lastSyncAt = Date.now();
+          extState.lastSyncPerfMs = performance.now();
           if (videoId) extState.activeVideoId = videoId;
           if (typeof theme === 'string' && theme.trim()) extState.theme = theme.trim();
           const cid = clientId ? String(clientId).trim() : '';
@@ -1218,12 +1657,26 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             latestLiveState?.isPlaying &&
             (Date.now() - (latestLiveState.timestamp || 0) < 3500)
           );
+          extState.dawPlayingLocally = dawPlayingLocally;
           const shouldBroadcast = !dawPlayingLocally && (!paused || !extState.lastPaused || Math.abs(Number(currentTime || 0) - Number(extState.lastTime || 0)) > 0.08);
+          if (!paused && outputMode === 'show' && !liveControl.state.blackout && !yieldedToRemote) {
+            if (!armed) {
+              activateShowOutput({ forceWake: true, broadcast: true, source: 'ext_sync' });
+            } else if (extState.lastPaused !== false) {
+              for (const node of config.nodes.filter(n => n.host)) wakeWled(node.host);
+            }
+          }
           extState.lastPaused = Boolean(paused);
           extState.lastTime = Number(currentTime || 0);
+          extState.playbackRate = Number.isFinite(Number(playbackRate)) && Number(playbackRate) > 0 ? Number(playbackRate) : 1;
           if (isReady) {
             extState.mode = 'synced';
+            extState.liveStems = null;
+            extState.smoothedStems = null;
             if (!dawPlayingLocally && track) liveControl.state.trackId = track.id;
+            const show = track ? await getCachedShow(track.id).catch(() => null) : { timeline: sharedShow.timeline, analysis: sharedShow.analysis };
+            extState.activeTrackId = track ? track.id : null;
+            extState.activeShow = show?.timeline ? show : null;
             if (shouldBroadcast) {
               liveControl.broadcastCommand({
                 type: 'ext_sync',
@@ -1235,16 +1688,16 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
                 playbackRate
               });
             }
-            if (!dawPlayingLocally && armed && (liveControl.clientCount === 0 || performance.now() - lastFrame > 80) && !liveControl.state.blackout) {
-              const show = track ? await getCachedShow(track.id).catch(() => null) : { timeline: sharedShow.timeline, analysis: sharedShow.analysis };
-              if (show?.timeline) {
-                const rendered = renderTimelineFrame(show.timeline, show.analysis, Math.max(0, Number(currentTime) || 0), null, true);
-                await sendBarsToWled(rendered.bars, paused ? 0 : (liveControl.state.master ?? 70) / 100).catch(() => {});
-              }
+            if (!paused && !dawPlayingLocally && armed && outputMode === 'show' && (liveControl.clientCount === 0 || performance.now() - lastClientFrame > 35) && !liveControl.state.blackout && show?.timeline) {
+              const rendered = renderTimelineFrame(show.timeline, show.analysis, Math.max(0, Number(currentTime) || 0), null, true);
+              await sendBarsToWled(rendered.bars, (liveControl.state.master ?? 70) / 100, 'ext_synced').catch(() => {});
             }
           } else {
             extState.mode = 'live_stream';
+            extState.activeShow = null;
+            extState.activeTrackId = null;
             extState.liveStems = stems || null;
+            if (!extState.smoothedStems && stems) extState.smoothedStems = { ...stems };
             if (shouldBroadcast) {
               liveControl.broadcastCommand({
                 type: 'ext_sync',
@@ -1257,14 +1710,17 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
                 stems
               });
             }
-            if (!dawPlayingLocally && armed && (liveControl.clientCount === 0 || performance.now() - lastFrame > 80) && !liveControl.state.blackout) {
-              const liveFrame = renderLiveStemFrame(stems, currentTime, theme || extState.theme, Boolean(paused));
-              await sendBarsToWled(liveFrame.bars, (liveControl.state.master ?? 70) / 100).catch(() => {});
+            if (!paused && !dawPlayingLocally && armed && outputMode === 'show' && (liveControl.clientCount === 0 || performance.now() - lastClientFrame > 35) && !liveControl.state.blackout) {
+              const liveFrame = renderLiveStemFrame(extState.smoothedStems || stems, currentTime, theme || extState.theme, false);
+              await sendBarsToWled(liveFrame.bars, (liveControl.state.master ?? 70) / 100, 'ext_live_stream').catch(() => {});
             }
           }
           return json(response, 200, {
             ok: true,
             isStageOwner: true,
+            armed: Boolean(armed),
+            outputMode,
+            ambientOverride: outputMode === 'ambient',
             mode: extState.mode,
             trackId: isReady ? matched.id : (matched?.id || null),
             track: matched ? { id: matched.id, name: matched.title, title: matched.title, bpm: matched.bpm, durationSec: matched.durationSec } : null,
@@ -1273,7 +1729,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           });
         }
         if (pathname === '/api/ext/control') {
-          const { clientId, clientName, claimStage, releaseStage, master, blackout, armed: reqArmed, theme, allowedPresets, regenerate, useGemini, videoId, title } = input;
+          const { clientId, clientName, claimStage, releaseStage, takeover, outputMode: reqOutputMode, master, blackout, armed: reqArmed, theme, allowedPresets, regenerate, useGemini, videoId, title } = input;
           if (clientId) {
             const peer = touchLanPeer(clientId, {
               name: clientName,
@@ -1281,7 +1737,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               ...(videoId ? { videoId } : {}),
               ...(title ? { trackTitle: title } : {})
             }, request);
-            if (claimStage === true && peer) {
+            if ((claimStage === true || takeover === true) && peer) {
               claimStageForPeer(peer, { takeover: true });
               broadcastLanPresence({ reason: 'claim' });
             } else if (releaseStage === true && peer) {
@@ -1291,6 +1747,15 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             } else if (clientName) {
               broadcastLanPresence();
             }
+          } else if (claimStage === true || takeover === true) {
+            activateShowOutput({ forceWake: true, clearBlackout: true, broadcast: true });
+            broadcastLanPresence({ reason: 'claim' });
+          }
+          if (reqOutputMode === 'ambient') {
+            activateAmbientOutput({ restorePresetOnE8: true, broadcast: true });
+          } else if (reqOutputMode === 'show') {
+            activateShowOutput({ forceWake: true, clearBlackout: true, broadcast: true });
+            broadcastLanPresence({ reason: 'mode_show' });
           }
           if (Number.isFinite(master)) {
             const val = clampVal(Number(master), 0, 100);
@@ -1309,17 +1774,12 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (typeof reqArmed === 'boolean') {
             if (!reqArmed) {
               await disarm('Izlaz ugašen');
+              liveControl.broadcastCommand({ type: 'hardware_sync', state: state() });
+              broadcastLanPresence({ reason: 'disarm' });
             } else {
-              const activeNodes = config.nodes.filter(node => node.host);
-              if (activeNodes.length) {
-                armed = true;
-                yieldedToRemote = false;
-                reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
-                lastFrame = performance.now();
-                lastAcceptedFrame = -Infinity;
-              }
+              activateShowOutput({ forceWake: true, broadcast: true });
+              broadcastLanPresence({ reason: 'arm' });
             }
-            liveControl.broadcastCommand({ type: 'hardware_sync', state: state() });
           }
           if (typeof theme === 'string' && theme.trim()) {
             extState.theme = theme.trim();
@@ -1356,6 +1816,9 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               }
               await library.saveTimeline(targetTrack.id, directed.timeline);
               serverShowCache.delete(targetTrack.id);
+              if (extState.activeTrackId === targetTrack.id) {
+                extState.activeShow = { timeline: directed.timeline, analysis };
+              }
               liveControl.broadcastCommand({
                 type: 'timeline_op',
                 trackId: targetTrack.id,
@@ -1370,6 +1833,8 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             master: liveControl.state.master,
             blackout: Boolean(liveControl.state.blackout),
             armed: Boolean(armed),
+            outputMode,
+            ambientOverride: outputMode === 'ambient',
             theme: extState.theme,
             isStageOwner: clientId ? canClientDriveStage(clientId) : !remoteStageOwner,
             lan: getLanStatus()
@@ -1732,6 +2197,16 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             clientCount: liveClients.size,
             liveState: latestLiveState,
             serverState: state(),
+            pads: getPadsSnapshot(),
+            lan: getLanStatus()
+          });
+        }
+        if (pathname === '/api/live/pads' && request.method === 'GET') {
+          return json(response, 200, {
+            ok: true,
+            ...getPadsSnapshot(),
+            liveState: latestLiveState,
+            serverState: state(),
             lan: getLanStatus()
           });
         }
@@ -1741,12 +2216,24 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         if (pathname === '/api/live/frame' && request.method === 'GET') {
           await library.init();
           const trackId = parsedUrl.searchParams.get('trackId') || latestLiveState?.trackId || (await library.list())[0]?.id;
-          if (!trackId) return json(response, 200, { ok: false, error: 'Nema dostupnih pjesama.' });
           try {
-            const timeline = await library.getTimeline(trackId);
-            const analysis = await library.getAnalysis(trackId).catch(() => null);
             const timeSec = parsedUrl.searchParams.has('time') ? Number(parsedUrl.searchParams.get('time')) : (latestLiveState?.timeSec || 0);
-            const frame = renderTimelineFrame(timeline, analysis, timeSec);
+            let frame;
+            let analysis = null;
+            if (trackId) {
+              const timeline = await library.getTimeline(trackId);
+              analysis = await library.getAnalysis(trackId).catch(() => null);
+              frame = renderTimelineFrame(timeline, analysis, timeSec);
+            } else {
+              frame = {
+                bars: Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])]))
+              };
+            }
+            const perfCtx = getServerPerfContext();
+            serverPerformDesk.tick(perfCtx);
+            if (serverPerformDesk.active.size > 0) {
+              frame = serverPerformDesk.render(frame, perfCtx.clockTime, perfCtx.bpm, 1, analysis, perfCtx.songTime);
+            }
             let sumR = 0, sumG = 0, sumB = 0, sumW = 0, count = 0;
             for (const barId of BAR_IDS) {
               const pxList = frame.bars[barId] || [];
@@ -1764,10 +2251,30 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             };
             const avg = (sumR + sumG + sumB + sumW) / (maxPossible * 4);
             const watts = Math.round(8 + avg * 192);
-            return json(response, 200, { ok: true, trackId, timeSec, frame, watts, channels });
+            return json(response, 200, { ok: true, trackId: trackId || null, timeSec, frame, watts, channels, pads: getPadsSnapshot() });
           } catch (err) {
             return json(response, 400, { ok: false, error: err.message });
           }
+        }
+        if (request.method === 'GET' && pathname === '/api/logs') {
+          const limit = Math.max(1, Math.min(1000, Number(parsedUrl.searchParams.get('limit')) || 150));
+          const format = parsedUrl.searchParams.get('format') || 'json';
+          let diskTail = [];
+          try {
+            const raw = await readFile(LOG_FILE_PATH, 'utf8');
+            diskTail = raw.trim().split('\n').filter(Boolean).slice(-limit);
+          } catch {}
+          if (format === 'text') {
+            response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+            return response.end(`${diskTail.join('\n')}\n`);
+          }
+          return json(response, 200, {
+            ok: true,
+            logFile: LOG_FILE_PATH,
+            count: recentLogs.length,
+            recent: recentLogs.slice(-limit),
+            diskLines: diskTail
+          });
         }
         if (request.method === 'GET' && pathname === '/api/state') return json(response, 200, state());
         if (request.method === 'GET' && pathname === '/api/profiles') return json(response, 200, { profiles: HARDWARE_PROFILES.map(profile => ({ id: profile.id, label: profile.label, description: profile.description, config: defaultConfig(profile.id) })) });
@@ -1778,6 +2285,24 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (Buffer.byteLength(body) > 250000) return json(response, 413, { error: 'Zahtjev je prevelik.' });
         }
         const input = JSON.parse(body || '{}');
+        if (pathname === '/api/live/pads') {
+          if (Array.isArray(input.pads)) {
+            for (let idx = 0; idx < 12; idx++) {
+              syncServerPadSlot(idx, input.pads[idx]);
+            }
+          }
+          if (typeof input.quantize === 'boolean') {
+            serverPerformDesk.setQuantize(input.quantize);
+          }
+          const snap = getPadsSnapshot();
+          broadcastLive('command', {
+            type: 'pads_sync',
+            clientId: input.clientId || null,
+            pads: snap.pads,
+            quantize: snap.quantize
+          });
+          return json(response, 200, { ok: true, ...snap });
+        }
         if (pathname === '/api/live/state') {
           let prevPeerSnap = '';
           const prevOwner = stageOwnerId;
@@ -1786,7 +2311,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             prevPeerSnap = existing ? `${existing.name}|${existing.trackId}|${existing.isPlaying}|${existing.hasActivePads}` : '';
             touchLanPeer(input.clientId, {
               name: input.clientName,
-              source: 'daw',
+              source: input.source || 'daw',
               trackId: input.trackId,
               trackTitle: input.trackTitle,
               isPlaying: input.isPlaying,
@@ -1801,11 +2326,25 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           }
           const isStageOwner = canClientDriveStage(input.clientId);
           if (isStageOwner) {
+            const wasActive = Boolean(latestLiveState?.isPlaying || (Array.isArray(latestLiveState?.activePads) && latestLiveState.activePads.length > 0));
+            const nowActive = Boolean(input.isPlaying || (Array.isArray(input.activePads) && input.activePads.length > 0));
             latestLiveState = { ...input, timestamp: Date.now() };
+            if (Array.isArray(input.pads)) {
+              for (let idx = 0; idx < 12; idx++) {
+                syncServerPadSlot(idx, input.pads[idx]);
+              }
+            }
+            if (typeof input.quantize === 'boolean') {
+              serverPerformDesk.setQuantize(input.quantize);
+            }
             if (Number.isFinite(input.master)) liveControl.state.master = input.master;
             if (typeof input.blackout === 'boolean') liveControl.state.blackout = input.blackout;
             if (input.trackId) liveControl.state.trackId = input.trackId;
             if (armed && input.armed) lastFrame = performance.now();
+            if (input.takeover === true || (!wasActive && nowActive && !liveControl.state.blackout)) {
+              activateShowOutput({ forceWake: true, broadcast: true });
+              broadcastLanPresence({ reason: 'daw_play' });
+            }
           }
           const lanStat = getLanStatus();
           return json(response, 200, {
@@ -1945,8 +2484,30 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             return json(response, 200, { ok: true, trackId, result, clientCount: liveClients.size });
           }
           if (input.type === 'blackout' && (input.value === true || input.value === undefined)) {
+            serverPerformDesk.clear();
             if (testRunning) { testAbort = true; stopTest?.(); await testSettled; }
             await disarm('Blackout');
+          }
+          if (input.type === 'live_pad') {
+            const padResult = applyServerPadCommand(input);
+            if (input.clientId) {
+              touchLanPeer(String(input.clientId).trim(), {
+                name: input.clientName || 'LEDicated Pad',
+                source: input.source || 'pad',
+                hasActivePads: serverPerformDesk.active.size > 0
+              }, request);
+            }
+            if (serverPerformDesk.active.size > 0 && !liveControl.state.blackout) {
+              activateShowOutput({ forceWake: true, broadcast: true });
+            }
+            broadcastLive('command', input);
+            return json(response, 200, {
+              ok: true,
+              command: input.type,
+              padResult,
+              ...getPadsSnapshot(),
+              clientCount: liveClients.size
+            });
           }
           broadcastLive('command', input);
           return json(response, 200, { ok: true, command: input.type, clientCount: liveClients.size });
@@ -2007,17 +2568,54 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           broadcastLive('command', { type: 'hardware_sync', state: state() });
           return json(response, 200, state());
         }
+        if (pathname === '/api/logs/event') {
+          logEvent(
+            String(input.category || 'CLIENT').slice(0, 24).toUpperCase(),
+            String(input.action || 'EVENT').slice(0, 48),
+            typeof input.details === 'object' && input.details ? input.details : {}
+          );
+          return json(response, 200, { ok: true });
+        }
         if (pathname === '/api/auto-connect') {
-          const result = await autoConnect({ allowDiscovery: input.allowDiscovery !== false });
+          const result = await autoConnect({ allowDiscovery: input.allowDiscovery !== false, forceTakeover: Boolean(input.forceTakeover) });
           return json(response, 200, result);
+        }
+        if (pathname === '/api/mode') {
+          const targetMode = input.mode === 'ambient' ? 'ambient' : 'show';
+          const reqSource = String(input.source || 'api_mode').slice(0, 32);
+          if (targetMode === 'ambient') {
+            activateAmbientOutput({ restorePresetOnE8: input.restorePreset !== false, broadcast: true, source: reqSource });
+          } else {
+            if (input.clientId) {
+              const peer = touchLanPeer(String(input.clientId).trim(), { name: input.clientName, source: input.source }, request);
+              if (peer) claimStageForPeer(peer, { takeover: true });
+            }
+            activateShowOutput({ forceWake: true, clearBlackout: true, broadcast: true, source: reqSource });
+            broadcastLanPresence({ reason: 'mode_show' });
+          }
+          return json(response, 200, {
+            ok: true,
+            outputMode,
+            ...state(),
+            lan: getLanStatus()
+          });
         }
         if (pathname === '/api/arm') {
           if (typeof input.armed !== 'boolean') throw new Error('Očekuje se armed true ili false.');
           if (input.armed && testRunning) return json(response, 409, { error: 'Pričekajte kraj kratkog testa.' });
           if (!input.armed) {
             yieldedToRemote = false;
-            await disarm('Izlaz ugašen');
+            if (input.preserveAmbient) {
+              activateAmbientOutput({ restorePresetOnE8: Boolean(input.restorePreset), broadcast: false, source: 'api_arm_ambient' });
+            } else {
+              outputMode = 'show';
+              await disarm('Izlaz ugašen');
+            }
           } else {
+            if (outputMode === 'ambient' && !input.userInitiated && !input.takeover) {
+              logEvent('WLED', 'ARM_IGNORED_AMBIENT', { clientId: input.clientId || null });
+              return json(response, 200, state());
+            }
             const activeNodes = config.nodes.filter(node => node.host);
             if (!activeNodes.length) return json(response, 409, { error: `Postavite IP adresu barem jednog kontrolera.` });
             for (const node of activeNodes.filter(item => item.mac)) {
@@ -2025,27 +2623,28 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               try { actual = await probe(node.host, { includeBuses: false }); }
               catch { return json(response, 409, { error: `${node.id} nije dostupan. Pokrenite ponovno traženje WLED-a.` }); }
               if (actual.mac !== node.mac) return json(response, 409, { error: `${node.id} na spremljenoj IP adresi više nije isti WLED uređaj. Pokrenite ponovno traženje.` });
-              if (probe === probeWled) {
-                fetch(`http://${node.host}/json/state`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ on: true, bri: 255, transition: 0, seg: [{ id: 0, col: [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], fx: 0 }] }),
-                  signal: AbortSignal.timeout(800)
-                }).catch(() => {});
-              }
+              wakeWled(node.host);
             }
+            for (const node of activeNodes.filter(item => !item.mac)) {
+              wakeWled(node.host);
+            }
+            outputMode = 'show';
             armed = true;
+            framesSentSinceArm = 0;
             yieldedToRemote = false;
             reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
             lastFrame = performance.now();
             lastAcceptedFrame = -Infinity;
+            logEvent('WLED', 'ARM_MANUAL', { nodes: activeNodes.map(n => n.host), userInitiated: Boolean(input.userInitiated) });
           }
-          broadcastLive('command', { type: 'hardware_sync', state: state() });
+          broadcastLive('command', { type: 'hardware_sync', state: { ...state(), ambientOverride: Boolean(!input.armed && input.preserveAmbient) } });
+          broadcastLanPresence({ reason: input.armed ? 'arm' : (input.preserveAmbient ? 'mode_ambient' : 'disarm') });
           return json(response, 200, state());
         }
         if (pathname === '/api/blackout') {
           if (testRunning) { testAbort = true; stopTest?.(); await testSettled; }
-          await disarm('Blackout');
+          logEvent('WLED', 'BLACKOUT_TRIGGERED', {});
+          await disarm('Blackout', { sendZeros: true });
           broadcastLive('command', { type: 'hardware_sync', state: state() });
           return json(response, 200, state());
         }
@@ -2090,6 +2689,16 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (input.clientId) {
             touchLanPeer(input.clientId, { name: input.clientName }, request);
           }
+          if (outputMode === 'ambient') {
+            return json(response, 200, {
+              ok: true,
+              skipped: 'ambient_mode',
+              armed: false,
+              outputMode: 'ambient',
+              ambientOverride: true,
+              isStageOwner: false
+            });
+          }
           if (!canClientDriveStage(input.clientId)) {
             const lanStat = getLanStatus();
             return json(response, 200, {
@@ -2104,6 +2713,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (!armed) return json(response, 409, { error: 'Izlaz je ugašen.' });
           if (!input.bars || Object.keys(input.bars).length !== 9) throw new Error('Kadar mora sadržavati svih 9 traka.');
           const values = new Map(config.nodes.map(node => [node.id, []]));
+          let hasNonZeroChannel = false;
           for (const node of config.nodes) {
             const routes = cachedNodeRoutes.get(node.id) || routesForNode(config, node.id);
             const nodeValues = values.get(node.id);
@@ -2117,13 +2727,31 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               const encoded = config.transport === 'rgbw' ? groups : groups.map(rgbFromRgbw);
               for (let i = 0; i < encoded.length; i++) {
                 const px = encoded[i];
-                for (let c = 0; c < px.length; c++) nodeValues.push(px[c]);
+                for (let c = 0; c < px.length; c++) {
+                  const v = px[c];
+                  if (v > 0) hasNonZeroChannel = true;
+                  nodeValues.push(v);
+                }
               }
+            }
+          }
+          if (!hasNonZeroChannel && config.profile === 'e8-columns' && !liveControl.state.blackout) {
+            const cid = input.clientId ? String(input.clientId).trim() : '';
+            const peer = cid ? lanPeers.get(cid) : null;
+            const peerIdle = peer ? (!peer.isPlaying && !peer.hasActivePads) : (!latestLiveState?.isPlaying && !(latestLiveState?.activePads?.length));
+            if (peerIdle && cid) {
+              lastFrame = performance.now();
+              return json(response, 200, { ok: true, skipped: 'idle_black_frame', isStageOwner: true, stageOwnerId });
             }
           }
           const now = performance.now();
           if (now - lastAcceptedFrame < minFrameMs) return json(response, 429, { error: 'Najviše 120 kadrova u sekundi.' });
+          if (framesSentSinceArm === 0) {
+            logEvent('DDP', 'STREAM_FIRST_FRAME', { source: 'api_frame', clientId: input.clientId || null, hasNonZeroChannel });
+          }
+          framesSentSinceArm++;
           lastFrame = now;
+          lastClientFrame = now;
           lastAcceptedFrame = now;
           await Promise.all(config.nodes.filter(node => node.host).map(node => send(node.host, values.get(node.id))));
           return json(response, 200, { ok: true, isStageOwner: true, stageOwnerId });
@@ -2135,11 +2763,11 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         response.writeHead(204, { 'Cache-Control': 'public, max-age=86400' });
         return response.end();
       }
-      const allowed = new Set(['/', '/index.html', '/classic.html', '/daw.css', '/hardware-settings.css', '/hardware-topology.mjs', '/daw.mjs', '/daw-state.mjs', '/daw-remote.mjs', '/daw-ui.mjs', '/daw-playlist.mjs', '/daw-editor.mjs', '/daw-mixer.mjs', '/daw-stems.mjs', '/daw-live.mjs', '/daw-performance.mjs', '/live-performance-state.mjs', '/live-session-recorder.mjs', '/daw-output.mjs', '/daw-browser.mjs', '/daw-driver.mjs', '/show-bundle.mjs', '/audio-spectrum.mjs', '/audio-sections.mjs', '/gemini-director.mjs', '/ui.mjs', '/engine.mjs', '/timeline.mjs', '/show-engine.mjs', '/timeline-viewport.mjs', '/mapping.mjs', '/led-preview.mjs', '/tooltips.mjs', '/project-ui.mjs', '/style.css', '/studio.css', '/assets/stage-background.png']);
+      const allowed = new Set(['/', '/index.html', '/classic.html', '/pad', '/pad.html', '/pad.css', '/pad.mjs', '/manifest.webmanifest', '/assets/pad-icon.svg', '/daw.css', '/hardware-settings.css', '/hardware-topology.mjs', '/daw.mjs', '/daw-state.mjs', '/daw-remote.mjs', '/daw-ui.mjs', '/daw-playlist.mjs', '/daw-editor.mjs', '/daw-mixer.mjs', '/daw-stems.mjs', '/daw-live.mjs', '/daw-performance.mjs', '/live-performance-state.mjs', '/live-session-recorder.mjs', '/daw-output.mjs', '/daw-browser.mjs', '/daw-driver.mjs', '/show-bundle.mjs', '/audio-spectrum.mjs', '/audio-sections.mjs', '/gemini-director.mjs', '/ui.mjs', '/engine.mjs', '/timeline.mjs', '/show-engine.mjs', '/timeline-viewport.mjs', '/mapping.mjs', '/led-preview.mjs', '/tooltips.mjs', '/project-ui.mjs', '/style.css', '/studio.css', '/assets/stage-background.png']);
       if (!allowed.has(pathname)) return json(response, 404, { error: 'Datoteka ne postoji.' });
-      const filename = pathname === '/' ? 'index.html' : pathname.slice(1);
+      const filename = pathname === '/' ? 'index.html' : (pathname === '/pad' ? 'pad.html' : pathname.slice(1));
       const data = await readFile(resolve(ROOT, filename));
-      const mime = { '.html': 'text/html', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png' }[extname(filename)];
+      const mime = { '.html': 'text/html', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' }[extname(filename)];
       response.writeHead(200, { 'Content-Type': mime === 'image/png' ? mime : `${mime}; charset=utf-8`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
       response.end(data);
     } catch (error) {
@@ -2154,6 +2782,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     autoConnect,
     getLanStatus,
     lanCoordinator,
+    logEvent,
     async load() {
       if (!configPath) return;
       try { updateConfig(validateConfig(JSON.parse(await readFile(configPath, 'utf8')), allowLoopback)); }
@@ -2162,6 +2791,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     async close() {
       if (closing) return;
       closing = true;
+      clearInterval(renderTimer);
       clearInterval(timer);
       await lanCoordinator?.close?.().catch(() => {});
       for (const client of liveClients) {
@@ -2170,7 +2800,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
       liveClients.clear();
       lanPeers.clear();
       if (testRunning) { testAbort = true; stopTest?.(); await testSettled; }
-      await disarm('Poslužitelj ugašen').catch(() => {});
+      await disarm('Poslužitelj ugašen', { sendZeros: config.profile !== 'e8-columns' }).catch(() => {});
       server.closeAllConnections?.();
       await new Promise(done => server.close(done));
       try { udp.close(); } catch (error) { if (error.code !== 'ERR_SOCKET_DGRAM_NOT_RUNNING') throw error; }
@@ -2190,7 +2820,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const url = `http://127.0.0.1:${listenPort}`;
     const lanInfo = getLanAddresses(listenPort);
     const lanHint = lanInfo.lanUrls.length ? ` | LAN: ${lanInfo.lanUrls.join(', ')}` : '';
-    console.log(`LEDicated Studio: ${url}${lanHint} (auto-connect na EO8+…)`);
+    app.logEvent('SERVER', 'START', { port: listenPort, host: listenHost, logFile: LOG_FILE_PATH });
+    console.log(`LEDicated Studio: ${url}${lanHint} (auto-connect na EO8+…) | Log: ${LOG_FILE_PATH}`);
     app.autoConnect().then(res => {
       if (res?.connected) console.log(`EO8+ automatski povezan (${res.host || 'E8-1'}) · izlaz uključen.`);
     }).catch(() => {});

@@ -472,7 +472,7 @@ export function createBrowser(host, ctx) {
 /* -------------------------------------------------------------- helpers */
 export function parseTrackTitle(rawTitle) {
   if (!rawTitle) return { artist: '', title: 'Nepoznato' };
-  const parts = rawTitle.split(' - ');
+  const parts = rawTitle.split(/\s+[-–—]\s+/);
   if (parts.length >= 2) {
     return { artist: parts[0].trim(), title: parts.slice(1).join(' - ').trim() };
   }

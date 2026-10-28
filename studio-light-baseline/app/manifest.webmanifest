@@ -1,0 +1,19 @@
+{
+  "name": "LEDicated Pad — Live Performance Surface",
+  "short_name": "LEDicated Pad",
+  "description": "Tactile 3x3 RGBW Live Board Pad & Stage Controller for LEDicated Studio",
+  "start_url": "/pad",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#07080c",
+  "theme_color": "#07080c",
+  "icons": [
+    {
+      "src": "/assets/pad-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
