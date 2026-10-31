@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.756Z",
+  "exportedAt": "2026-10-28T23:52:13.052Z",
   "author": "Timon",
   "track": {
     "id": "cef704ae-4349-470e-8f20-d27ab92d2a51",
@@ -21395,5 +21395,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "cops-dont-like-me-a3e45849",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:13.048Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 463 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/30117745bb91529484215a27b3ed39f8153b391f73c467ef60fd148566d67ce4.mp3"
 }

@@ -243,5 +243,85 @@ test('live board pads add onto the current playing timeline animation without ov
   assert.ok(frameOn.bars.C2[0][0] > base.bars.C2[0][0], 'Live board adds brightness on top of base timeline');
 });
 
+test('spatial 3x3 pad illuminates only the pressed panel while held, never auto-strobes on tap, and turns off on release', () => {
+  const desk = createPerformance();
+  desk.setColor([1, 0, 0, 0]);
+  desk.setIntensity(1);
+  assert.equal(desk.effect, 'solid', 'Default spatial effect is solid panel illumination');
+
+  // 1. Pressing top-left (0, 0) illuminates ONLY L1 at 100% (255), while other panels stay at 0
+  assert.equal(desk.touchDown('t1', { x: 0.1, y: 0.1, clockTime: 10 }), 'started');
+  const frameL1 = desk.render(blank(), 10, 120);
+  for (let p = 0; p < PIXELS_PER_BAR; p++) {
+    assert.equal(frameL1.bars.L1[p][0], 255, `L1 pixel ${p} lights up at 100% (255)`);
+    assert.equal(frameL1.bars.C1[p][0], 0, 'C1 remains unlit when pressing L1');
+    assert.equal(frameL1.bars.R3[p][0], 0, 'R3 remains unlit when pressing L1');
+  }
+
+  // 2. Holding L1 for 5 seconds keeps L1 steadily lit at 100% (no auto-fade)
+  const frameHeld = desk.render(blank(), 15, 120);
+  assert.equal(frameHeld.bars.L1[0][0], 255, 'Held panel stays lit at 100% while pressed');
+
+  // 3. Quick release (within 0.05s) immediately turns off the panel without triggering a strobe burst
+  assert.equal(desk.touchUp('t1', { clockTime: 10.05 }), 'released');
+  const frameAfterUp = desk.render(blank(), 10.06, 120);
+  assert.equal(frameAfterUp.bars.L1[0][0], 0, 'Panel turns off immediately upon release without strobing');
+});
+
+test('guitar mode strums freely across panels with velocity-reactive intensity, spread bleed, and column/row locking', () => {
+  const desk = createPerformance();
+  desk.setColor([1, 0, 0, 0]);
+  desk.setIntensity(1);
+  desk.setSpread(0);
+
+  // 1. Slow drag vs Fast strum velocity response across panels
+  assert.equal(desk.touchDown('g1', { x: 0.1, y: 0.1, velocityGain: 0.5, clockTime: 20 }), 'started');
+  assert.equal(desk.touchMove('g1', { x: 0.12, y: 0.12, clockTime: 20.20 }), 'moved'); // very slow move
+  const slowFrame = desk.render(blank(), 20.20, 120);
+  const slowVal = slowFrame.bars.L1[0][0];
+
+  // Fast strum into C2 (large distance in 0.02s) -> returns 'strummed' and boosts velocity intensity
+  assert.equal(desk.touchMove('g1', { x: 0.52, y: 0.52, clockTime: 20.22 }), 'strummed');
+  const fastFrame = desk.render(blank(), 20.22, 120);
+  const fastVal = fastFrame.bars.C2[0][0];
+  assert.ok(fastVal > slowVal, `Fast strum (${fastVal}) is brighter than slow drag (${slowVal})`);
+  assert.ok(fastFrame.bars.L1[0][0] > 0, 'Recently strummed L1 panel retains a smooth guitar sustain trail');
+
+  // 2. SPREAD slider bleeds light onto neighboring panels
+  desk.clear();
+  desk.setSpread(0);
+  desk.touchDown('sp1', { x: 0.5, y: 0.5, velocityGain: 1, clockTime: 30 });
+  const zeroSpreadFrame = desk.render(blank(), 30, 120);
+  assert.equal(zeroSpreadFrame.bars.C2[0][0], 255, 'Center panel C2 is at 100%');
+  assert.equal(zeroSpreadFrame.bars.C1[0][0], 0, 'Neighbor C1 is 0 when spread is 0%');
+
+  desk.setSpread(0.75);
+  const highSpreadFrame = desk.render(blank(), 30, 120);
+  assert.ok(highSpreadFrame.bars.C1[0][0] > 80, 'Neighbor C1 lights up proportionally when spread is increased');
+
+  // 3. Column & Row Bubble Locks: locking Column 0 (L) lights L1, L2, L3 together when pressing L1
+  desk.clear();
+  desk.setSpread(0);
+  desk.setColumnLocked(0, true);
+  desk.touchDown('lock1', { x: 0.1, y: 0.1, velocityGain: 1, clockTime: 40 });
+  const colLockedFrame = desk.render(blank(), 40, 120);
+  assert.equal(colLockedFrame.bars.L1[0][0], 255, 'L1 lights at 100%');
+  assert.equal(colLockedFrame.bars.L2[0][0], 255, 'L2 lights at 100% because Left column is locked');
+  assert.equal(colLockedFrame.bars.L3[0][0], 255, 'L3 lights at 100% because Left column is locked');
+  assert.equal(colLockedFrame.bars.C1[0][0], 0, 'Unlocked columns stay dark');
+
+  // Unlocking Column 0 and locking Row 2 (bottom row: L3, C3, R3)
+  desk.setColumnLocked(0, false);
+  desk.setRowLocked(2, true);
+  desk.touchMove('lock1', { x: 0.5, y: 0.85, velocityGain: 1, clockTime: 41 });
+  const rowLockedFrame = desk.render(blank(), 41, 120);
+  assert.equal(rowLockedFrame.bars.L3[0][0], 255, 'L3 lights at 100% when bottom row is locked');
+  assert.equal(rowLockedFrame.bars.C3[0][0], 255, 'C3 lights at 100% when bottom row is locked');
+  assert.equal(rowLockedFrame.bars.R3[0][0], 255, 'R3 lights at 100% when bottom row is locked');
+  assert.equal(rowLockedFrame.bars.C2[0][0], 0, 'Unlocked rows stay dark');
+});
+
+
+
 
 

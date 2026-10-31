@@ -1,9 +1,10 @@
 import { BAR_IDS, PIXELS_PER_BAR } from './engine.mjs';
 import { PRESETS } from './timeline.mjs';
-import { createPerformance, DEFAULT_PADS, PAD_KEYS } from './live-performance-state.mjs';
+import { createPerformance, DEFAULT_PADS, PAD_KEYS, hsvToRgbw, rgbwToHsv, sampleSpatialPanelEffect } from './live-performance-state.mjs';
 import { createZoneGridIcon } from './daw-ui.mjs';
 
 const PRESET_LABELS = {
+  solid: 'Panel',
   pulse: 'Impuls',
   chase: 'Potjera',
   sweep: 'Val',
@@ -135,8 +136,19 @@ const xyMorphSurface = document.getElementById('xy-morph-surface');
 const xyPadStage = document.getElementById('xy-pad-stage');
 const xyCanvas = document.getElementById('xy-canvas');
 const xyCtx = xyCanvas.getContext('2d');
-const xyPuck = document.getElementById('xy-puck');
-const xyQuickPads = document.getElementById('xy-quick-pads');
+const xyIntensityTrack = document.getElementById('xy-intensity-track');
+const xyIntensityFill = document.getElementById('xy-intensity-fill');
+const xyIntensityThumb = document.getElementById('xy-intensity-thumb');
+const xyIntensityVal = document.getElementById('xy-intensity-val');
+const xySpreadTrack = document.getElementById('xy-spread-track');
+const xySpreadFill = document.getElementById('xy-spread-fill');
+const xySpreadThumb = document.getElementById('xy-spread-thumb');
+const xySpreadVal = document.getElementById('xy-spread-val');
+const xyEffectSelect = document.getElementById('xy-effect-select');
+const xyWheelWrap = document.getElementById('xy-wheel-wrap');
+const xyWheelCanvas = document.getElementById('xy-wheel-canvas');
+const xyWheelPuck = document.getElementById('xy-wheel-puck');
+const xyColorVal = document.getElementById('xy-color-val');
 
 const dialIntensity = document.getElementById('dial-intensity');
 const valIntensity = document.getElementById('val-intensity');
@@ -278,19 +290,6 @@ function buildPadGrid() {
     padElements.push(tile);
   }
 
-  // Build XY quick pad selector buttons
-  xyQuickPads.innerHTML = '';
-  for (let i = 0; i < 6; i++) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'xy-mini-pad';
-    btn.dataset.index = String(i);
-    btn.addEventListener('click', () => {
-      selectPad(i);
-    });
-    xyQuickPads.appendChild(btn);
-  }
-
   refreshPadTilesUI();
 }
 
@@ -332,14 +331,6 @@ function refreshPadTilesUI() {
       dot.classList.toggle('lit', targetSet.has(dot.dataset.bar));
     }
   }
-
-  // Update XY quick pads
-  const xyBtns = xyQuickPads.querySelectorAll('.xy-mini-pad');
-  xyBtns.forEach((btn, idx) => {
-    const pad = desk.pads[idx];
-    btn.textContent = pad ? `${PAD_KEYS[idx]} · ${pad.name}` : PAD_KEYS[idx];
-    btn.classList.toggle('active', idx === selectedPadIndex);
-  });
 
   updateSelectedPadDock();
   updateZoneOverlayUI();
@@ -445,74 +436,264 @@ function setupMultiTouchPadEvents() {
   padMatrixGrid.addEventListener('pointercancel', handlePointerRelease);
 }
 
-// XY Morph Expressive Surface
-let xyActive = false;
-let xyNormX = 0.5;
-let xyNormY = 0.75;
-let xySyncThrottle = 0;
+// XY Spatial 3x3 Guitar / Draw Surface + Edge Lock Bubbles + Intensity & Spread Sliders
+const xyPointers = new Map();
+const xyBubbleHolds = new Map(); // pointerId -> { kind: 'col'|'row', index, startedAt, initiallyLocked, completed }
+const XY_BUBBLE_HOLD_SEC = 0.40;
+let xyMoveThrottle = 0;
+
+function syncXYControlsUI() {
+  const pct = Math.round(desk.intensity * 100);
+  if (xyIntensityFill) xyIntensityFill.style.height = `${pct}%`;
+  if (xyIntensityThumb) xyIntensityThumb.style.bottom = `calc(${pct}% - 4px)`;
+  if (xyIntensityVal) xyIntensityVal.textContent = `${pct}%`;
+  if (xyIntensityTrack) xyIntensityTrack.setAttribute('aria-valuenow', String(pct));
+
+  const spreadPct = Math.round((desk.spread ?? 0) * 100);
+  if (xySpreadFill) xySpreadFill.style.height = `${spreadPct}%`;
+  if (xySpreadThumb) xySpreadThumb.style.bottom = `calc(${spreadPct}% - 4px)`;
+  if (xySpreadVal) xySpreadVal.textContent = `${spreadPct}%`;
+  if (xySpreadTrack) xySpreadTrack.setAttribute('aria-valuenow', String(spreadPct));
+
+  if (xyEffectSelect && xyEffectSelect.value !== desk.effect) {
+    xyEffectSelect.value = desk.effect;
+  }
+
+  const { hue, sat } = rgbwToHsv(desk.color);
+  const rad = (hue * Math.PI) / 180;
+  const px = 50 + Math.cos(rad) * sat * 42;
+  const py = 50 + Math.sin(rad) * sat * 42;
+  const colHex = rgbArrayToHex(desk.color, '#00f2ff');
+  if (xyWheelPuck) {
+    xyWheelPuck.style.left = `${px.toFixed(1)}%`;
+    xyWheelPuck.style.top = `${py.toFixed(1)}%`;
+    xyWheelPuck.style.backgroundColor = colHex;
+  }
+  if (xyColorVal) {
+    xyColorVal.textContent = sat < 0.12 ? 'BIJELA' : `${Math.round(hue)}°`;
+  }
+}
+
+function drawColorWheelStatic() {
+  if (!xyWheelCanvas) return;
+  const ctx = xyWheelCanvas.getContext('2d');
+  if (!ctx) return;
+  const w = xyWheelCanvas.width;
+  const h = xyWheelCanvas.height;
+  const img = ctx.createImageData(w, h);
+  const rMax = w / 2;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = x - rMax + 0.5;
+      const dy = y - rMax + 0.5;
+      const dist = Math.hypot(dx, dy);
+      if (dist > rMax) continue;
+      const sat = Math.max(0, Math.min(1, dist / (rMax - 1)));
+      const hue = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+      const [r, g, b, ww] = hsvToRgbw(hue, sat, 1);
+      const idx = (y * w + x) * 4;
+      img.data[idx] = Math.min(255, Math.round((r + ww * 0.85) * 255));
+      img.data[idx + 1] = Math.min(255, Math.round((g + ww * 0.75) * 255));
+      img.data[idx + 2] = Math.min(255, Math.round((b + ww * 0.55) * 255));
+      img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
 
 function setupXYSurface() {
-  const updateFromEvent = (e, isStart = false) => {
+  drawColorWheelStatic();
+  syncXYControlsUI();
+
+  const normCoord = e => {
     const rect = xyPadStage.getBoundingClientRect();
-    xyNormX = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
-    xyNormY = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / Math.max(1, rect.height)));
-
-    xyPuck.style.left = `${(xyNormX * 100).toFixed(1)}%`;
-    xyPuck.style.top = `${((1 - xyNormY) * 100).toFixed(1)}%`;
-
-    const pad = desk.pads[selectedPadIndex];
-    if (!pad) return;
-
-    const nextSpeed = Number((0.4 + xyNormX * 2.8).toFixed(2));
-    const nextIntensity = Number((0.25 + xyNormY * 0.75).toFixed(2));
-    const nextWhite = Number((Math.max(0, (xyNormY - 0.55) * 1.6)).toFixed(2));
-
-    pad.intensity = nextIntensity;
-    pad.white = nextWhite;
-    pad.params = { ...(pad.params || {}), speed: nextSpeed, density: Number((0.2 + xyNormX * 0.8).toFixed(2)) };
-
-    updateSelectedPadDock();
-
-    if (isStart && !desk.active.has(selectedPadIndex)) {
-      triggerTactileFeedback('press');
-      desk.press(selectedPadIndex, getPerfContext());
-      sendCommand({ type: 'live_pad', action: 'press', index: selectedPadIndex });
-    }
-
-    const now = performance.now();
-    if (now - xySyncThrottle > 65) {
-      xySyncThrottle = now;
-      sendCommand({ type: 'live_pad', action: 'set', index: selectedPadIndex, pad });
-    }
+    return {
+      x: Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width))),
+      y: Math.max(0, Math.min(1, (e.clientY - rect.top) / Math.max(1, rect.height)))
+    };
   };
+
+  const hitTestEdgeBubble = (nx, ny, rect) => {
+    const w = Math.max(1, rect.width);
+    const h = Math.max(1, rect.height);
+    const px = nx * w;
+    const py = ny * h;
+    const hitRadius = 26;
+    for (let col = 0; col < 3; col++) {
+      const cx = ((col + 0.5) / 3) * w;
+      const cy = h - 13;
+      if (Math.hypot(px - cx, py - cy) <= hitRadius) {
+        return { kind: 'col', index: col };
+      }
+    }
+    for (let row = 0; row < 3; row++) {
+      const cx = 13;
+      const cy = ((row + 0.5) / 3) * h;
+      if (Math.hypot(px - cx, py - cy) <= hitRadius) {
+        return { kind: 'row', index: row };
+      }
+    }
+    return null;
+  };
+
+  xyEffectSelect?.addEventListener('change', () => {
+    desk.setEffect(xyEffectSelect.value);
+    triggerTactileFeedback('tap');
+    sendCommand({ type: 'live_pad', action: 'set_effect', effect: desk.effect });
+  });
 
   xyPadStage.addEventListener('pointerdown', e => {
     e.preventDefault();
-    xyActive = true;
     try { xyPadStage.setPointerCapture(e.pointerId); } catch {}
-    updateFromEvent(e, true);
+    const rect = xyPadStage.getBoundingClientRect();
+    const { x, y } = normCoord(e);
+    const bubbleHit = hitTestEdgeBubble(x, y, rect);
+    if (bubbleHit) {
+      const isLocked = bubbleHit.kind === 'col'
+        ? desk.lockedCols.includes(bubbleHit.index)
+        : desk.lockedRows.includes(bubbleHit.index);
+      xyBubbleHolds.set(e.pointerId, {
+        kind: bubbleHit.kind,
+        index: bubbleHit.index,
+        startedAt: getPerfContext().clockTime,
+        initiallyLocked: isLocked,
+        completed: false
+      });
+      triggerTactileFeedback('press');
+      return;
+    }
+
+    const id = `p-${e.pointerId}`;
+    xyPointers.set(e.pointerId, id);
+    triggerTactileFeedback('press');
+    desk.touchDown(id, {
+      x,
+      y,
+      clockTime: getPerfContext().clockTime,
+      color: desk.color,
+      intensity: desk.intensity,
+      spread: desk.spread,
+      velocityGain: 0.78,
+      effect: desk.effect
+    });
+    sendCommand({
+      type: 'live_pad',
+      action: 'touch_down',
+      id,
+      x,
+      y,
+      color: desk.color,
+      intensity: desk.intensity,
+      spread: desk.spread,
+      velocityGain: 0.78,
+      effect: desk.effect,
+      lockedCols: desk.lockedCols,
+      lockedRows: desk.lockedRows
+    });
   });
 
   xyPadStage.addEventListener('pointermove', e => {
-    if (!xyActive) return;
-    updateFromEvent(e, false);
+    if (xyBubbleHolds.has(e.pointerId)) return;
+    const id = xyPointers.get(e.pointerId);
+    if (!id) return;
+    const { x, y } = normCoord(e);
+    const res = desk.touchMove(id, { x, y, clockTime: getPerfContext().clockTime });
+    if (res === 'strummed') {
+      triggerTactileFeedback('tap');
+    }
+    const touch = desk.touches.get(id);
+    const velocityGain = touch ? touch.velocityGain : 1;
+    const now = performance.now();
+    if (res === 'strummed' || now - xyMoveThrottle >= 22) {
+      xyMoveThrottle = now;
+      sendCommand({ type: 'live_pad', action: 'touch_move', id, x, y, velocityGain });
+    }
   });
 
-  const endXY = () => {
-    if (!xyActive) return;
-    xyActive = false;
-    const pad = desk.pads[selectedPadIndex];
-    if (pad) {
-      sendCommand({ type: 'live_pad', action: 'set', index: selectedPadIndex, pad });
-      if (pad.mode !== 'loop' && !holdLatchMode) {
-        desk.release(selectedPadIndex, getPerfContext());
-        sendCommand({ type: 'live_pad', action: 'release', index: selectedPadIndex });
-      }
+  const endXYPointer = (e, cancel = false) => {
+    if (xyBubbleHolds.has(e.pointerId)) {
+      xyBubbleHolds.delete(e.pointerId);
+      return;
     }
+    const id = xyPointers.get(e.pointerId);
+    if (!id) return;
+    xyPointers.delete(e.pointerId);
+    desk.touchUp(id, { clockTime: getPerfContext().clockTime, cancel });
+    sendCommand({ type: 'live_pad', action: 'touch_up', id, cancel });
   };
 
-  xyPadStage.addEventListener('pointerup', endXY);
-  xyPadStage.addEventListener('pointercancel', endXY);
+  xyPadStage.addEventListener('pointerup', e => endXYPointer(e, false));
+  xyPadStage.addEventListener('pointercancel', e => endXYPointer(e, true));
+
+  // Right-Side Big Vertical Intensity Slider
+  let draggingSlider = false;
+  const updateSliderFromEvent = e => {
+    const rect = xyIntensityTrack.getBoundingClientRect();
+    const val = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / Math.max(1, rect.height)));
+    desk.setIntensity(val);
+    syncXYControlsUI();
+    sendCommand({ type: 'live_pad', action: 'set_intensity', intensity: desk.intensity });
+  };
+  xyIntensityTrack?.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    draggingSlider = true;
+    try { xyIntensityTrack.setPointerCapture(e.pointerId); } catch {}
+    updateSliderFromEvent(e);
+  });
+  xyIntensityTrack?.addEventListener('pointermove', e => {
+    if (draggingSlider) updateSliderFromEvent(e);
+  });
+  xyIntensityTrack?.addEventListener('pointerup', () => { draggingSlider = false; });
+  xyIntensityTrack?.addEventListener('pointercancel', () => { draggingSlider = false; });
+
+  // Right-Side Vertical Spread Slider
+  let draggingSpread = false;
+  const updateSpreadFromEvent = e => {
+    const rect = xySpreadTrack.getBoundingClientRect();
+    const val = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / Math.max(1, rect.height)));
+    desk.setSpread(val);
+    syncXYControlsUI();
+    sendCommand({ type: 'live_pad', action: 'set_spread', spread: desk.spread });
+  };
+  xySpreadTrack?.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    draggingSpread = true;
+    try { xySpreadTrack.setPointerCapture(e.pointerId); } catch {}
+    updateSpreadFromEvent(e);
+  });
+  xySpreadTrack?.addEventListener('pointermove', e => {
+    if (draggingSpread) updateSpreadFromEvent(e);
+  });
+  xySpreadTrack?.addEventListener('pointerup', () => { draggingSpread = false; });
+  xySpreadTrack?.addEventListener('pointercancel', () => { draggingSpread = false; });
+
+  // Right-Side Interactive Color Wheel
+  let draggingWheel = false;
+  const updateWheelFromEvent = e => {
+    const rect = xyWheelCanvas.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = e.clientX - cx;
+    const dy = e.clientY - cy;
+    const rMax = Math.max(1, Math.min(rect.width, rect.height) / 2);
+    const sat = Math.max(0, Math.min(1, Math.hypot(dx, dy) / rMax));
+    const hue = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+    const nextColor = hsvToRgbw(hue, sat, 1);
+    desk.setColor(nextColor);
+    syncXYControlsUI();
+    sendCommand({ type: 'live_pad', action: 'set_color', color: desk.color });
+  };
+  xyWheelWrap?.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    draggingWheel = true;
+    try { xyWheelWrap.setPointerCapture(e.pointerId); } catch {}
+    updateWheelFromEvent(e);
+  });
+  xyWheelWrap?.addEventListener('pointermove', e => {
+    if (draggingWheel) updateWheelFromEvent(e);
+  });
+  xyWheelWrap?.addEventListener('pointerup', () => { draggingWheel = false; });
+  xyWheelWrap?.addEventListener('pointercancel', () => { draggingWheel = false; });
 }
 
 // 60 FPS Stage Visualizer & Telemetry Loop
@@ -570,13 +751,25 @@ function renderTick() {
     pip.classList.toggle('active', idx === beatIndex && (studioState.isPlaying || desk.active.size > 0));
   });
 
-  // Render 3x3 Diffused RGBW Bar Frame
+  // Render 3x3 Diffused RGBW Bar Frame (always full brightness regardless of master brightness)
+  const nowPerf = performance.now();
+  const hasRemoteBars = Boolean(studioState.remoteBars && (nowPerf - (studioState.remoteBarsAt || 0) < (studioState.isPlaying ? 2000 : 10000)));
   const baseFrame = {
-    bars: Object.fromEntries(BAR_IDS.map(id => [id, Array.from({ length: PIXELS_PER_BAR }, () => [6, 9, 16, 0])]))
+    bars: Object.fromEntries(BAR_IDS.map(id => {
+      const rem = hasRemoteBars ? studioState.remoteBars[id] : null;
+      return [
+        id,
+        Array.isArray(rem) && rem.length === PIXELS_PER_BAR
+          ? rem.map(px => [px[0] || 0, px[1] || 0, px[2] || 0, px[3] || 0])
+          : Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])
+      ];
+    }))
   };
   const rendered = studioState.blackout
-    ? baseFrame
-    : desk.render(baseFrame, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime);
+    ? { bars: Object.fromEntries(BAR_IDS.map(id => [id, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])])) }
+    : (hasRemoteBars && (nowPerf - (studioState.lastLocalPadAt || 0) > 180)
+        ? baseFrame
+        : desk.render(baseFrame, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime));
 
   drawStageCanvas(rendered.bars);
   if (activeSurface === 'xy') {
@@ -621,17 +814,20 @@ function drawStageCanvas(bars) {
       sumR += r; sumG += g; sumB += b; sumW += ww;
       pxCount++;
 
-      // Blend warm white channel into visible preview RGB
-      const dispR = Math.min(255, Math.round(r + ww * 0.95));
-      const dispG = Math.min(255, Math.round(g + ww * 0.78));
-      const dispB = Math.min(255, Math.round(b + ww * 0.48));
+      // Blend warm white channel into visible preview RGB with punchy display gamma
+      const rawR = Math.min(1, Math.max(0, (r + ww * 0.95) / 255));
+      const rawG = Math.min(1, Math.max(0, (g + ww * 0.78) / 255));
+      const rawB = Math.min(1, Math.max(0, (b + ww * 0.48) / 255));
+      const dispR = Math.round(Math.pow(rawR, 1 / 1.85) * 255);
+      const dispG = Math.round(Math.pow(rawG, 1 / 1.85) * 255);
+      const dispB = Math.round(Math.pow(rawB, 1 / 1.85) * 255);
 
       const sx = x + p * segW;
-      stageCtx.fillStyle = `rgb(${dispR}, ${dispG}, ${dispB})`;
+      stageCtx.fillStyle = (dispR + dispG + dispB > 6) ? `rgb(${dispR}, ${dispG}, ${dispB})` : '#080c14';
       stageCtx.fillRect(sx + 0.5, y, Math.max(1, segW - 1), barH);
 
       if (dispR + dispG + dispB > 45) {
-        stageCtx.fillStyle = `rgba(${dispR}, ${dispG}, ${dispB}, 0.22)`;
+        stageCtx.fillStyle = `rgba(${dispR}, ${dispG}, ${dispB}, 0.28)`;
         stageCtx.fillRect(sx - 2, y - 5, segW + 4, barH + 10);
       }
     }
@@ -663,30 +859,306 @@ function drawXYCanvas() {
   const h = xyCanvas.height;
   xyCtx.clearRect(0, 0, w, h);
 
-  const pad = desk.pads[selectedPadIndex];
-  const colHex = rgbArrayToHex(pad?.color, '#00f2ff');
+  const cellW = w / 3;
+  const cellH = h / 3;
+  const perfCtx = getPerfContext();
+  const nowSec = perfCtx.clockTime;
+  const visuals = desk.getTouchVisuals(nowSec);
+  const beatSec = 60 / Math.max(40, Math.min(240, perfCtx.bpm || 120));
+  const lockedCols = desk.lockedCols;
+  const lockedRows = desk.lockedRows;
+  const masterHex = rgbArrayToHex(desk.color, '#00f2ff');
 
-  xyCtx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
-  xyCtx.lineWidth = 1;
-  for (let i = 1; i < 4; i++) {
-    xyCtx.beginPath();
-    xyCtx.moveTo((w * i) / 4, 0);
-    xyCtx.lineTo((w * i) / 4, h);
-    xyCtx.stroke();
-
-    xyCtx.beginPath();
-    xyCtx.moveTo(0, (h * i) / 4);
-    xyCtx.lineTo(w, (h * i) / 4);
-    xyCtx.stroke();
+  // Tick any active edge bubble hold gestures
+  for (const [, hold] of xyBubbleHolds) {
+    if (hold.completed) continue;
+    const progress = Math.min(1, Math.max(0, (nowSec - hold.startedAt) / XY_BUBBLE_HOLD_SEC));
+    if (progress >= 1) {
+      hold.completed = true;
+      const nextLocked = !hold.initiallyLocked;
+      if (hold.kind === 'col') desk.setColumnLocked(hold.index, nextLocked);
+      else desk.setRowLocked(hold.index, nextLocked);
+      triggerTactileFeedback('press');
+      sendCommand({
+        type: 'live_pad',
+        action: 'set_locks',
+        lockedCols: desk.lockedCols,
+        lockedRows: desk.lockedRows
+      });
+    }
   }
 
-  const px = xyNormX * w;
-  const py = (1 - xyNormY) * h;
-  const grad = xyCtx.createRadialGradient(px, py, 8, px, py, 180);
-  grad.addColorStop(0, `${colHex}66`);
-  grad.addColorStop(1, 'transparent');
-  xyCtx.fillStyle = grad;
-  xyCtx.fillRect(0, 0, w, h);
+  const activeByBar = new Map();
+  for (const v of visuals) {
+    for (const barId of BAR_IDS) {
+      const barGain = desk.getBarGainForTouch(v.id, barId, nowSec);
+      const lvl = Math.max(0, Math.min(1, barGain * (desk.intensity ?? 1)));
+      if (lvl > 0.005) {
+        if (!activeByBar.has(barId) || activeByBar.get(barId).level < lvl) {
+          activeByBar.set(barId, { touch: v, level: lvl, vel: barGain });
+        }
+      }
+    }
+  }
+
+  // 1. Draw 3x3 Panels & Velocity-Reactive Illumination (Seamless when columns/rows are locked)
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 3; col++) {
+      const barId = BAR_IDS[row * 3 + col];
+      const x = col * cellW;
+      const y = row * cellH;
+      const isColLocked = lockedCols.includes(col);
+      const isRowLocked = lockedRows.includes(row);
+      const topInset = (isColLocked && row > 0) ? 0 : 4;
+      const botInset = (isColLocked && row < 2) ? 0 : 4;
+      const leftInset = (isRowLocked && col > 0) ? 0 : 4;
+      const rightInset = (isRowLocked && col < 2) ? 0 : 4;
+
+      const rx = x + leftInset;
+      const ry = y + topInset;
+      const rw = cellW - leftInset - rightInset;
+      const rh = cellH - topInset - botInset;
+      const activeInfo = activeByBar.get(barId);
+
+      xyCtx.fillStyle = 'rgba(255, 255, 255, 0.022)';
+      xyCtx.beginPath();
+      xyCtx.roundRect(rx, ry, rw, rh, (isColLocked || isRowLocked) ? 6 : 12);
+      xyCtx.fill();
+
+      if (activeInfo) {
+        const active = activeInfo.touch;
+        const level = activeInfo.level;
+        const colHex = rgbArrayToHex(active.color, '#00f2ff');
+
+        xyCtx.save();
+        xyCtx.beginPath();
+        xyCtx.roundRect(rx, ry, rw, rh, (isColLocked || isRowLocked) ? 6 : 12);
+        xyCtx.clip();
+        xyCtx.fillStyle = `${colHex}${Math.round((0.12 + level * 0.36) * 255).toString(16).padStart(2, '0')}`;
+        xyCtx.fillRect(rx, ry, rw, rh);
+
+        const localTime = Math.max(0, nowSec - (active.startAt ?? nowSec));
+        const segAreaX = rx + 10;
+        const segAreaW = rw - 20;
+        const segAreaY = ry + rh * 0.5 - 8;
+        const segW = segAreaW / PIXELS_PER_BAR;
+        for (let p = 0; p < PIXELS_PER_BAR; p++) {
+          const fx = sampleSpatialPanelEffect(active.effect || 'solid', p, row, col, barId, nowSec, localTime, beatSec);
+          const segAlpha = Math.max(0.10, Math.min(1, level * fx));
+          xyCtx.fillStyle = colHex;
+          xyCtx.globalAlpha = segAlpha;
+          xyCtx.fillRect(segAreaX + p * segW + 1, segAreaY, Math.max(2, segW - 2), 16);
+        }
+        xyCtx.globalAlpha = 1;
+        xyCtx.restore();
+
+        if (!isColLocked && !isRowLocked) {
+          xyCtx.strokeStyle = colHex;
+          xyCtx.lineWidth = 2.0;
+          xyCtx.beginPath();
+          xyCtx.roundRect(rx, ry, rw, rh, 12);
+          xyCtx.stroke();
+        }
+
+        if (active.col === col && active.row === row) {
+          const pct = Math.round(activeInfo.vel * 100);
+          const fxLabel = active.effect && active.effect !== 'solid'
+            ? `${(PRESET_LABELS[active.effect] || active.effect).toUpperCase()} · ${pct}%`
+            : `${pct}%`;
+          xyCtx.fillStyle = '#ffffff';
+          xyCtx.font = '800 11px "SF Mono", monospace';
+          const textW = xyCtx.measureText(fxLabel).width;
+          xyCtx.fillText(fxLabel, rx + rw - textW - 10, ry + 22);
+        }
+      }
+
+      xyCtx.fillStyle = activeInfo ? '#ffffff' : 'rgba(255, 255, 255, 0.5)';
+      xyCtx.font = '800 15px "SF Mono", monospace';
+      xyCtx.fillText(barId, x + 14, y + 26);
+    }
+  }
+
+  // 2. Dashed Internal Grid Lines (Erased inside locked columns / rows)
+  xyCtx.save();
+  xyCtx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+  xyCtx.lineWidth = 1.2;
+  xyCtx.setLineDash([6, 5]);
+  for (let colBoundary = 1; colBoundary <= 2; colBoundary++) {
+    const xPos = colBoundary * cellW;
+    for (let row = 0; row < 3; row++) {
+      if (lockedRows.includes(row)) continue;
+      xyCtx.beginPath();
+      xyCtx.moveTo(xPos, row * cellH + 8);
+      xyCtx.lineTo(xPos, (row + 1) * cellH - 8);
+      xyCtx.stroke();
+    }
+  }
+  for (let rowBoundary = 1; rowBoundary <= 2; rowBoundary++) {
+    const yPos = rowBoundary * cellH;
+    for (let col = 0; col < 3; col++) {
+      if (lockedCols.includes(col)) continue;
+      xyCtx.beginPath();
+      xyCtx.moveTo(col * cellW + 8, yPos);
+      xyCtx.lineTo((col + 1) * cellW - 8, yPos);
+      xyCtx.stroke();
+    }
+  }
+  xyCtx.setLineDash([]);
+  xyCtx.restore();
+
+  // 3. Solid Glowing Outer Border around Locked Columns & Rows
+  for (const col of lockedCols) {
+    xyCtx.save();
+    xyCtx.shadowColor = masterHex;
+    xyCtx.shadowBlur = 12;
+    xyCtx.strokeStyle = masterHex;
+    xyCtx.lineWidth = 2.2;
+    xyCtx.beginPath();
+    xyCtx.roundRect(col * cellW + 3.5, 3.5, cellW - 7, h - 7, 16);
+    xyCtx.stroke();
+    xyCtx.restore();
+  }
+  for (const row of lockedRows) {
+    xyCtx.save();
+    xyCtx.shadowColor = masterHex;
+    xyCtx.shadowBlur = 12;
+    xyCtx.strokeStyle = masterHex;
+    xyCtx.lineWidth = 2.2;
+    xyCtx.beginPath();
+    xyCtx.roundRect(3.5, row * cellH + 3.5, w - 7, cellH - 7, 16);
+    xyCtx.stroke();
+    xyCtx.restore();
+  }
+
+  // 4. Edge Lock Bubbles (Bottom edge = Columns 0..2, Left edge = Rows 0..2)
+  const colHolds = new Map();
+  const rowHolds = new Map();
+  for (const [, hold] of xyBubbleHolds) {
+    if (hold.kind === 'col') colHolds.set(hold.index, hold);
+    else rowHolds.set(hold.index, hold);
+  }
+
+  for (let col = 0; col < 3; col++) {
+    const cx = (col + 0.5) * cellW;
+    const cy = h - 13;
+    const isLocked = lockedCols.includes(col);
+    const hold = colHolds.get(col);
+    if (hold && !hold.completed) {
+      const raw = Math.min(1, Math.max(0, (nowSec - hold.startedAt) / XY_BUBBLE_HOLD_SEC));
+      const eased = 1 - Math.pow(1 - raw, 2.2);
+      const spanFrac = hold.initiallyLocked ? (1 - eased) : eased;
+      const beamH = Math.max(20, (h - 14) * spanFrac);
+      xyCtx.save();
+      xyCtx.fillStyle = `${masterHex}38`;
+      xyCtx.strokeStyle = masterHex;
+      xyCtx.shadowColor = masterHex;
+      xyCtx.shadowBlur = 10;
+      xyCtx.lineWidth = 2;
+      xyCtx.beginPath();
+      xyCtx.roundRect(col * cellW + 5, h - 7 - beamH, cellW - 10, beamH, 14);
+      xyCtx.fill();
+      xyCtx.stroke();
+      xyCtx.restore();
+    }
+    const r = (hold && !hold.completed) ? 8.5 : (isLocked ? 6 : 4.5);
+    xyCtx.save();
+    if (isLocked || (hold && !hold.completed)) {
+      xyCtx.shadowColor = masterHex;
+      xyCtx.shadowBlur = 8;
+      xyCtx.fillStyle = masterHex;
+    } else {
+      xyCtx.fillStyle = 'rgba(255, 255, 255, 0.38)';
+    }
+    xyCtx.beginPath();
+    xyCtx.arc(cx, cy, r, 0, Math.PI * 2);
+    xyCtx.fill();
+    if (isLocked || (hold && !hold.completed)) {
+      xyCtx.strokeStyle = '#ffffff';
+      xyCtx.lineWidth = 1.5;
+      xyCtx.stroke();
+    }
+    xyCtx.restore();
+  }
+
+  for (let row = 0; row < 3; row++) {
+    const cx = 13;
+    const cy = (row + 0.5) * cellH;
+    const isLocked = lockedRows.includes(row);
+    const hold = rowHolds.get(row);
+    if (hold && !hold.completed) {
+      const raw = Math.min(1, Math.max(0, (nowSec - hold.startedAt) / XY_BUBBLE_HOLD_SEC));
+      const eased = 1 - Math.pow(1 - raw, 2.2);
+      const spanFrac = hold.initiallyLocked ? (1 - eased) : eased;
+      const beamW = Math.max(20, (w - 14) * spanFrac);
+      xyCtx.save();
+      xyCtx.fillStyle = `${masterHex}38`;
+      xyCtx.strokeStyle = masterHex;
+      xyCtx.shadowColor = masterHex;
+      xyCtx.shadowBlur = 10;
+      xyCtx.lineWidth = 2;
+      xyCtx.beginPath();
+      xyCtx.roundRect(7, row * cellH + 5, beamW, cellH - 10, 14);
+      xyCtx.fill();
+      xyCtx.stroke();
+      xyCtx.restore();
+    }
+    const r = (hold && !hold.completed) ? 8.5 : (isLocked ? 6 : 4.5);
+    xyCtx.save();
+    if (isLocked || (hold && !hold.completed)) {
+      xyCtx.shadowColor = masterHex;
+      xyCtx.shadowBlur = 8;
+      xyCtx.fillStyle = masterHex;
+    } else {
+      xyCtx.fillStyle = 'rgba(255, 255, 255, 0.38)';
+    }
+    xyCtx.beginPath();
+    xyCtx.arc(cx, cy, r, 0, Math.PI * 2);
+    xyCtx.fill();
+    if (isLocked || (hold && !hold.completed)) {
+      xyCtx.strokeStyle = '#ffffff';
+      xyCtx.lineWidth = 1.5;
+      xyCtx.stroke();
+    }
+    xyCtx.restore();
+  }
+
+  // 5. Smooth Guitar Strum Ribbon & Finger Touch Puck
+  for (const v of visuals) {
+    const colHex = rgbArrayToHex(v.color, '#00f2ff');
+    const pts = v.trailPoints || [];
+    if (pts.length >= 2) {
+      xyCtx.save();
+      xyCtx.lineCap = 'round';
+      xyCtx.lineJoin = 'round';
+      for (let i = 1; i < pts.length; i++) {
+        const p0 = pts[i - 1];
+        const p1 = pts[i];
+        const age = Math.max(0, nowSec - p1.time);
+        const life = Math.max(0, Math.min(1, 1 - age / 0.36));
+        if (life <= 0.02) continue;
+        xyCtx.strokeStyle = colHex;
+        xyCtx.globalAlpha = life * 0.55;
+        xyCtx.lineWidth = 3 + life * 9 * (v.velocityGain ?? 1);
+        xyCtx.beginPath();
+        xyCtx.moveTo(p0.x * w, p0.y * h);
+        xyCtx.lineTo(p1.x * w, p1.y * h);
+        xyCtx.stroke();
+      }
+      xyCtx.globalAlpha = 1;
+      xyCtx.restore();
+    }
+
+    const px = v.x * w;
+    const py = v.y * h;
+    const puckR = 9 + (v.velocityGain ?? 1) * 4;
+    xyCtx.beginPath();
+    xyCtx.arc(px, py, puckR, 0, Math.PI * 2);
+    xyCtx.fillStyle = '#ffffff';
+    xyCtx.fill();
+    xyCtx.strokeStyle = colHex;
+    xyCtx.lineWidth = 3;
+    xyCtx.stroke();
+  }
 }
 
 // Dialog Light-Dismiss Helper (Modern Web Guidance `light-dismiss-a-dialog`)
@@ -751,6 +1223,52 @@ function initInspectorControls() {
   }
 
   inspName.addEventListener('input', () => {
+    const pad = ensureSelectedPad();
+    pad.name = inspName.value.trim() || `Pad ${PAD_KEYS[selectedPadIndex]}`;
+    syncSelectedPadToStudio();
+  });
+
+  inspModeSwitch.querySelectorAll('.seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pad = ensureSelectedPad();
+      pad.mode = btn.dataset.mode === 'loop' ? 'loop' : 'hit';
+      syncSelectedPadToStudio();
+      populateInspectorFromPad();
+    });
+  });
+
+  inspBarGrid.querySelectorAll('.insp-bar-cell').forEach(cell => {
+    cell.addEventListener('click', () => {
+      toggleBarOnSelectedPad(cell.dataset.bar);
+      populateInspectorFromPad();
+    });
+  });
+
+  document.querySelectorAll('[data-zone-preset]').forEach(btn => {
+    const presetIds = ZONE_PRESETS[btn.dataset.zonePreset] || BAR_IDS;
+    const labelText = btn.textContent.trim();
+    btn.textContent = '';
+    btn.append(createZoneGridIcon(presetIds, BAR_IDS));
+    const span = document.createElement('span');
+    span.className = 'zone-btn-label';
+    span.textContent = labelText;
+    btn.append(span);
+    btn.addEventListener('click', () => {
+      const pad = ensureSelectedPad();
+      pad.bars = [...presetIds];
+      pad.targets = presetIds.length === 9 ? 'all' : [...presetIds];
+      syncSelectedPadToStudio();
+      populateInspectorFromPad();
+    });
+  });
+
+  inspColorA.addEventListener('input', () => {
+    const pad = ensureSelectedPad();
+    pad.color = hexToRgbArray(inspColorA.value);
+    syncSelectedPadToStudio();
+  });
+
+  inspColorB.addEventListener('input', () => {
     const pad = ensureSelectedPad();
     pad.name = inspName.value.trim() || `Pad ${PAD_KEYS[selectedPadIndex]}`;
     syncSelectedPadToStudio();
@@ -1179,7 +1697,7 @@ async function connectStudioStream() {
     connDot.classList.add('offline');
   }
 
-  const sse = new EventSource(`/api/live/stream?clientId=${encodeURIComponent(clientId)}&name=${encodeURIComponent('iPhone Live Pad')}`);
+  const sse = new EventSource(`/api/live/stream?clientId=${encodeURIComponent(clientId)}&name=${encodeURIComponent('iPhone Live Pad')}&role=companion`);
 
   sse.addEventListener('open', () => {
     connDot.classList.add('online');
@@ -1196,6 +1714,29 @@ async function connectStudioStream() {
     let cmd;
     try { cmd = JSON.parse(event.data); } catch { return; }
     if (!cmd || cmd.clientId === clientId) return;
+
+    if (cmd.type === 'frame_sync') {
+      if (cmd.bars && typeof cmd.bars === 'object') {
+        studioState.remoteBars = cmd.bars;
+        studioState.remoteBarsAt = performance.now();
+      }
+      if (typeof cmd.isPlaying === 'boolean' && studioState.isPlaying !== cmd.isPlaying) {
+        studioState.isPlaying = cmd.isPlaying;
+        syncTransportUI();
+      }
+      if (Number.isFinite(cmd.timeSec)) {
+        studioState.timeSec = Number(cmd.timeSec);
+        studioState.lastSyncPerfMs = performance.now();
+      }
+      if (Number.isFinite(cmd.bpm) && cmd.bpm > 0) {
+        studioState.bpm = Number(cmd.bpm);
+      }
+      if (typeof cmd.blackout === 'boolean' && studioState.blackout !== cmd.blackout) {
+        studioState.blackout = cmd.blackout;
+        syncTransportUI();
+      }
+      return;
+    }
 
     if (cmd.type === 'pads_sync' && Array.isArray(cmd.pads)) {
       cmd.pads.forEach((p, idx) => {

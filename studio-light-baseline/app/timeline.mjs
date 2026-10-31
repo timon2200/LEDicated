@@ -11,6 +11,7 @@ export const TIMELINE_PRESETS = Object.freeze([
   'wash', 'pulse', 'columns', 'chase', 'flash', 'wave',
   'strobe', 'sparkle', 'spiral', 'ripple', 'rain', 'bounce', 'fire', 'alternate', 'center', 'sweep'
 ]);
+export const PRESETS = TIMELINE_PRESETS;
 export const TIMELINE_BLENDS = Object.freeze(['add', 'screen', 'multiply', 'max', 'replace']);
 const DRIVERS = ['none', 'drums', 'bass', 'vocals', 'other', 'band'];
 
@@ -238,8 +239,10 @@ export function bandLevel(analysis, band, timeSec) {
 
 function hasAudioFeatures(analysis) {
   if (!analysis || typeof analysis !== 'object') return false;
-  if (analysis.spectrum || analysis.features || analysis.envelopes) return true;
-  if (analysis.drums || analysis.bass || analysis.vocals || analysis.other) return true;
+  if (analysis.spectrum) return true;
+  const hasSamples = obj => Boolean(obj && ['drums', 'bass', 'vocals', 'other'].some(k => obj[k]?.length > 0));
+  if (hasSamples(analysis.features) || hasSamples(analysis.features?.stems) || hasSamples(analysis.envelopes) || hasSamples(analysis)) return true;
+  if (analysis.waveform && (analysis.waveform.mid?.length > 0 || analysis.waveform.high?.length > 0)) return true;
   return false;
 }
 
@@ -274,6 +277,29 @@ export function snapTimeToBeat(timeSec, bpm, beatOffsetSec = 0, division = 1, be
   }
   const interval = 60 / clamp(number(bpm, 120), 40, 240) / division;
   return Math.max(0, beatOffsetSec + Math.round((timeSec - beatOffsetSec) / interval) * interval);
+}
+
+/** Ensure keyframes are clamped to [0, len], sorted, and strictly increasing. */
+export function sanitizeKeyframes(keys, len) {
+  const maxT = Math.max(1e-4, Number.isFinite(len) && len > 0 ? len : 1);
+  if (!Array.isArray(keys) || !keys.length) return [{ timeSec: 0, value: 1 }, { timeSec: maxT, value: 1 }];
+  const sorted = keys
+    .filter(k => k && typeof k === 'object')
+    .map(k => ({
+      timeSec: clamp(number(k.timeSec, 0), 0, maxT),
+      value: clamp(number(k.value, 1), 0, 1),
+      ...(k.ease && k.ease !== 'linear' ? { ease: k.ease } : {})
+    }))
+    .sort((a, b) => a.timeSec - b.timeSec);
+  const out = [];
+  for (const k of sorted) {
+    if (!out.length || k.timeSec > out.at(-1).timeSec + 1e-6) {
+      out.push(k);
+    } else {
+      out[out.length - 1] = k;
+    }
+  }
+  return out.length ? out : [{ timeSec: 0, value: 1 }, { timeSec: maxT, value: 1 }];
 }
 
 /** Returns {valid, errors}; suitable for checking edited JSON before saving. */
@@ -404,7 +430,9 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       const activeBars = (!clip || clip.targets === 'all' || p.pathMode === 'keep')
         ? [...BAR_IDS]
         : BAR_IDS.filter(id => clip.targets.includes(id));
-      const dir = clip?.direction || 'ltr';
+      let dir = p.dir === 'ltr' || p.dir === 'rtl' || p.dir === 'ttb' || p.dir === 'btt'
+        ? p.dir
+        : (clip?.direction || 'ltr');
       const mode = p.mode || 'single';
 
       if (dir === 'ttb' || dir === 'btt') {
@@ -460,6 +488,13 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       let dir = clip?.direction || (clip?.chaseMode === 'col' || isSingleColumn ? 'ttb' : 'ltr');
       if (isSingleColumn && (dir === 'ltr' || dir === 'rtl')) {
         dir = dir === 'rtl' ? 'btt' : 'ttb';
+      }
+      if (p.dir === 'reverse' || p.dir === 'rev' || p.reverse === true) {
+        if (dir === 'ltr') dir = 'rtl';
+        else if (dir === 'ttb') dir = 'btt';
+      } else if (p.dir === 'normal') {
+        if (dir === 'rtl' && !clip?.direction) dir = 'ltr';
+        else if (dir === 'btt' && !clip?.direction) dir = 'ttb';
       }
       let motion = clip?.motionMode || (clip?.chaseMode === 'syncRow' ? 'sync' : 'serial');
       if (isSingleColumn) motion = 'serial';
@@ -641,6 +676,9 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       const shape = p.shape || 'sine';
       const angle = p.angle || 'diag';
       const density = p.density || 'med';
+      const dirMode = p.dir || p.direction;
+      const isReverse = dirMode === 'reverse' || dirMode === 'rev' || dirMode === 'btt' || dirMode === 'rtl' || p.reverse === true ||
+        (!dirMode && (clip?.direction === 'btt' || clip?.direction === 'rtl'));
       const freqMult = density === 'low' ? 0.5 : (density === 'high' ? 2.5 : 1.0);
       // 1.4833 accounts for 120 cm bar + 58 cm physical vertical gap between rows
       const physY = row * 1.4833 + y;
@@ -649,7 +687,8 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       if (angle === 'horiz') spatialPos = col * 1.3 + y * 0.15;
       else if (angle === 'vert') spatialPos = physY;
 
-      const phase = (spatialPos * freqMult * Math.PI - timeSec * Math.PI / beatSec);
+      const timeSign = isReverse ? 1 : -1;
+      const phase = (spatialPos * freqMult * Math.PI + timeSign * timeSec * Math.PI / beatSec);
       let w = 0;
       if (shape === 'triangle') {
         const norm = ((phase / Math.PI) % 2 + 2) % 2;
@@ -753,9 +792,14 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
     case 'rain': {
       const streak = p.streak || p.style || 'streak';
       const spread = p.spread || 'random';
+      const dirMode = p.dir || p.direction;
+      const isUp = dirMode === 'up' || dirMode === 'reverse' || dirMode === 'rev' || dirMode === 'btt' || p.reverse === true ||
+        (!dirMode && clip?.direction === 'btt');
       const colShift = spread === 'sync' ? 0 : (col * 0.28);
       // 1.4833 accounts for 120 cm bar + 58 cm physical vertical gap between rows
-      const vert = row * 1.4833 + y;
+      const maxVert = 2 * 1.4833 + 1;
+      const rawVert = row * 1.4833 + y;
+      const vert = isUp ? (maxVert - rawVert) : rawVert;
       const phase = ((localTime / (beatSec * 1.5) - vert * 0.26 + colShift) % 1 + 1) % 1;
       const dropPower = streak === 'drops' ? 9.0 : ((streak === 'beam' || streak === 'heavy') ? 2.5 : 5.0);
       return Math.exp(-phase * dropPower);
@@ -815,22 +859,36 @@ export function pattern(preset, row, col, pixel, timeSec, localTime, beatSec, cl
       return clamp(0.12 + 0.15 * (.5 + .5 * Math.sin(timeSec * 2 + row + col)));
     }
     case 'sweep': {
-      const style = p.style || 'horiz';
+      const style = p.style || ((clip?.direction === 'ttb' || clip?.direction === 'btt') ? 'vert' : 'horiz');
       const width = p.width || 'laser';
       const beamExp = width === 'fan' ? 2.5 : 10.0;
+      const dirMode = p.dir || p.direction;
+      const isPingPong = dirMode === 'pingpong' || dirMode === 'bounce';
+      const isReverse = dirMode === 'reverse' || dirMode === 'rev' || dirMode === 'btt' || dirMode === 'rtl' || p.reverse === true ||
+        (!dirMode && (clip?.direction === 'btt' || clip?.direction === 'rtl'));
+
+      let frac;
+      if (isPingPong) {
+        const cycle = ((localTime / (beatSec * 2)) % 2 + 2) % 2;
+        frac = cycle <= 1 ? cycle : (2 - cycle);
+        if (isReverse) frac = 1 - frac;
+      } else {
+        const raw = ((localTime / (beatSec * 2)) % 1 + 1) % 1;
+        frac = isReverse ? (1 - raw) : raw;
+      }
 
       let bDist = 0;
       if (style === 'vert') {
-        const beamPos = ((localTime / (beatSec * 2)) % 1) * 3.2 - 0.1;
+        const beamPos = frac * 3.2 - 0.1;
         bDist = Math.abs(row + y - beamPos);
       } else if (style === 'radar') {
-        const angle = ((localTime / (beatSec * 2)) % 1) * Math.PI * 2;
+        const angle = frac * Math.PI * 2;
         const cellAngle = Math.atan2(row - 1, col - 1) + Math.PI;
         let diff = Math.abs(angle - cellAngle);
         if (diff > Math.PI) diff = 2 * Math.PI - diff;
         bDist = diff * 1.5;
       } else { // 'horiz' (default)
-        const beamPos = ((localTime / (beatSec * 2)) % 1) * 3.4 - 0.2;
+        const beamPos = frac * 3.4 - 0.2;
         bDist = Math.abs((col + row * 0.3 + y * 0.2) - beamPos);
       }
       return Math.exp(-bDist * bDist * beamExp);
@@ -891,17 +949,98 @@ export function renderTimelineFrame(timeline, analysis, timeSec, baseFrame = nul
   return { bars: out };
 }
 
+export const ZONES = Object.freeze({
+  all: 'all',
+  wings: Object.freeze(['L1', 'R1', 'L2', 'R2', 'L3', 'R3']),
+  centerCol: Object.freeze(['C1', 'C2', 'C3']),
+  leftCol: Object.freeze(['L1', 'L2', 'L3']),
+  rightCol: Object.freeze(['R1', 'R2', 'R3']),
+  cross: Object.freeze(['C1', 'L2', 'C2', 'R2', 'C3']),
+  upperCross: Object.freeze(['C1', 'L2', 'C2', 'R2']),
+  crossNoCenter: Object.freeze(['C1', 'L2', 'R2', 'C3']),
+  bottomRow: Object.freeze(['L3', 'C3', 'R3']),
+  topRow: Object.freeze(['L1', 'C1', 'R1']),
+  midRow: Object.freeze(['L2', 'C2', 'R2']),
+  perimeter: Object.freeze(['L1', 'C1', 'R1', 'R2', 'R3', 'C3', 'L3', 'L2']),
+  corners: Object.freeze(['L1', 'R1', 'L3', 'R3']),
+  center: Object.freeze(['C2'])
+});
+
+function resolveZone(zoneSpec, fallback) {
+  if (!zoneSpec) return fallback;
+  if (zoneSpec === 'all') return 'all';
+  if (typeof zoneSpec === 'string' && ZONES[zoneSpec]) {
+    return ZONES[zoneSpec] === 'all' ? 'all' : [...ZONES[zoneSpec]];
+  }
+  if (Array.isArray(zoneSpec)) {
+    const valid = zoneSpec.filter(id => BAR_IDS.includes(id));
+    return valid.length ? valid : fallback;
+  }
+  return fallback;
+}
+
 /** Build an editable energetic first pass; uses structural track sections when
  * available to produce dynamic, section-tailored lighting arrangements.
  */
 export function createAutoShow(analysis = {}, options = {}) {
   const durationSec = number(analysis?.durationSec, number(analysis?.duration, 0));
   if (durationSec <= 0) throw new RangeError('analysis.durationSec must be positive');
+
+  if (typeof options.customGeneratorFn === 'function') {
+    const customTimeline = options.customGeneratorFn(analysis, options);
+    const check = validateTimeline(customTimeline);
+    if (!check.valid) throw new TypeError(`Custom auto show generation failed: ${check.errors.join('; ')}`);
+    return customTimeline;
+  }
+
   const bpm = clamp(number(analysis?.bpm, 120), 40, 240);
   const beats = analysis?.beatsSec ?? analysis?.beats ?? [];
   const beatOffsetSec = number(analysis?.beatOffsetSec, typeof beats?.[0] === 'number' ? beats[0] : number(beats?.[0]?.timeSec, 0));
   const energy = clamp(number(options.energy, .8));
   const division = options.snapSubdivision ?? 1;
+
+  const nonDropCeiling = Number.isFinite(Number(options.nonDropCeiling))
+    ? clamp(Number(options.nonDropCeiling), 0.15, 1.0)
+    : 0.55;
+  const ceilingScale = nonDropCeiling === 0.55 ? 1 : nonDropCeiling / 0.55;
+
+  const wChannelMode = ['drop-only', 'accents-and-drop', 'always', 'never'].includes(options.wChannelMode)
+    ? options.wChannelMode
+    : 'drop-only';
+  const dropMinWOpt = Number.isFinite(Number(options.dropMinW))
+    ? clamp(Number(options.dropMinW), 0, 1)
+    : 0.40;
+  const dropMinWScale = dropMinWOpt === 0.40 ? 1 : dropMinWOpt / 0.40;
+  const dropColorBoost = Number.isFinite(Number(options.dropColorBoost))
+    ? Math.max(0.5, Math.min(2.5, Number(options.dropColorBoost)))
+    : 1.25;
+
+  const preDropBlackoutMode = ['auto', 'fixed', 'none'].includes(options.preDropBlackoutMode)
+    ? options.preDropBlackoutMode
+    : 'auto';
+  const dropBlinder = options.dropBlinder !== false;
+  const dropStrobeDurationSec = Number.isFinite(Number(options.dropStrobeDurationSec))
+    ? Math.max(0, Math.min(32, Number(options.dropStrobeDurationSec)))
+    : 6.32;
+  const dropStrobeRate = ['1/2', '1/4', '1/8', '1/16'].includes(options.dropStrobeRate)
+    ? options.dropStrobeRate
+    : '1/4';
+  const dropRhythmStyle = ['auto', 'pulse', 'alternate-2beat', 'columns'].includes(options.dropRhythmStyle)
+    ? options.dropRhythmStyle
+    : 'auto';
+
+  const buildSpiralAccel = options.buildSpiralAccel !== false;
+  const buildMaxSpeed = Number.isFinite(Number(options.buildMaxSpeed))
+    ? Math.max(1, Math.min(32, Number(options.buildMaxSpeed)))
+    : 16;
+  const buildSpeedScale = buildMaxSpeed === 16 ? 1 : buildMaxSpeed / 16;
+
+  const globalSpeedMultiplier = Number.isFinite(Number(options.globalSpeedMultiplier))
+    ? Math.max(0.25, Math.min(4, Number(options.globalSpeedMultiplier)))
+    : 1;
+  const driverGainScale = Number.isFinite(Number(options.driverGainScale))
+    ? Math.max(0.25, Math.min(2.5, Number(options.driverGainScale)))
+    : 1;
 
   let palette;
   if (Array.isArray(options.customColors) && options.customColors.length > 0) {
@@ -928,25 +1067,11 @@ export function createAutoShow(analysis = {}, options = {}) {
     return set.values().next().value;
   };
 
-  const sanitizeKeyframes = (keys, len) => {
-    if (!Array.isArray(keys) || !keys.length) return [{ timeSec: 0, value: 1 }];
-    const sorted = keys
-      .map(k => ({ timeSec: clamp(number(k.timeSec, 0), 0, len), value: clamp(number(k.value, 1), 0, 1), ...(k.ease ? { ease: k.ease } : {}) }))
-      .sort((a, b) => a.timeSec - b.timeSec);
-    const out = [];
-    for (const k of sorted) {
-      if (!out.length || k.timeSec > out.at(-1).timeSec + 1e-6) {
-        out.push(k);
-      } else {
-        out[out.length - 1] = k;
-      }
-    }
-    return out.length ? out : [{ timeSec: 0, value: 1 }];
-  };
-
   const makeClip = (id, preset, color, driver = 'other', targets = 'all', startSec = 0, length = durationSec, gain = 1, speed = 1, params = null, keyframes = null, band = null, timing = 'beat') => {
     const finalPreset = pickPreset(preset);
     const defaultKeys = [{ timeSec: 0, value: 0 }, { timeSec: Math.min(.4, length / 3), value: 1 }, { timeSec: length - Math.min(.4, length / 3), value: 1 }, { timeSec: length, value: 0 }];
+    const effectiveGain = driverGainScale === 1 ? gain : Math.round(gain * driverGainScale * 1000) / 1000;
+    const effectiveSpeed = globalSpeedMultiplier === 1 ? speed : Math.max(0.1, Math.round(speed * globalSpeedMultiplier * 1000) / 1000);
     return {
       id,
       startSec,
@@ -955,8 +1080,8 @@ export function createAutoShow(analysis = {}, options = {}) {
       targets,
       color: normalizeColor(color),
       driver,
-      driverGain: gain,
-      speed,
+      driverGain: effectiveGain,
+      speed: effectiveSpeed,
       timing,
       ...(params ? { params } : {}),
       ...(band ? { band } : {}),
@@ -965,18 +1090,24 @@ export function createAutoShow(analysis = {}, options = {}) {
   };
 
   // Strip warm white (W) channel on non-drop sections so drops own the full RGBW punch
-  const rgbOnly = (c, scale = 1) => {
+  const rgbOnly = (c, scale = 1, isAccent = false) => {
     let [r = 0, g = 0, b = 0, w = 0] = normalizeColor(c);
     if (r + g + b < 0.05 && w > 0) {
       r = w * 0.55;
       g = w * 0.58;
       b = w * 0.65;
     }
-    return [clamp(r * scale), clamp(g * scale), clamp(b * scale), 0];
+    let outW = 0;
+    if (wChannelMode === 'always') {
+      outW = clamp(w > 0 ? w * scale : 0.22 * scale);
+    } else if (wChannelMode === 'accents-and-drop' && isAccent) {
+      outW = clamp(Math.max(w, 0.25) * scale);
+    }
+    return [clamp(r * scale), clamp(g * scale), clamp(b * scale), outW];
   };
 
   // Boost RGB and warm white (W) channel for maximum drop punch
-  const dropColor = (c, minW = 0.35, boost = 1.25) => {
+  const dropColor = (c, minW = 0.35, boost = dropColorBoost) => {
     let [r = 0, g = 0, b = 0, w = 0] = normalizeColor(c);
     if (r + g + b < 0.05 && w > 0) {
       r = w * 0.85;
@@ -985,17 +1116,20 @@ export function createAutoShow(analysis = {}, options = {}) {
     }
     const maxCh = Math.max(r, g, b, 0.01);
     const s = maxCh < 0.75 ? Math.min(boost, 0.96 / maxCh) : boost;
-    return [clamp(r * s), clamp(g * s), clamp(b * s), clamp(Math.max(w, minW))];
+    const effectiveMinW = wChannelMode === 'never' ? 0 : (dropMinWScale === 1 ? minW : clamp(minW * dropMinWScale));
+    const finalW = wChannelMode === 'never' ? 0 : clamp(Math.max(w, effectiveMinW));
+    return [clamp(r * s), clamp(g * s), clamp(b * s), finalW];
   };
 
   const ceilKeys = (len, ceiling = 0.5, isPreDrop = false) => {
+    const effCeil = ceilingScale === 1 ? ceiling : clamp(ceiling * ceilingScale, 0.08, 1.0);
     const fadeIn = Math.min(0.35, len * 0.18);
     const fadeOut = Math.min(0.35, len * 0.18);
     return sanitizeKeyframes([
-      { timeSec: 0, value: clamp(ceiling * 0.45) },
-      { timeSec: fadeIn, value: clamp(ceiling) },
-      { timeSec: Math.max(fadeIn + 0.01, len - fadeOut), value: clamp(ceiling) },
-      { timeSec: len, value: isPreDrop ? clamp(ceiling * 0.85) : clamp(ceiling * 0.35) }
+      { timeSec: 0, value: clamp(effCeil * 0.45) },
+      { timeSec: fadeIn, value: clamp(effCeil) },
+      { timeSec: Math.max(fadeIn + 0.01, len - fadeOut), value: clamp(effCeil) },
+      { timeSec: len, value: isPreDrop ? clamp(effCeil * 0.85) : clamp(effCeil * 0.35) }
     ], len);
   };
 
@@ -1010,9 +1144,9 @@ export function createAutoShow(analysis = {}, options = {}) {
     { timeSec: len, value: 0.9 }
   ], len);
 
-  const sections = (Array.isArray(analysis?.sections) && analysis.sections.length)
+  const sections = (!options.recomputeSections && Array.isArray(analysis?.sections) && analysis.sections.length)
     ? analysis.sections
-    : detectSections(analysis);
+    : detectSections(analysis, options.sectionDetection || {});
 
   // If track has detected sections and sufficient length, create a section-aware arrangement
   if (sections.length >= 2 && durationSec >= 20) {
@@ -1022,17 +1156,18 @@ export function createAutoShow(analysis = {}, options = {}) {
     const synthClips = [];
     const accentClips = [];
 
-    const whiteBlinder = [1, 0.98, 0.92, 1];
-    const wings = ['L1', 'R1', 'L2', 'R2', 'L3', 'R3'];
-    const centerCol = ['C1', 'C2', 'C3'];
+    const whiteBlinder = wChannelMode === 'never' ? [1, 0.98, 0.92, 0] : [1, 0.98, 0.92, 1];
+    const zOpts = options.zones || {};
+    const wings = resolveZone(zOpts.washZone, ['L1', 'R1', 'L2', 'R2', 'L3', 'R3']);
+    const centerCol = resolveZone(zOpts.vocalZone, ['C1', 'C2', 'C3']);
     const leftCol = ['L1', 'L2', 'L3'];
     const rightCol = ['R1', 'R2', 'R3'];
     const cross = ['C1', 'L2', 'C2', 'R2', 'C3'];
-    const upperCross = ['C1', 'L2', 'C2', 'R2'];
+    const upperCross = resolveZone(zOpts.strobeZone, ['C1', 'L2', 'C2', 'R2']);
     const crossNoCenter = ['C1', 'L2', 'R2', 'C3'];
-    const bottomRow = ['L3', 'C3', 'R3'];
+    const bottomRow = resolveZone(zOpts.bassZone, ['L3', 'C3', 'R3']);
     const perimeter = ['L1', 'C1', 'R1', 'R2', 'R3', 'C3', 'L3', 'L2'];
-    const corners = ['L1', 'R1', 'L3', 'R3'];
+    const corners = resolveZone(zOpts.accentZone, ['L1', 'R1', 'L3', 'R3']);
 
     const beatSec = 60 / bpm;
     const barSec = 4 * beatSec;
@@ -1042,15 +1177,30 @@ export function createAutoShow(analysis = {}, options = {}) {
     // Tuned frequency-band gates directly modeled on user's curated Sounds project
     const kickGate = {
       source: analysis?.features?.drums ? 'drums' : 'master',
-      lowHz: 40, highHz: 110, threshold: 0.55, ceiling: 1, mode: 'gate', releaseSec: 0.14
+      lowHz: Number.isFinite(Number(options.kickGate?.lowHz)) ? Number(options.kickGate.lowHz) : 40,
+      highHz: Number.isFinite(Number(options.kickGate?.highHz)) ? Number(options.kickGate.highHz) : 110,
+      threshold: Number.isFinite(Number(options.kickGate?.threshold)) ? clamp(Number(options.kickGate.threshold), 0.05, 0.95) : 0.55,
+      ceiling: 1,
+      mode: options.kickGate?.mode || 'gate',
+      releaseSec: Number.isFinite(Number(options.kickGate?.releaseSec)) ? Math.max(0.02, Math.min(1, Number(options.kickGate.releaseSec))) : 0.14
     };
     const snareGate = {
       source: analysis?.features?.drums ? 'drums' : 'master',
-      lowHz: 180, highHz: 450, threshold: 0.60, ceiling: 1, mode: 'gate', releaseSec: 0.12
+      lowHz: Number.isFinite(Number(options.snareGate?.lowHz)) ? Number(options.snareGate.lowHz) : 180,
+      highHz: Number.isFinite(Number(options.snareGate?.highHz)) ? Number(options.snareGate.highHz) : 450,
+      threshold: Number.isFinite(Number(options.snareGate?.threshold)) ? clamp(Number(options.snareGate.threshold), 0.05, 0.95) : 0.60,
+      ceiling: 1,
+      mode: options.snareGate?.mode || 'gate',
+      releaseSec: Number.isFinite(Number(options.snareGate?.releaseSec)) ? Math.max(0.02, Math.min(1, Number(options.snareGate.releaseSec))) : 0.12
     };
     const vocalFollow = {
       source: hasVocals ? 'vocals' : 'other',
-      lowHz: 350, highHz: 3400, threshold: 0.38, ceiling: 0.95, mode: 'follow', releaseSec: 0.15
+      lowHz: Number.isFinite(Number(options.vocalFollow?.lowHz)) ? Number(options.vocalFollow.lowHz) : 350,
+      highHz: Number.isFinite(Number(options.vocalFollow?.highHz)) ? Number(options.vocalFollow.highHz) : 3400,
+      threshold: Number.isFinite(Number(options.vocalFollow?.threshold)) ? clamp(Number(options.vocalFollow.threshold), 0.05, 0.95) : 0.38,
+      ceiling: 0.95,
+      mode: options.vocalFollow?.mode || 'follow',
+      releaseSec: Number.isFinite(Number(options.vocalFollow?.releaseSec)) ? Math.max(0.02, Math.min(1, Number(options.vocalFollow.releaseSec))) : 0.15
     };
 
     let dropIdx = 0;
@@ -1067,19 +1217,23 @@ export function createAutoShow(analysis = {}, options = {}) {
       const nextSec = sections[idx + 1];
       const isPreDrop = nextSec && nextSec.type === 'drop';
       let blackoutSec = 0;
-      if (isPreDrop) {
+      if (isPreDrop && preDropBlackoutMode !== 'none') {
         const dropNumber = dropSections.indexOf(nextSec) + 1;
         let targetSec;
         if (Number.isFinite(options.preDropBlackoutSec)) {
           targetSec = options.preDropBlackoutSec;
-        } else if (Number.isFinite(options.preDropBlackoutBeats)) {
+        } else if (preDropBlackoutMode === 'fixed' && Number.isFinite(Number(options.preDropBlackoutBeats))) {
+          targetSec = Number(options.preDropBlackoutBeats) * beatSec;
+        } else if (Number.isFinite(options.preDropBlackoutBeats) && preDropBlackoutMode !== 'auto') {
+          targetSec = options.preDropBlackoutBeats * beatSec;
+        } else if (Number.isFinite(options.preDropBlackoutBeats) && !options.preDropBlackoutMode) {
           targetSec = options.preDropBlackoutBeats * beatSec;
         } else {
           // Drop 1: 1 beat; Drop 2 and later: 2 beats (half bar)
           const blackoutBeats = dropNumber <= 1 ? 1 : 2;
           targetSec = blackoutBeats * beatSec;
         }
-        blackoutSec = Math.min(rawLen * 0.5, Math.max(0.05, targetSec));
+        blackoutSec = targetSec <= 0 ? 0 : Math.min(rawLen * 0.5, Math.max(0.05, targetSec));
       }
       const len = rawLen - blackoutSec;
       if (len <= 0.05) return;
@@ -1092,9 +1246,9 @@ export function createAutoShow(analysis = {}, options = {}) {
         if (len >= barSec) {
           const swLen = Math.min(barSec, len / 2);
           const swStart = start + len - swLen;
-          accentClips.push(makeClip(`acc-intro-sw1-${idx}`, pickPreset('sweep', ['chase', 'wave', 'pulse']), rgbOnly(palette[2], 0.9), 'drums', wings, swStart, swLen, 1.02, 1, null, ceilKeys(swLen, 0.48, isPreDrop), null, 'beat'));
+          accentClips.push(makeClip(`acc-intro-sw1-${idx}`, pickPreset('sweep', ['chase', 'wave', 'pulse']), rgbOnly(palette[2], 0.9, true), 'drums', wings, swStart, swLen, 1.02, 1, null, ceilKeys(swLen, 0.48, isPreDrop), null, 'beat'));
           if (swLen >= 2 * beatSec) {
-            accentClips.push(makeClip(`acc-intro-sw2-${idx}`, pickPreset('sweep', ['flash', 'chase', 'pulse']), rgbOnly(palette[2], 1.0), 'drums', centerCol, swStart + swLen - beatSec, beatSec, 1.05, 1, null, ceilKeys(beatSec, 0.52, isPreDrop), null, 'beat'));
+            accentClips.push(makeClip(`acc-intro-sw2-${idx}`, pickPreset('sweep', ['flash', 'chase', 'pulse']), rgbOnly(palette[2], 1.0, true), 'drums', centerCol, swStart + swLen - beatSec, beatSec, 1.05, 1, null, ceilKeys(beatSec, 0.52, isPreDrop), null, 'beat'));
           }
         }
       } else if (sec.type === 'build') {
@@ -1108,28 +1262,41 @@ export function createAutoShow(analysis = {}, options = {}) {
         }
 
         const climaxStart = start + firstLen;
+        const maxSpd = buildSpeedScale === 1 ? 16 : Math.max(1, Math.round(16 * buildSpeedScale));
         // Dual column chase speed 16 on kick gate
-        bassClips.push(makeClip(`bass-bld-chL-${idx}`, pickPreset('chase', ['columns', 'pulse', 'sweep']), rgbOnly(palette[2], 1.0), 'band', leftCol, climaxStart, climaxLen, 1.25, 16, null, buildRampKeys(climaxLen, 0.60, 0.88), kickGate, '4bar'));
-        rhythmClips.push(makeClip(`rhy-bld-chR-${idx}`, pickPreset('chase', ['columns', 'pulse', 'sweep']), rgbOnly(palette[2], 1.0), 'band', rightCol, climaxStart, climaxLen, 1.25, 16, null, buildRampKeys(climaxLen, 0.60, 0.88), kickGate, '4bar'));
+        bassClips.push(makeClip(`bass-bld-chL-${idx}`, pickPreset('chase', ['columns', 'pulse', 'sweep']), rgbOnly(palette[2], 1.0), 'band', leftCol, climaxStart, climaxLen, 1.25, maxSpd, null, buildRampKeys(climaxLen, 0.60, 0.88), kickGate, '4bar'));
+        rhythmClips.push(makeClip(`rhy-bld-chR-${idx}`, pickPreset('chase', ['columns', 'pulse', 'sweep']), rgbOnly(palette[2], 1.0), 'band', rightCol, climaxStart, climaxLen, 1.25, maxSpd, null, buildRampKeys(climaxLen, 0.60, 0.88), kickGate, '4bar'));
         // Snare gate flash on all
-        accentClips.push(makeClip(`acc-bld-fl-${idx}`, pickPreset('flash', ['strobe', 'pulse']), rgbOnly(palette[3], 1.0), 'band', 'all', climaxStart, climaxLen, 1.3, 0.5, null, buildRampKeys(climaxLen, 0.55, 0.88), snareGate, 'beat'));
+        accentClips.push(makeClip(`acc-bld-fl-${idx}`, pickPreset('flash', ['strobe', 'pulse']), rgbOnly(palette[3], 1.0, true), 'band', 'all', climaxStart, climaxLen, 1.3, 0.5, null, buildRampKeys(climaxLen, 0.55, 0.88), snareGate, 'beat'));
 
         // Accelerating spiral (2 -> 4 -> 8 -> 16) on perimeter in the final 2-4 bars
         const spiralPhase = Math.min(climaxLen, 4 * barSec);
         const spStart = climaxStart + climaxLen - spiralPhase;
-        const barChunk = Math.max(0.05, spiralPhase / 4);
         const spPreset = pickPreset('spiral', ['chase', 'sweep', 'pulse']);
-        washClips.push(makeClip(`wash-bld-sp1-${idx}`, spPreset, rgbOnly(palette[2], 0.95), 'band', perimeter, spStart, barChunk, 1.1, 2, null, buildRampKeys(barChunk, 0.52, 0.62), vocalFollow));
-        washClips.push(makeClip(`wash-bld-sp2-${idx}`, spPreset, rgbOnly(palette[2], 0.98), 'band', perimeter, spStart + barChunk, barChunk, 1.15, 4, null, buildRampKeys(barChunk, 0.62, 0.72), vocalFollow));
-        washClips.push(makeClip(`wash-bld-sp3-${idx}`, spPreset, rgbOnly(palette[2], 1.0), 'band', perimeter, spStart + 2 * barChunk, barChunk, 1.2, 8, null, buildRampKeys(barChunk, 0.72, 0.80), vocalFollow));
-        washClips.push(makeClip(`wash-bld-sp4-${idx}`, spPreset, rgbOnly(palette[2], 1.0), 'band', perimeter, spStart + 3 * barChunk, barChunk, 1.25, 16, null, buildRampKeys(barChunk, 0.80, 0.88), vocalFollow));
+        if (buildSpiralAccel) {
+          const barChunk = Math.max(0.05, spiralPhase / 4);
+          const s1 = buildSpeedScale === 1 ? 2 : Math.max(1, Math.round(2 * buildSpeedScale));
+          const s2 = buildSpeedScale === 1 ? 4 : Math.max(1, Math.round(4 * buildSpeedScale));
+          const s3 = buildSpeedScale === 1 ? 8 : Math.max(1, Math.round(8 * buildSpeedScale));
+          const s4 = buildSpeedScale === 1 ? 16 : Math.max(1, Math.round(16 * buildSpeedScale));
+          washClips.push(makeClip(`wash-bld-sp1-${idx}`, spPreset, rgbOnly(palette[2], 0.95), 'band', perimeter, spStart, barChunk, 1.1, s1, null, buildRampKeys(barChunk, 0.52, 0.62), vocalFollow));
+          washClips.push(makeClip(`wash-bld-sp2-${idx}`, spPreset, rgbOnly(palette[2], 0.98), 'band', perimeter, spStart + barChunk, barChunk, 1.15, s2, null, buildRampKeys(barChunk, 0.62, 0.72), vocalFollow));
+          washClips.push(makeClip(`wash-bld-sp3-${idx}`, spPreset, rgbOnly(palette[2], 1.0), 'band', perimeter, spStart + 2 * barChunk, barChunk, 1.2, s3, null, buildRampKeys(barChunk, 0.72, 0.80), vocalFollow));
+          washClips.push(makeClip(`wash-bld-sp4-${idx}`, spPreset, rgbOnly(palette[2], 1.0), 'band', perimeter, spStart + 3 * barChunk, barChunk, 1.25, s4, null, buildRampKeys(barChunk, 0.80, 0.88), vocalFollow));
+        } else {
+          washClips.push(makeClip(`wash-bld-sp-${idx}`, spPreset, rgbOnly(palette[2], 1.0), 'band', perimeter, spStart, spiralPhase, 1.2, Math.max(1, Math.round(4 * buildSpeedScale)), null, buildRampKeys(spiralPhase, 0.52, 0.88), vocalFollow));
+        }
       } else if (sec.type === 'drop') {
         dropIdx++;
         const dropMod = dropIdx % 3;
+        const usePulseRhythm = dropRhythmStyle === 'pulse' || (dropRhythmStyle === 'auto' && dropMod === 1);
+        const useColumnsRhythm = dropRhythmStyle === 'columns';
 
         // 1. Core Kick Rhythm: full rig or perimeter kick-gated punch at max brightness
-        if (dropMod === 1) {
+        if (usePulseRhythm) {
           rhythmClips.push(makeClip(`rhy-drop-kick-${idx}`, pickPreset('pulse', ['alternate', 'columns', 'flash']), dropColor(palette[0], 0.42), 'band', 'all', start, len, 1.45, 1, { floor: 0.25, curve: 'punch' }, dropKeys(len), kickGate, 'beat'));
+        } else if (useColumnsRhythm) {
+          rhythmClips.push(makeClip(`rhy-drop-col-${idx}`, pickPreset('columns', ['pulse', 'alternate', 'chase']), dropColor(palette[0], 0.42), 'band', 'all', start, len, 1.45, 2, null, dropKeys(len), kickGate, 'beat'));
         } else {
           const chunkSec = 2 * beatSec;
           let cCount = 0;
@@ -1164,11 +1331,15 @@ export function createAutoShow(analysis = {}, options = {}) {
         washClips.push(makeClip(`wash-drop-rip-${idx}`, pickPreset('ripple', ['bounce', 'spiral', 'pulse', 'wash']), dropColor(palette[1], 0.40), 'drums', cross, start, len, 1.35, 2, { width: 'wide' }, dropKeys(len)));
 
         // 5. Accents: instant beat-1 blinder + strobe on upperCross (never C3) + corner snare flashes
-        const hitLen = Math.min(0.06, beatSec * 0.25);
-        accentClips.push(makeClip(`acc-drop-hit-${idx}`, pickPreset('flash', ['strobe', 'pulse']), whiteBlinder, 'drums', 'all', start, hitLen, 1.50, 1, { decay: 'instant', focus: 'all' }, dropKeys(hitLen)));
+        if (dropBlinder) {
+          const hitLen = Math.min(0.06, beatSec * 0.25);
+          accentClips.push(makeClip(`acc-drop-hit-${idx}`, pickPreset('flash', ['strobe', 'pulse']), whiteBlinder, 'drums', 'all', start, hitLen, 1.50, 1, { decay: 'instant', focus: 'all' }, dropKeys(hitLen)));
+        }
 
-        const strobeLen = Math.min(6.32, Math.max(0.8, len / 2));
-        accentClips.push(makeClip(`acc-drop-str-${idx}`, pickPreset('strobe', ['flash', 'pulse']), whiteBlinder, 'drums', upperCross, start, strobeLen, 1.45, 1, { duty: 'sharp', rate: '1/4' }, dropKeys(strobeLen)));
+        const strobeLen = dropStrobeDurationSec <= 0 ? 0 : Math.min(dropStrobeDurationSec, Math.max(0.8, len / 2));
+        if (strobeLen > 0) {
+          accentClips.push(makeClip(`acc-drop-str-${idx}`, pickPreset('strobe', ['flash', 'pulse']), whiteBlinder, 'drums', upperCross, start, strobeLen, 1.45, 1, { duty: 'sharp', rate: dropStrobeRate }, dropKeys(strobeLen)));
+        }
         if (len > strobeLen + 0.5) {
           accentClips.push(makeClip(`acc-drop-fl-${idx}`, pickPreset('flash', ['strobe', 'pulse']), whiteBlinder, 'band', corners, start + strobeLen, len - strobeLen, 1.45, 1, { decay: 'fast', focus: 'all' }, dropKeys(len - strobeLen), snareGate));
         }
@@ -1217,19 +1388,32 @@ export function createAutoShow(analysis = {}, options = {}) {
         }
         synthClips.push(makeClip(`syn-vrs-${idx}`, pickPreset('pulse', ['wave', 'center', 'wash']), rgbOnly(palette[2], 0.92), 'vocals', centerCol, start, len, 1.15, 1, { floor: 0.2, curve: 'breath' }, ceilKeys(len, 0.62, isPreDrop), null, 'half'));
         rhythmClips.push(makeClip(`rhy-vrs-${idx}`, pickPreset('bounce', ['chase', 'columns', 'alternate', 'pulse']), rgbOnly(palette[1], 0.92), 'drums', crossNoCenter, start, len, 1.10, 2, { physics: 'elastic', axis: 'horiz' }, ceilKeys(len, 0.58, isPreDrop)));
-        accentClips.push(makeClip(`acc-vrs-${idx}`, pickPreset('sparkle', ['flash', 'pulse', 'strobe']), rgbOnly(palette[2], 0.88), 'drums', corners, start, len, 1.08, 1, null, ceilKeys(len, 0.52, isPreDrop)));
+        accentClips.push(makeClip(`acc-vrs-${idx}`, pickPreset('sparkle', ['flash', 'pulse', 'strobe']), rgbOnly(palette[2], 0.88, true), 'drums', corners, start, len, 1.08, 1, null, ceilKeys(len, 0.52, isPreDrop)));
       }
+    });
+
+    const defaultLayers = [
+      { id: 'base-wash', name: 'Atmosfera i baza', color: '#3aa0ff', enabled: true, blend: 'screen', opacity: .72, clips: washClips },
+      { id: 'bass', name: 'Sub i bas', color: '#b25cff', enabled: true, blend: 'add', opacity: .82, clips: bassClips },
+      { id: 'synth', name: 'Sint i vokal', color: '#00d2ff', enabled: true, blend: 'screen', opacity: .72, clips: synthClips },
+      { id: 'motion', name: 'Ritam i kretanje', color: '#ffb23a', enabled: true, blend: 'add', opacity: .82, clips: rhythmClips },
+      { id: 'drums', name: 'Akcenti i stroboskop', color: '#ff5c8a', enabled: true, blend: 'add', opacity: .88, clips: accentClips }
+    ];
+    const layerCfg = options.layerConfig || {};
+    const layers = defaultLayers.map(layer => {
+      const ov = layerCfg[layer.id];
+      if (!ov || typeof ov !== 'object') return layer;
+      return {
+        ...layer,
+        enabled: typeof ov.enabled === 'boolean' ? ov.enabled : layer.enabled,
+        blend: TIMELINE_BLENDS.includes(ov.blend) ? ov.blend : layer.blend,
+        opacity: Number.isFinite(Number(ov.opacity)) ? clamp(Number(ov.opacity)) : layer.opacity
+      };
     });
 
     const timeline = {
       version: 1, durationSec, bpm, beatOffsetSec, blackout: options.blackout === true,
-      layers: [
-        { id: 'base-wash', name: 'Atmosfera i baza', color: '#3aa0ff', enabled: true, blend: 'screen', opacity: .72, clips: washClips },
-        { id: 'bass', name: 'Sub i bas', color: '#b25cff', enabled: true, blend: 'add', opacity: .82, clips: bassClips },
-        { id: 'synth', name: 'Sint i vokal', color: '#00d2ff', enabled: true, blend: 'screen', opacity: .72, clips: synthClips },
-        { id: 'motion', name: 'Ritam i kretanje', color: '#ffb23a', enabled: true, blend: 'add', opacity: .82, clips: rhythmClips },
-        { id: 'drums', name: 'Akcenti i stroboskop', color: '#ff5c8a', enabled: true, blend: 'add', opacity: .88, clips: accentClips }
-      ]
+      layers
     };
     const check = validateTimeline(timeline);
     if (!check.valid) throw new TypeError(`Auto show generation failed: ${check.errors.join('; ')}`);
@@ -1259,10 +1443,250 @@ export function createAutoShow(analysis = {}, options = {}) {
   return timeline;
 }
 
-/** Replace clips within [section.startSec, section.endSec) across timeline layers
- * with newly generated clips for that section's type and selected theme/options.
+function scaleKeyframesToDuration(keyframes, oldDur, newDur) {
+  if (!Array.isArray(keyframes) || !keyframes.length) return sanitizeKeyframes([], newDur);
+  const ratio = oldDur > 1e-4 ? newDur / oldDur : 1;
+  return sanitizeKeyframes(
+    keyframes.map(k => ({ timeSec: k.timeSec * ratio, value: k.value })),
+    newDur
+  );
+}
+
+/** Intuitively shift, stretch, or trim timeline clips belonging to prevSec and curSec
+ * when the boundary between them is dragged from oldBoundary to newBoundary.
  */
-export function regenerateSectionClips(timeline, analysis, sectionIndex, options = {}) {
+export function adjustClipsForSectionBoundary(timeline, prevSec, curSec, oldBoundary, newBoundary) {
+  if (!timeline || !Array.isArray(timeline.layers) || !prevSec || !curSec) return timeline;
+  const delta = newBoundary - oldBoundary;
+  if (!Number.isFinite(delta) || Math.abs(delta) < 1e-4) return timeline;
+
+  const prevStart = Math.max(0, number(prevSec.startSec, 0));
+  const curEnd = Math.min(number(timeline.durationSec, Infinity), number(curSec.endSec, oldBoundary));
+  const oldPrevDur = Math.max(0.05, oldBoundary - prevStart);
+  const oldCurDur = Math.max(0.05, curEnd - oldBoundary);
+  const tailTol = Math.min(2.5, oldPrevDur * 0.42);
+  const curTailTol = Math.min(2.5, oldCurDur * 0.42);
+
+  for (const layer of timeline.layers) {
+    if (!Array.isArray(layer.clips) || !layer.clips.length) continue;
+
+    const prevClips = [];
+    const curClips = [];
+    const otherClips = [];
+
+    for (const c of layer.clips) {
+      const cStart = c.startSec;
+      const cEnd = c.startSec + c.durationSec;
+      if (cStart >= prevStart - 0.05 && cStart < oldBoundary - 0.02 && cEnd <= oldBoundary + 0.08) {
+        prevClips.push(c);
+      } else if (cStart >= oldBoundary - 0.05 && cStart < curEnd - 0.02 && cEnd <= curEnd + 0.08) {
+        curClips.push(c);
+      } else {
+        otherClips.push(c);
+      }
+    }
+
+    // 1. Adjust clips in prevSec [prevStart, oldBoundary -> newBoundary]
+    const nextPrevClips = [];
+    // Detect if prevClips are a repeating bar/beat chunk grid starting at prevStart
+    const firstPrev = prevClips.find(c => Math.abs(c.startSec - prevStart) <= 0.08);
+    const isPrevChunkGrid = prevClips.length >= 3 && firstPrev && firstPrev.durationSec <= Math.min(4.5, oldPrevDur * 0.55) &&
+      prevClips.every(c => c.durationSec <= firstPrev.durationSec * 1.5);
+
+    if (isPrevChunkGrid) {
+      const maxOldEnd = Math.max(...prevClips.map(c => c.startSec + c.durationSec));
+      const blackoutGap = Math.max(0, oldBoundary - maxOldEnd);
+      const effectiveNewPrevEnd = Math.max(prevStart + 0.05, newBoundary - blackoutGap);
+      for (const c of prevClips) {
+        if (c.startSec >= effectiveNewPrevEnd - 0.02) continue;
+        const cEnd = Math.min(c.startSec + c.durationSec, effectiveNewPrevEnd);
+        const newDur = Math.max(0.05, cEnd - c.startSec);
+        nextPrevClips.push({
+          ...c,
+          durationSec: newDur,
+          keyframes: scaleKeyframesToDuration(c.keyframes, c.durationSec, newDur)
+        });
+      }
+      // If prevSec grew (delta > 0), tile chunks to fill up to effectiveNewPrevEnd
+      if (delta > 0 && prevClips.length >= 1) {
+        const step = prevClips.length >= 2
+          ? Math.max(0.25, prevClips[1].startSec - prevClips[0].startSec)
+          : Math.max(0.25, firstPrev.durationSec);
+        let cursor = maxOldEnd;
+        let idx = prevClips.length;
+        while (cursor < effectiveNewPrevEnd - 0.05) {
+          const tpl = prevClips[idx % prevClips.length];
+          const cDur = Math.min(tpl.durationSec, effectiveNewPrevEnd - cursor);
+          if (cDur >= 0.05) {
+            nextPrevClips.push({
+              ...tpl,
+              id: `${tpl.id}-ext${idx}`,
+              startSec: Math.round(cursor * 1000) / 1000,
+              durationSec: Math.round(cDur * 1000) / 1000,
+              keyframes: scaleKeyframesToDuration(tpl.keyframes, tpl.durationSec, cDur)
+            });
+          }
+          cursor += step;
+          idx++;
+        }
+      }
+    } else {
+      const hasTailClips = prevClips.some(c => c.startSec > prevStart + 0.08);
+      for (const c of prevClips) {
+        const cEnd = c.startSec + c.durationSec;
+        const startsAtPrev = Math.abs(c.startSec - prevStart) <= 0.08;
+        const endsNearBoundary = (oldBoundary - cEnd) <= tailTol;
+        if (startsAtPrev && (endsNearBoundary || hasTailClips)) {
+          // Full-section clip or opening build clip meeting tail climax: keep startSec, shift endSec by delta
+          const newEnd = clamp(cEnd + delta, c.startSec + 0.05, newBoundary);
+          const newDur = Math.max(0.05, Math.round((newEnd - c.startSec) * 1000) / 1000);
+          nextPrevClips.push({
+            ...c,
+            durationSec: newDur,
+            keyframes: scaleKeyframesToDuration(c.keyframes, c.durationSec, newDur)
+          });
+        } else if (!startsAtPrev) {
+          // Tail-anchored clip (build climax, spiral steps, intro sweeps): shift by delta
+          const newStart = clamp(c.startSec + delta, prevStart, newBoundary - 0.05);
+          const newEnd = clamp(cEnd + delta, newStart + 0.05, newBoundary);
+          const newDur = Math.max(0.05, Math.round((newEnd - newStart) * 1000) / 1000);
+          nextPrevClips.push({
+            ...c,
+            startSec: Math.round(newStart * 1000) / 1000,
+            durationSec: newDur,
+            keyframes: scaleKeyframesToDuration(c.keyframes, c.durationSec, newDur)
+          });
+        } else {
+          // Short clip at start of prevSec with no tail clips: keep or clamp to newBoundary
+          const newEnd = Math.min(cEnd, newBoundary);
+          const newDur = Math.max(0.05, newEnd - c.startSec);
+          nextPrevClips.push({
+            ...c,
+            durationSec: newDur,
+            keyframes: scaleKeyframesToDuration(c.keyframes, c.durationSec, newDur)
+          });
+        }
+      }
+    }
+
+    // 2. Adjust clips in curSec [oldBoundary -> newBoundary, curEnd]
+    const nextCurClips = [];
+    const firstCur = curClips.find(c => Math.abs(c.startSec - oldBoundary) <= 0.08);
+    const isCurChunkGrid = curClips.length >= 3 && firstCur && firstCur.durationSec <= Math.min(4.5, oldCurDur * 0.55) &&
+      curClips.every(c => c.durationSec <= firstCur.durationSec * 1.5);
+
+    if (isCurChunkGrid) {
+      const maxOldEnd = Math.max(...curClips.map(c => c.startSec + c.durationSec));
+      const blackoutGap = Math.max(0, curEnd - maxOldEnd);
+      const effectiveCurEnd = Math.max(newBoundary + 0.05, curEnd - blackoutGap);
+      for (const c of curClips) {
+        const shiftedStart = Math.round((c.startSec + delta) * 1000) / 1000;
+        if (shiftedStart >= effectiveCurEnd - 0.02) continue;
+        const shiftedEnd = Math.min(shiftedStart + c.durationSec, effectiveCurEnd);
+        const newDur = Math.max(0.05, Math.round((shiftedEnd - shiftedStart) * 1000) / 1000);
+        nextCurClips.push({
+          ...c,
+          startSec: Math.max(newBoundary, shiftedStart),
+          durationSec: newDur,
+          keyframes: scaleKeyframesToDuration(c.keyframes, c.durationSec, newDur)
+        });
+      }
+      // If curSec grew earlier (delta < 0), tile chunks at the end up to effectiveCurEnd
+      if (delta < 0 && nextCurClips.length >= 1) {
+        const step = curClips.length >= 2
+          ? Math.max(0.25, curClips[1].startSec - curClips[0].startSec)
+          : Math.max(0.25, firstCur.durationSec);
+        const lastShifted = nextCurClips.at(-1);
+        let cursor = lastShifted.startSec + step;
+        let idx = nextCurClips.length;
+        while (cursor < effectiveCurEnd - 0.05) {
+          const tpl = curClips[idx % curClips.length];
+          const cDur = Math.min(tpl.durationSec, effectiveCurEnd - cursor);
+          if (cDur >= 0.05) {
+            nextCurClips.push({
+              ...tpl,
+              id: `${tpl.id}-ext${idx}`,
+              startSec: Math.round(cursor * 1000) / 1000,
+              durationSec: Math.round(cDur * 1000) / 1000,
+              keyframes: scaleKeyframesToDuration(tpl.keyframes, tpl.durationSec, cDur)
+            });
+          }
+          cursor += step;
+          idx++;
+        }
+      }
+    } else {
+      for (const c of curClips) {
+        const cEnd = c.startSec + c.durationSec;
+        const startsAtCur = Math.abs(c.startSec - oldBoundary) <= 0.08;
+        const endsNearCurEnd = (curEnd - cEnd) <= curTailTol;
+
+        if (startsAtCur && endsNearCurEnd) {
+          // Full-section clip in curSec: move startSec to newBoundary, keep cEnd anchored
+          const newStart = newBoundary;
+          const newEnd = Math.max(newStart + 0.05, cEnd);
+          const newDur = Math.max(0.05, Math.round((newEnd - newStart) * 1000) / 1000);
+          nextCurClips.push({
+            ...c,
+            startSec: newStart,
+            durationSec: newDur,
+            keyframes: scaleKeyframesToDuration(c.keyframes, c.durationSec, newDur)
+          });
+        } else if (startsAtCur && !endsNearCurEnd) {
+          // Opening accent/strobe at start of curSec (e.g. Beat-1 blinder, opening strobe): shift startSec to newBoundary, keep duration
+          const newStart = newBoundary;
+          const newDur = Math.max(0.05, Math.min(c.durationSec, curEnd - newStart));
+          nextCurClips.push({
+            ...c,
+            startSec: newStart,
+            durationSec: Math.round(newDur * 1000) / 1000,
+            keyframes: scaleKeyframesToDuration(c.keyframes, c.durationSec, newDur)
+          });
+        } else if (!startsAtCur && endsNearCurEnd) {
+          // Second-half clip (e.g. post-strobe corner snare flashes): shift startSec by delta, keep cEnd anchored
+          const newStart = clamp(c.startSec + delta, newBoundary, curEnd - 0.05);
+          const newEnd = Math.max(newStart + 0.05, cEnd);
+          const newDur = Math.max(0.05, Math.round((newEnd - newStart) * 1000) / 1000);
+          nextCurClips.push({
+            ...c,
+            startSec: Math.round(newStart * 1000) / 1000,
+            durationSec: newDur,
+            keyframes: scaleKeyframesToDuration(c.keyframes, c.durationSec, newDur)
+          });
+        } else {
+          // Internal clip in curSec: shift by delta within [newBoundary, curEnd]
+          const newStart = clamp(c.startSec + delta, newBoundary, curEnd - 0.05);
+          const newDur = Math.max(0.05, Math.min(c.durationSec, curEnd - newStart));
+          nextCurClips.push({
+            ...c,
+            startSec: Math.round(newStart * 1000) / 1000,
+            durationSec: Math.round(newDur * 1000) / 1000,
+            keyframes: scaleKeyframesToDuration(c.keyframes, c.durationSec, newDur)
+          });
+        }
+      }
+    }
+
+    const usedIds = new Set();
+    layer.clips = [...otherClips, ...nextPrevClips, ...nextCurClips]
+      .map(c => {
+        let id = c.id;
+        let n = 1;
+        while (usedIds.has(id)) id = `${c.id}-${n++}`;
+        usedIds.add(id);
+        return id === c.id ? c : { ...c, id };
+      })
+      .sort((a, b) => a.startSec - b.startSec);
+  }
+
+  return timeline;
+}
+
+/** Replace clips within one or more sections [section.startSec, section.endSec) across timeline layers
+ * with newly generated clips for those sections' types and selected theme/pipeline options,
+ * leaving all unselected sections intact.
+ */
+export function regenerateSectionClips(timeline, analysis, sectionIndexOrList, options = {}) {
   if (!timeline || typeof timeline !== 'object' || !Array.isArray(timeline.layers)) {
     throw new TypeError('timeline must be a valid timeline object');
   }
@@ -1271,28 +1695,39 @@ export function regenerateSectionClips(timeline, analysis, sectionIndex, options
     ? analysis.sections
     : detectSections(analysis);
 
-  let idx = -1;
-  if (typeof sectionIndex === 'number' && Number.isInteger(sectionIndex)) {
-    idx = sectionIndex;
-  } else if (typeof sectionIndex === 'string') {
-    idx = rawSections.findIndex(s => s.id === sectionIndex);
-  } else if (sectionIndex && typeof sectionIndex === 'object') {
-    idx = rawSections.findIndex(s => s === sectionIndex || (s.id && s.id === sectionIndex.id) || (Math.abs((s.startSec ?? -1) - (sectionIndex.startSec ?? -2)) < 1e-3));
+  const resolveSingleIndex = item => {
+    if (typeof item === 'number' && Number.isInteger(item)) return item;
+    if (typeof item === 'string') return rawSections.findIndex(s => s.id === item);
+    if (item && typeof item === 'object') {
+      return rawSections.findIndex(s =>
+        s === item ||
+        (s.id && s.id === item.id) ||
+        (Math.abs((s.startSec ?? -1) - (item.startSec ?? -2)) < 1e-3)
+      );
+    }
+    return -1;
+  };
+
+  const rawTargets = Array.isArray(sectionIndexOrList) ? sectionIndexOrList : [sectionIndexOrList];
+  const indices = [...new Set(rawTargets.map(resolveSingleIndex))].sort((a, b) => a - b);
+  if (!indices.length || indices.some(idx => idx < 0 || idx >= rawSections.length)) {
+    throw new RangeError(`Invalid sectionIndex: ${JSON.stringify(sectionIndexOrList)}`);
   }
-  if (idx < 0 || idx >= rawSections.length) {
-    throw new RangeError(`Invalid sectionIndex: ${sectionIndex}`);
-  }
+  const indexSet = new Set(indices);
 
   const effectiveSections = rawSections.map((sec, i) => {
-    if (i !== idx) return { ...sec };
-    const overrideType = options.sectionType || options.type || sec.type;
+    if (!indexSet.has(i)) return { ...sec };
+    const overrideType = (indices.length === 1 && (options.sectionType || options.type)) || sec.type;
     return { ...sec, type: overrideType };
   });
 
-  const targetSec = effectiveSections[idx];
-  const secStart = Math.max(0, number(targetSec.startSec, 0));
-  const secDur = Math.max(0.1, number(targetSec.durationSec, number(targetSec.endSec, durationSec) - secStart));
-  const secEnd = Math.min(durationSec, Number.isFinite(targetSec.endSec) ? targetSec.endSec : (secStart + secDur));
+  const lastTargetSec = effectiveSections[indices.at(-1)];
+  const lastSecEnd = Math.min(
+    durationSec,
+    Number.isFinite(lastTargetSec.endSec)
+      ? lastTargetSec.endSec
+      : (number(lastTargetSec.startSec, 0) + Math.max(0.1, number(lastTargetSec.durationSec, durationSec)))
+  );
 
   const effectiveAnalysis = {
     ...(analysis || {}),
@@ -1300,12 +1735,23 @@ export function regenerateSectionClips(timeline, analysis, sectionIndex, options
     bpm: number(analysis?.bpm, number(timeline.bpm, 120)),
     beatOffsetSec: number(analysis?.beatOffsetSec, number(timeline.beatOffsetSec, 0)),
     sections: effectiveSections.length >= 2 ? effectiveSections : [
-      targetSec,
-      { id: 'sec-pad', type: 'outro', startSec: secEnd, durationSec: Math.max(0.5, Math.max(20, durationSec) - secEnd) }
+      effectiveSections[0],
+      { id: 'sec-pad', type: 'outro', startSec: lastSecEnd, durationSec: Math.max(0.5, Math.max(20, durationSec) - lastSecEnd) }
     ]
   };
 
-  const generated = createAutoShow(effectiveAnalysis, options);
+  const generated = (options.generatedTimeline && Array.isArray(options.generatedTimeline.layers))
+    ? options.generatedTimeline
+    : createAutoShow(effectiveAnalysis, { ...options, recomputeSections: false });
+
+  // Compute time windows [secStart, secEnd) for each targeted section
+  const windows = indices.map(idx => {
+    const targetSec = effectiveSections[idx];
+    const secStart = Math.max(0, number(targetSec.startSec, 0));
+    const secDur = Math.max(0.1, number(targetSec.durationSec, number(targetSec.endSec, durationSec) - secStart));
+    const secEnd = Math.min(durationSec, Number.isFinite(targetSec.endSec) ? targetSec.endSec : (secStart + secDur));
+    return { idx, secStart, secEnd };
+  });
 
   for (const genLayer of generated.layers) {
     let targetLayer = timeline.layers.find(l => l.id === genLayer.id);
@@ -1314,46 +1760,51 @@ export function regenerateSectionClips(timeline, analysis, sectionIndex, options
       timeline.layers.push(targetLayer);
     }
 
-    // Remove or trim existing clips that overlap [secStart, secEnd)
-    const keptClips = [];
-    for (const c of targetLayer.clips) {
-      const cStart = c.startSec;
-      const cEnd = c.startSec + c.durationSec;
-      if (cStart >= secStart - 1e-4 && cStart < secEnd - 1e-4) {
-        continue;
+    let currentClips = [...targetLayer.clips];
+
+    for (const { secStart, secEnd } of windows) {
+      const keptClips = [];
+      for (const c of currentClips) {
+        const cStart = c.startSec;
+        const cEnd = c.startSec + c.durationSec;
+        if (cStart >= secStart - 1e-4 && cStart < secEnd - 1e-4) {
+          continue;
+        }
+        if (cStart < secStart - 1e-4 && cEnd > secStart + 1e-4) {
+          const newDur = Math.max(0.05, secStart - cStart);
+          const trimmedKeys = sanitizeKeyframes(c.keyframes, newDur);
+          keptClips.push({ ...c, durationSec: newDur, keyframes: trimmedKeys });
+          continue;
+        }
+        keptClips.push(c);
       }
-      if (cStart < secStart - 1e-4 && cEnd > secStart + 1e-4) {
-        const newDur = Math.max(0.05, secStart - cStart);
-        const trimmedKeys = (c.keyframes || [{ timeSec: 0, value: 1 }])
-          .map(k => ({ ...k, timeSec: clamp(k.timeSec, 0, newDur) }))
-          .filter((k, ki, arr) => ki === 0 || k.timeSec > arr[ki - 1].timeSec + 1e-6);
-        keptClips.push({ ...c, durationSec: newDur, keyframes: trimmedKeys.length ? trimmedKeys : [{ timeSec: 0, value: 1 }] });
-        continue;
-      }
-      keptClips.push(c);
+
+      const usedIds = new Set(keptClips.map(c => c.id));
+      const sectionNewClips = genLayer.clips
+        .filter(c => c.startSec >= secStart - 1e-4 && c.startSec < secEnd - 1e-4 && c.startSec < durationSec)
+        .map(c => {
+          let clipId = c.id;
+          let suffix = 1;
+          while (usedIds.has(clipId)) {
+            clipId = `${c.id}-r${suffix++}`;
+          }
+          usedIds.add(clipId);
+          const clampedDur = Math.min(c.durationSec, Math.max(0.05, durationSec - c.startSec));
+          return {
+            ...c,
+            id: clipId,
+            durationSec: clampedDur,
+            keyframes: sanitizeKeyframes(c.keyframes, clampedDur)
+          };
+        });
+
+      currentClips = [...keptClips, ...sectionNewClips].sort((a, b) => a.startSec - b.startSec);
     }
 
-    const usedIds = new Set(keptClips.map(c => c.id));
-    const sectionNewClips = genLayer.clips
-      .filter(c => c.startSec >= secStart - 1e-4 && c.startSec < secEnd - 1e-4 && c.startSec < durationSec)
-      .map(c => {
-        let clipId = c.id;
-        let suffix = 1;
-        while (usedIds.has(clipId)) {
-          clipId = `${c.id}-r${suffix++}`;
-        }
-        usedIds.add(clipId);
-        const clampedDur = Math.min(c.durationSec, Math.max(0.05, durationSec - c.startSec));
-        return {
-          ...c,
-          id: clipId,
-          durationSec: clampedDur,
-          keyframes: c.keyframes.map(k => ({ ...k, timeSec: clamp(k.timeSec, 0, clampedDur) }))
-        };
-      });
-
-    targetLayer.clips = [...keptClips, ...sectionNewClips].sort((a, b) => a.startSec - b.startSec);
+    targetLayer.clips = currentClips;
   }
 
   return timeline;
 }
+
+export const regenerateSectionsClips = regenerateSectionClips;

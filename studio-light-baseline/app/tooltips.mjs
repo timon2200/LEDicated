@@ -66,7 +66,11 @@ export function installTooltips() {
     bubble.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, rect.left + rect.width / 2 - width / 2))}px`;
     bubble.style.top = `${rect.bottom + 10 + bubble.offsetHeight > window.innerHeight ? Math.max(8, rect.top - bubble.offsetHeight - 10) : rect.bottom + 10}px`;
   };
-  const target = event => event.target?.closest?.('[data-tip],[title]');
+  const target = event => {
+    const el = event.target?.closest?.('[data-tip],[title]');
+    if (el?.closest?.('.stage-section, .led-detail')) return null;
+    return el;
+  };
   document.addEventListener('pointerover', event => show(target(event)));
   document.addEventListener('pointerout', event => { if (current && !current.contains(event.relatedTarget)) hide(); });
   document.addEventListener('focusin', event => show(target(event)));

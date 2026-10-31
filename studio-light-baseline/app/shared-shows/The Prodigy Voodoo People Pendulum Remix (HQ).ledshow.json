@@ -1,8 +1,8 @@
 {
   "format": "ledicated-show",
-  "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.737Z",
-  "author": "Timon",
+  "version": 6,
+  "exportedAt": "2026-10-31T18:51:24.882Z",
+  "author": "Mortu",
   "track": {
     "id": "7545995c-e2b0-4cb0-bc14-3dcaa56a34cc",
     "title": "The Prodigy Voodoo People Pendulum Remix (HQ)",
@@ -11,7 +11,9 @@
     "sha256": "8757036a00f55839206876ca60a8a8d4db7f33c08ed1b86ac9e2fbd7e3edb1ed",
     "sizeBytes": 4959170,
     "durationSec": 306.285,
-    "bpm": 172.3
+    "bpm": 172.3,
+    "videoId": "XQEBzauVIlA",
+    "sourceUrl": "https://www.youtube.com/watch?v=XQEBzauVIlA"
   },
   "analysis": {
     "durationSec": 306.285,
@@ -1639,8 +1641,8 @@
           },
           {
             "id": "wash-drop-rip-5",
-            "startSec": 99.5,
-            "durationSec": 34.48,
+            "startSec": 99.43508505902912,
+            "durationSec": 34.54491494097087,
             "preset": "ripple",
             "targets": [
               "C1",
@@ -1668,11 +1670,55 @@
                 "value": 1
               },
               {
-                "timeSec": 34.3,
+                "timeSec": 0.007298493930449013,
                 "value": 1
               },
               {
-                "timeSec": 34.48,
+                "timeSec": 0.01615867433511653,
+                "value": 1
+              },
+              {
+                "timeSec": 0.02422207592640291,
+                "value": 1
+              },
+              {
+                "timeSec": 0.026729273259121555,
+                "value": 1
+              },
+              {
+                "timeSec": 0.029236470591854413,
+                "value": 1
+              },
+              {
+                "timeSec": 0.03174366792458727,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04298356105184098,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04486395905138352,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04549075838457384,
+                "value": 1
+              },
+              {
+                "timeSec": 0.046117557717749946,
+                "value": 1
+              },
+              {
+                "timeSec": 0.06891494097088469,
+                "value": 1
+              },
+              {
+                "timeSec": 34.36491494097088,
+                "value": 1
+              },
+              {
+                "timeSec": 34.54491494097087,
                 "value": 0.9
               }
             ]
@@ -3915,8 +3961,8 @@
           },
           {
             "id": "bass-drop-5",
-            "startSec": 99.5,
-            "durationSec": 34.48,
+            "startSec": 99.43508505902912,
+            "durationSec": 34.54491494097087,
             "preset": "pulse",
             "targets": [
               "L3",
@@ -3943,11 +3989,55 @@
                 "value": 1
               },
               {
-                "timeSec": 34.3,
+                "timeSec": 0.007298493930449013,
                 "value": 1
               },
               {
-                "timeSec": 34.48,
+                "timeSec": 0.01615867433511653,
+                "value": 1
+              },
+              {
+                "timeSec": 0.02422207592640291,
+                "value": 1
+              },
+              {
+                "timeSec": 0.026729273259121555,
+                "value": 1
+              },
+              {
+                "timeSec": 0.029236470591854413,
+                "value": 1
+              },
+              {
+                "timeSec": 0.03174366792458727,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04298356105184098,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04486395905138352,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04549075838457384,
+                "value": 1
+              },
+              {
+                "timeSec": 0.046117557717749946,
+                "value": 1
+              },
+              {
+                "timeSec": 0.06891494097088469,
+                "value": 1
+              },
+              {
+                "timeSec": 34.36491494097088,
+                "value": 1
+              },
+              {
+                "timeSec": 34.54491494097087,
                 "value": 0.9
               }
             ]
@@ -4323,8 +4413,8 @@
           },
           {
             "id": "syn-drop-rn1-5",
-            "startSec": 99.5,
-            "durationSec": 17,
+            "startSec": 99.43508505902912,
+            "durationSec": 17.06491494097088,
             "preset": "chase",
             "targets": [
               "L1",
@@ -4350,11 +4440,55 @@
                 "value": 1
               },
               {
-                "timeSec": 16.82,
+                "timeSec": 0.007298493930449013,
                 "value": 1
               },
               {
-                "timeSec": 17,
+                "timeSec": 0.01615867433511653,
+                "value": 1
+              },
+              {
+                "timeSec": 0.02422207592640291,
+                "value": 1
+              },
+              {
+                "timeSec": 0.026729273259121555,
+                "value": 1
+              },
+              {
+                "timeSec": 0.029236470591854413,
+                "value": 1
+              },
+              {
+                "timeSec": 0.03174366792458727,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04298356105184098,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04486395905138352,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04549075838457384,
+                "value": 1
+              },
+              {
+                "timeSec": 0.046117557717749946,
+                "value": 1
+              },
+              {
+                "timeSec": 0.06891494097088469,
+                "value": 1
+              },
+              {
+                "timeSec": 16.88491494097088,
+                "value": 1
+              },
+              {
+                "timeSec": 17.06491494097088,
                 "value": 0.9
               }
             ]
@@ -5188,8 +5322,8 @@
           },
           {
             "id": "rhy-drop-alt-5-0",
-            "startSec": 99.5,
-            "durationSec": 0.6964596633778293,
+            "startSec": 99.43508505902912,
+            "durationSec": 0.7613746043487026,
             "preset": "alternate",
             "targets": [
               "L1",
@@ -5226,11 +5360,55 @@
                 "value": 1
               },
               {
-                "timeSec": 0.6268136970400463,
+                "timeSec": 0.007298493930449013,
                 "value": 1
               },
               {
-                "timeSec": 0.6964596633778293,
+                "timeSec": 0.01615867433511653,
+                "value": 1
+              },
+              {
+                "timeSec": 0.02422207592640291,
+                "value": 1
+              },
+              {
+                "timeSec": 0.026729273259121555,
+                "value": 1
+              },
+              {
+                "timeSec": 0.029236470591854413,
+                "value": 1
+              },
+              {
+                "timeSec": 0.03174366792458727,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04298356105184098,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04486395905138352,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04549075838457384,
+                "value": 1
+              },
+              {
+                "timeSec": 0.046117557717749946,
+                "value": 1
+              },
+              {
+                "timeSec": 0.06891494097088469,
+                "value": 1
+              },
+              {
+                "timeSec": 0.6917286380109261,
+                "value": 1
+              },
+              {
+                "timeSec": 0.7613746043487026,
                 "value": 0.9
               }
             ]
@@ -11810,8 +11988,8 @@
           },
           {
             "id": "acc-drop-hit-5",
-            "startSec": 99.5,
-            "durationSec": 0.06,
+            "startSec": 99.43508505902912,
+            "durationSec": 0.12491494097088207,
             "preset": "flash",
             "targets": "all",
             "color": [
@@ -11834,19 +12012,63 @@
                 "value": 1
               },
               {
-                "timeSec": 0.054,
+                "timeSec": 0.007298493930449013,
                 "value": 1
               },
               {
-                "timeSec": 0.06,
+                "timeSec": 0.01615867433511653,
+                "value": 1
+              },
+              {
+                "timeSec": 0.02422207592640291,
+                "value": 1
+              },
+              {
+                "timeSec": 0.026729273259121555,
+                "value": 1
+              },
+              {
+                "timeSec": 0.029236470591854413,
+                "value": 1
+              },
+              {
+                "timeSec": 0.03174366792458727,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04298356105184098,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04486395905138352,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04549075838457384,
+                "value": 1
+              },
+              {
+                "timeSec": 0.046117557717749946,
+                "value": 1
+              },
+              {
+                "timeSec": 0.06891494097088469,
+                "value": 1
+              },
+              {
+                "timeSec": 0.11891494097087979,
+                "value": 1
+              },
+              {
+                "timeSec": 0.12491494097088207,
                 "value": 0.9
               }
             ]
           },
           {
             "id": "acc-drop-str-5",
-            "startSec": 99.5,
-            "durationSec": 6.32,
+            "startSec": 99.43508505902912,
+            "durationSec": 6.384914940970873,
             "preset": "strobe",
             "targets": [
               "C1",
@@ -11874,11 +12096,55 @@
                 "value": 1
               },
               {
-                "timeSec": 6.140000000000001,
+                "timeSec": 0.007298493930449013,
                 "value": 1
               },
               {
-                "timeSec": 6.32,
+                "timeSec": 0.01615867433511653,
+                "value": 1
+              },
+              {
+                "timeSec": 0.02422207592640291,
+                "value": 1
+              },
+              {
+                "timeSec": 0.026729273259121555,
+                "value": 1
+              },
+              {
+                "timeSec": 0.029236470591854413,
+                "value": 1
+              },
+              {
+                "timeSec": 0.03174366792458727,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04298356105184098,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04486395905138352,
+                "value": 1
+              },
+              {
+                "timeSec": 0.04549075838457384,
+                "value": 1
+              },
+              {
+                "timeSec": 0.046117557717749946,
+                "value": 1
+              },
+              {
+                "timeSec": 0.06891494097088469,
+                "value": 1
+              },
+              {
+                "timeSec": 6.20491494097088,
+                "value": 1
+              },
+              {
+                "timeSec": 6.384914940970873,
                 "value": 0.9
               }
             ]
@@ -12219,5 +12485,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "the-prodigy-voodoo-people-pendulum-remix-hq-926021a8",
+  "updatedBy": "Mortu",
+  "updatedAt": "2026-10-31T18:51:24.863Z",
+  "summary": "izmijenjeno 6 [ripple, pulse, chase] · ukupno 259 clipova",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/8757036a00f55839206876ca60a8a8d4db7f33c08ed1b86ac9e2fbd7e3edb1ed.mp3"
 }

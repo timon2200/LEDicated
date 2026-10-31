@@ -928,3 +928,168 @@ html:not([dark]) .yt-plus-quick-action-btn {
   gap: 8px;
 }
 
+/* =========================================================================
+   Auto Pop-Out Consent Reminder Tooltip (#yt-ledicated-reminder-tooltip)
+   ========================================================================= */
+
+.yt-ledicated-btn.has-reminder {
+  border-color: rgba(56, 189, 248, 0.75);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.28), 0 0 16px rgba(168, 85, 247, 0.35);
+}
+
+.yt-led-import-btn.is-consent-pulse {
+  border-color: #38bdf8;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.38), rgba(168, 85, 247, 0.38));
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.32), 0 0 18px rgba(56, 189, 248, 0.45);
+  animation: yt-led-consent-glow 1.35s ease-in-out infinite;
+}
+
+@keyframes yt-led-consent-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.28), 0 0 14px rgba(56, 189, 248, 0.38);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.55), 0 0 24px rgba(168, 85, 247, 0.6);
+  }
+}
+
+.yt-ledicated-reminder-tooltip {
+  --yt-led-tip-arrow-x: 150px;
+  position: absolute;
+  z-index: 99998;
+  width: 300px;
+  box-sizing: border-box;
+  display: none;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 11px;
+  border-radius: 13px;
+  background: rgba(13, 16, 23, 0.96);
+  backdrop-filter: blur(18px) saturate(170%);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.65), 0 0 18px rgba(56, 189, 248, 0.24);
+  color: #f8fafc;
+  font-family: "Roboto", "YouTube Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  user-select: none;
+  opacity: 0;
+  transform: translateY(-6px) scale(0.97);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.yt-ledicated-reminder-tooltip.is-open {
+  display: flex;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  animation: yt-led-tip-pop 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes yt-led-tip-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.yt-led-tip-arrow {
+  position: absolute;
+  top: -6px;
+  left: var(--yt-led-tip-arrow-x, 150px);
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  background: rgba(13, 16, 23, 0.96);
+  border-top: 1px solid rgba(56, 189, 248, 0.55);
+  border-left: 1px solid rgba(56, 189, 248, 0.55);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.yt-led-tip-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  outline: none;
+}
+
+.yt-led-tip-main:hover .yt-led-tip-title {
+  color: #38bdf8;
+}
+
+.yt-led-tip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.25), rgba(168, 85, 247, 0.25));
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.yt-led-tip-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: #38bdf8;
+}
+
+.yt-led-tip-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.yt-led-tip-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f8fafc;
+  line-height: 1.25;
+  transition: color 0.14s ease;
+}
+
+.yt-led-tip-desc {
+  font-size: 10.5px;
+  color: #cbd5e1;
+  line-height: 1.35;
+}
+
+.yt-led-tip-desc b {
+  color: #7dd3fc;
+  font-weight: 600;
+}
+
+.yt-led-tip-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.yt-led-tip-close:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #f8fafc;
+}
+
+

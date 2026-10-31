@@ -436,3 +436,108 @@ test('createLive pushExternalStems and setPalette map all SHOW_THEMES to valid e
     }
   }
 });
+
+test('Chrome extension enforces explicit user consent for song downloads and manages play-session reminder tooltip state', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const vm = await import('node:vm');
+
+  const bgPath = join(import.meta.dirname, '../../chrome-extension/background.js');
+  const contentPath = join(import.meta.dirname, '../../chrome-extension/content.js');
+  const [bgSource, contentSource] = await Promise.all([
+    readFile(bgPath, 'utf8'),
+    readFile(contentPath, 'utf8')
+  ]);
+
+  // 1. Static guard: no automatic triggerSongImport calls remain in content.js
+  assert.ok(!contentSource.includes('autoTriggered: true'), 'content.js must not contain any autoTriggered song import calls');
+  assert.match(contentSource, /if \(userConsented !== true\)/, 'triggerSongImport must require userConsented === true');
+  assert.match(contentSource, /triggerSongImport\(\{ userConsented: true \}\)/, '#yt-ledicated-import-btn must pass userConsented: true');
+
+  // 2. Runtime verification of background.js message handlers with mocked chrome.* APIs
+  const storageState = {
+    ledicatedAutoImport: true // Simulate legacy profile that had auto-import enabled
+  };
+  let messageListener = null;
+  const fetchCalls = [];
+
+  const sandbox = {
+    console,
+    URL,
+    URLSearchParams,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    AbortSignal,
+    fetch: async (url, opts) => {
+      fetchCalls.push({ url, opts });
+      const payload = JSON.stringify({ ok: true, status: 'downloading', jobId: 'job-1' });
+      return {
+        ok: true,
+        status: 200,
+        async text() { return payload; },
+        async json() { return JSON.parse(payload); }
+      };
+    },
+    chrome: {
+      storage: {
+        local: {
+          get(keys, cb) {
+            const snap = { ...storageState };
+            if (typeof cb === 'function') cb(snap);
+            return Promise.resolve(snap);
+          },
+          set(patch, cb) {
+            Object.assign(storageState, patch);
+            if (typeof cb === 'function') cb();
+            return Promise.resolve();
+          }
+        }
+      },
+      downloads: { onChanged: { addListener() {} } },
+      tabs: { sendMessage() {} },
+      runtime: {
+        onMessage: {
+          addListener(fn) {
+            messageListener = fn;
+          }
+        }
+      }
+    }
+  };
+
+  vm.runInNewContext(bgSource, sandbox, { filename: 'background.js' });
+  assert.equal(typeof messageListener, 'function', 'background.js should register runtime.onMessage listener');
+
+  const sendMsg = (msg) =>
+    new Promise(resolve => {
+      messageListener(msg, {}, resolve);
+    });
+
+  // Legacy ledicatedAutoImport: true in storage is reset to false on GET_SETTINGS
+  const settingsRes = await sendMsg({ action: 'GET_SETTINGS' });
+  assert.equal(settingsRes.success, true);
+  assert.equal(settingsRes.settings.ledicatedAutoImport, false);
+  assert.equal(storageState.ledicatedAutoImport, false);
+
+  // Attempting LEDICATED_IMPORT without userConsented: true is rejected without hitting server
+  const unconsented = await sendMsg({
+    action: 'LEDICATED_IMPORT',
+    data: { videoId: 'vid_1', title: 'Random Video', url: 'https://www.youtube.com/watch?v=vid_1' }
+  });
+  assert.equal(unconsented.ok, false);
+  assert.equal(fetchCalls.length, 0, 'Unconsented import must never call /api/ext/import');
+
+  // Explicit user consent (userConsented: true) is allowed through to /api/ext/import
+  const consented = await sendMsg({
+    action: 'LEDICATED_IMPORT',
+    data: {
+      videoId: 'vid_music_1',
+      title: 'Consented Song',
+      url: 'https://www.youtube.com/watch?v=vid_music_1',
+      userConsented: true
+    }
+  });
+  assert.equal(consented.ok, true);
+  assert.equal(fetchCalls.length, 1);
+  assert.match(fetchCalls[0].url, /\/api\/ext\/import$/);
+});

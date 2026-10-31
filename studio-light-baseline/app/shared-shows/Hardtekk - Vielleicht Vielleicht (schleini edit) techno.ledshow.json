@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.817Z",
+  "exportedAt": "2026-10-28T23:52:15.543Z",
   "author": "Timon",
   "track": {
     "id": "afbc03e4-806f-40ea-a8f0-5ac7c5c0efd1",
@@ -8982,5 +8982,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "hardtekk-vielleicht-vielleicht-schleini-edit-techno-2b186827",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:15.541Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 192 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/c69bb374774919764787ee164ed67c453a3c4b01d4cdacc36579fd913fab7e81.mp3"
 }

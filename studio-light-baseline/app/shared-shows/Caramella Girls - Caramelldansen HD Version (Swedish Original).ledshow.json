@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.822Z",
+  "exportedAt": "2026-10-28T23:52:15.844Z",
   "author": "Timon",
   "track": {
     "id": "61f72a68-d1d8-466c-8bdf-f7a7067f7730",
@@ -4022,5 +4022,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "caramella-girls-caramelldansen-hd-version-swedish-original-28e16fbf",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:15.843Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 80 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/5d56ad9a499569eaa98e137371d1c795664d9429a01997f91570574a5a0a9811.mp3"
 }

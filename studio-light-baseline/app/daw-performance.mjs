@@ -82,7 +82,7 @@ export function createPerformancePanel(host, ctx) {
   const quant = h('button', { type: 'button', class: 'pf-quant', title: 'Pad počinje na idućem beatu tijekom reprodukcije', 'aria-pressed': 'false', onClick: () => {
     setQuantize(!desk.quantize);
   } }, '○ Odmah');
-  const stopAll = h('button', { type: 'button', class: 'pf-stop', title: 'Ugasi izvedbene efekte; spremljeni show ostaje', onClick: () => { desk.clear(); paintPads(); feedback.textContent = 'Svi izvedbeni efekti ugašeni.'; ctx.status('Izvedbeni efekti ugašeni.'); } }, 'Stop FX');
+  const stopAll = h('button', { type: 'button', class: 'pf-stop', title: 'Ugasi izvedbene efekte; spremljeni show ostaje', onClick: () => { desk.clear(); paintPads(); feedback.textContent = 'Svi izvedbeni efekti ugašeni.'; ctx.status('Izvedbeni efekti ugašeni.'); ctx.onPadAction?.({ action: 'clear' }); } }, 'Stop FX');
   const recSessionBtn = h('button', {
     type: 'button',
     class: 'pf-rec',
@@ -134,7 +134,7 @@ export function createPerformancePanel(host, ctx) {
     const message = ({ queued: `${label} čeka idući beat`, started: `${label} svira`, stopped: `${label} ugašen`, latched: `${label} ostaje uključen`, cancelled: `${label} otkazan`, invalid: `Polje ${PAD_KEYS[index].toUpperCase()} je prazno. Odaberi efekt.` })[result];
     if (message) { feedback.textContent = message; ctx.status(message); }
   }
-  function trigger(index, { select = false } = {}) {
+  function trigger(index, { select = false, fromRemote = false } = {}) {
     if (ctx.blackout()) { feedback.textContent = 'Blackout je aktivan. Otpusti ga za svjetlo.'; return; }
     if (select) { selected = index; effectPickerOpen = false; }
     const result = desk.trigger(index, { songTime: ctx.songTime(), clockTime: ctx.clockTime(), playing: ctx.playing(), bpm: ctx.bpm(), beatOffsetSec: ctx.beatOffset(), beatTimes: ctx.beatTimes() });
@@ -146,6 +146,7 @@ export function createPerformancePanel(host, ctx) {
     } else if (result === 'stopped' || result === 'cancelled') {
       ctx.recorder?.onPadUp(index, ctx.songTime());
     }
+    if (!fromRemote && result !== 'invalid') ctx.onPadAction?.({ action: 'trigger', index });
     padMessage(result, index); paintPads(); if (select) renderInspector();
   }
   const performanceContext = () => ({ songTime: ctx.songTime(), clockTime: ctx.clockTime(), playing: ctx.playing(), bpm: ctx.bpm(), beatOffsetSec: ctx.beatOffset(), beatTimes: ctx.beatTimes() });
@@ -159,25 +160,42 @@ export function createPerformancePanel(host, ctx) {
     [...pads.children].forEach((cell, i) => cell.classList.toggle('selected', i === index));
     renderInspector();
   }
-  function press(index, { select = false } = {}) {
+  const localHeld = new Set();
+  function press(index, { select = false, fromRemote = false } = {}) {
     if (ctx.blackout()) { feedback.textContent = 'Blackout je aktivan. Otpusti ga za svjetlo.'; return; }
     if (select) selectCard(index);
+    if (!fromRemote) localHeld.add(index);
     const result = desk.press(index, performanceContext());
     if (result !== 'held' && result !== 'invalid' && desk.pads[index]) {
       ctx.recorder?.onPadDown(index, desk.pads[index], ctx.songTime());
     }
+    if (!fromRemote && result !== 'held' && result !== 'invalid') ctx.onPadAction?.({ action: 'press', index });
     padMessage(result, index); syncPadStates();
   }
-  function release(index, { cancel = false } = {}) {
+  function release(index, { cancel = false, fromRemote = false } = {}) {
+    localHeld.delete(index);
     const result = desk.release(index, { clockTime: ctx.clockTime(), cancel });
     if (result !== 'ignored') {
       ctx.recorder?.onPadUp(index, ctx.songTime());
+      if (!fromRemote) ctx.onPadAction?.({ action: 'release', index, cancel });
     }
     padMessage(result, index); syncPadStates();
   }
-  function releaseAll() {
-    desk.releaseAll();
-    for (let i = 0; i < desk.pads.length; i++) ctx.recorder?.onPadUp(i, ctx.songTime());
+  function releaseAll({ fromRemote = false } = {}) {
+    if (fromRemote) {
+      localHeld.clear();
+      desk.releaseAll();
+      for (let i = 0; i < desk.pads.length; i++) ctx.recorder?.onPadUp(i, ctx.songTime());
+      syncPadStates();
+      return;
+    }
+    if (!localHeld.size) return;
+    for (const idx of [...localHeld]) {
+      localHeld.delete(idx);
+      desk.release(idx, { clockTime: ctx.clockTime(), cancel: false });
+      ctx.recorder?.onPadUp(idx, ctx.songTime());
+    }
+    ctx.onPadAction?.({ action: 'release_all' });
     syncPadStates();
   }
   function assignPreset(preset, index = selected) {
@@ -348,7 +366,7 @@ export function createPerformancePanel(host, ctx) {
     };
     const commit = patch => { edit(patch); renderInspector(); };
     const choice = (label, value, values, onChange, aria = label) => {
-      const buttons = values.map(([key, name]) => h('button', {
+      const buttons = values.map(([key, name, icon]) => h('button', {
         type: 'button', class: key === value ? 'on' : '', 'aria-pressed': String(key === value),
         onClick: () => {
           onChange(key);
@@ -358,7 +376,7 @@ export function createPerformancePanel(host, ctx) {
             button.setAttribute('aria-pressed', String(active));
           });
         }
-      }, name));
+      }, icon ? h('span', { class: 'pf-opt-icon', 'aria-hidden': 'true' }, icon) : null, h('span', { class: 'pf-opt-label' }, name)));
       return h('div', { class: 'pf-field' }, h('span', {}, label),
         h('div', { class: 'pf-options', role: 'group', 'aria-label': aria }, ...buttons));
     };
@@ -630,14 +648,14 @@ export function createPerformancePanel(host, ctx) {
       value => edit({ params: { ...desk.pads[selected].params, [key]: value } }), `${label} pada`));
     if (pad.preset === 'columns' || pad.preset === 'chase') {
       effectControls.unshift(choice('Smjer putanje', pad.direction,
-        [['ltr', 'Lijevo → desno'], ['rtl', 'Desno → lijevo'], ['ttb', 'Gore → dolje'], ['btt', 'Dolje → gore']],
+        [['ltr', 'Lijevo → desno', '→'], ['rtl', 'Desno → lijevo', '←'], ['ttb', 'Gore → dolje', '↓'], ['btt', 'Dolje → gore', '↑']],
         value => edit({ direction: value }), 'Smjer pada'));
     }
     if (pad.preset === 'chase') effectControls.splice(1, 0, choice('Kretanje', pad.motionMode,
-      [['serial', 'Jedan bar za drugim'], ['sync', 'Više redova / stupaca zajedno']],
+      [['serial', 'Jedan bar za drugim', '⤳'], ['sync', 'Više redova / stupaca zajedno', '⇉']],
       value => edit({ motionMode: value }), 'Kretanje trkača'));
     if (['pulse', 'columns', 'chase', 'flash', 'alternate'].includes(pad.preset)) effectControls.push(choice('Ritmički korak', pad.timing,
-      [['half', 'Pola beata'], ['beat', 'Beat'], ['bar', 'Takt'], ['2bar', '2 takta'], ['4bar', '4 takta']],
+      [['half', 'Pola beata', '½'], ['beat', 'Beat', '♩'], ['bar', 'Takt', '1∣'], ['2bar', '2 takta', '2∣'], ['4bar', '4 takta', '4∣']],
       value => edit({ timing: value }), 'Korak pada'));
     if (pad.preset === 'pulse') effectControls.push(range('Donja razina', Math.round(pad.params.floor * 100), 0, 80, 1, v => `${v}%`,
       v => edit({ params: { ...desk.pads[selected].params, floor: v / 100 } }), 'Donja razina pulsa'));
@@ -702,11 +720,11 @@ export function createPerformancePanel(host, ctx) {
       playbackPanel = h('section', { class: 'pf-editor-section pf-playback-section' },
         h('div', { class: 'pf-section-title' }, h('b', {}, 'JEDAN UDAR'), h('small', {}, 'Pokrene se ispočetka')),
         travel ? choice('Duljina puta', pad.hitTravel,
-          [['full', 'Cijeli prolaz'], ['half', 'Pola prolaza'], ['quarter', 'Četvrtina prolaza']], value => edit({ hitTravel: value }), 'Duljina puta pri udaru')
+          [['full', 'Cijeli prolaz', '━'], ['half', 'Pola prolaza', '½'], ['quarter', 'Četvrtina prolaza', '¼']], value => edit({ hitTravel: value }), 'Duljina puta pri udaru')
           : range('Trajanje', Math.round(pad.hitBeats * 8), 1, 32, 1, v => `${(v / 8).toFixed(v % 8 ? 3 : 0)} beat`,
             v => edit({ hitBeats: v / 8 }), 'Trajanje udarca'));
     } else {
-      const drivers = [['none', 'Bez audio drivera'], ['drums', 'Bubnjevi'], ['bass', 'Bas'], ['vocals', 'Vokal'], ['other', 'Ostalo'], ['band', 'Frekvencijski pojas']];
+      const drivers = [['none', 'Bez audio drivera', '○'], ['drums', 'Bubnjevi', '🥁'], ['bass', 'Bas', '〰'], ['vocals', 'Vokal', '🎙'], ['other', 'Ostalo', '✦'], ['band', 'Frekvencijski pojas', '≈']];
       const controls = [choice('Audio driver', pad.driver, drivers, value => commit({ driver: value }), 'Audio driver petlje')];
       if (pad.driver !== 'none') controls.push(range('Osjetljivost', Math.round(pad.driverGain * 100), 0, 300, 1, v => `${(v / 100).toFixed(2)}×`,
         v => edit({ driverGain: v / 100 }), 'Osjetljivost drivera'));
@@ -718,7 +736,7 @@ export function createPerformancePanel(host, ctx) {
           bandNumber('Od Hz', 'lowHz', 25, 17999, 1), bandNumber('Do Hz', 'highHz', 26, 18000, 1),
           bandNumber('Prag', 'threshold', 0, .99, .01), bandNumber('Puni odziv', 'ceiling', .01, 1, .01),
           bandNumber('Otpuštanje · s', 'releaseSec', 0, 2, .01),
-          choice('Praćenje', pad.band.mode, [['follow', 'Prati razinu'], ['gate', 'Uključi na pragu']],
+          choice('Praćenje', pad.band.mode, [['follow', 'Prati razinu', '∿'], ['gate', 'Uključi na pragu', '⚡']],
             value => commit({ band: { ...desk.pads[selected].band, mode: value } }))));
       }
       playbackPanel = h('section', { class: 'pf-editor-section pf-playback-section' },
@@ -815,7 +833,15 @@ export function createPerformancePanel(host, ctx) {
   return {
     desk, tick, trigger, press, release, releaseAll, assignPreset, syncRecState,
     setPadConfig, removePadConfig, movePadConfig, setQuantize, syncRemotePads,
-    clear: () => { desk.clear(); syncPadStates(); feedback.textContent = 'Izvedbeni efekti ugašeni.'; },
+    touchDown: (id, opts = {}) => desk.touchDown(id, { ...opts, clockTime: performance.now() / 1000 }),
+    touchMove: (id, opts = {}) => desk.touchMove(id, { ...opts, clockTime: performance.now() / 1000 }),
+    touchUp: (id, opts = {}) => desk.touchUp(id, { ...opts, clockTime: performance.now() / 1000 }),
+    setColor: color => desk.setColor(color),
+    setIntensity: intensity => desk.setIntensity(intensity),
+    setSpread: spread => desk.setSpread(spread),
+    setLocks: locks => desk.setLocks(locks),
+    setEffect: effect => desk.setEffect(effect),
+    clear: ({ fromRemote = false } = {}) => { desk.clear(); syncPadStates(); feedback.textContent = 'Izvedbeni efekti ugašeni.'; if (!fromRemote) ctx.onPadAction?.({ action: 'clear' }); },
     render: (base, clockTime, bpm, scale, analysis, songTime) => desk.render(base, clockTime, bpm, scale, analysis, songTime)
   };
 }

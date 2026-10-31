@@ -314,7 +314,8 @@ export function createShowEngine({ fps = DEFAULT_CACHE_FPS, lookaheadSec = 20, l
   } = {}) {
     if (nextTimeline) sync(nextTimeline, nextAnalysis);
     const activePads = performDesk?.desk?.active ?? performDesk?.active;
-    const hasLivePads = Boolean(activePads?.size > 0);
+    const activeTouches = performDesk?.desk?.touches ?? performDesk?.touches;
+    const hasLivePads = Boolean(activePads?.size > 0 || activeTouches?.size > 0);
     const effectiveBpm = bpm ?? timeline?.bpm ?? 120;
     // Get unscaled cached timeline frame first so Live Board additive blending
     // operates in full 0..255 internal dynamic range before master scaling.
@@ -327,17 +328,26 @@ export function createShowEngine({ fps = DEFAULT_CACHE_FPS, lookaheadSec = 20, l
       : masterBrightness60 !== undefined
         ? clamp(Number(masterBrightness60) / 100, 0, 1)
         : clamp(masterScale, 0, 1);
-    if (scale === 1) return withLive;
+    if (scale === 1) {
+      withLive.unscaledBars = withLive.bars;
+      return withLive;
+    }
+    const unscaledBars = {};
     for (let b = 0; b < BAR_COUNT; b++) {
-      const pixels = withLive.bars[BAR_IDS[b]];
+      const barId = BAR_IDS[b];
+      const pixels = withLive.bars[barId];
+      const unscaledPixels = new Array(PIXELS_PER_BAR);
       for (let p = 0; p < PIXELS_PER_BAR; p++) {
         const px = pixels[p];
+        unscaledPixels[p] = [px[0], px[1], px[2], px[3]];
         px[0] = Math.round(px[0] * scale);
         px[1] = Math.round(px[1] * scale);
         px[2] = Math.round(px[2] * scale);
         px[3] = Math.round(px[3] * scale);
       }
+      unscaledBars[barId] = unscaledPixels;
     }
+    withLive.unscaledBars = unscaledBars;
     return withLive;
   }
 

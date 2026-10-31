@@ -1,8 +1,8 @@
 {
   "format": "ledicated-show",
-  "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.705Z",
-  "author": "Timon",
+  "version": 10,
+  "exportedAt": "2026-10-31T16:42:39.304Z",
+  "author": "Mortu",
   "track": {
     "id": "638fd61e-1f6d-47da-9216-abdf396dcb38",
     "title": "Sounds",
@@ -11,7 +11,9 @@
     "sha256": "df9bc9af913eb62867f1f4a79305626aa642e976107578cc8287a3e2eff59025",
     "sizeBytes": 12654864,
     "durationSec": 311.226,
-    "bpm": 155
+    "bpm": 155,
+    "videoId": "hQgXFSzWGXs",
+    "sourceUrl": "https://www.youtube.com/watch?v=hQgXFSzWGXs"
   },
   "analysis": {
     "durationSec": 311.226,
@@ -1933,8 +1935,8 @@
             "timing": "beat",
             "motionMode": "serial",
             "params": {},
-            "startSec": 137.46435483870965,
-            "durationSec": 0.7741935483871032,
+            "startSec": 136.303064516129,
+            "durationSec": 1.9354838709677438,
             "id": "clip-mv2e26mv36v7b",
             "keyframes": [
               {
@@ -1942,7 +1944,19 @@
                 "value": 1
               },
               {
+                "timeSec": 0.3870967741935658,
+                "value": 1
+              },
+              {
                 "timeSec": 0.7741935483871032,
+                "value": 1
+              },
+              {
+                "timeSec": 1.1612903225806406,
+                "value": 1
+              },
+              {
+                "timeSec": 1.9354838709677438,
                 "value": 1
               }
             ]
@@ -3030,6 +3044,45 @@
                 "value": 0.05882352941176727
               }
             ]
+          },
+          {
+            "preset": "pulse",
+            "targets": "all",
+            "color": [
+              0.6980392156862745,
+              0.3607843137254902,
+              1,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1,
+            "speed": 1,
+            "direction": "ltr",
+            "timing": "beat",
+            "motionMode": "serial",
+            "params": {},
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.63,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "startSec": 268.30306451612904,
+            "durationSec": 1.5483870967742064,
+            "id": "clip-mvtr5y7c30ag",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.5483870967742064,
+                "value": 1
+              }
+            ]
           }
         ]
       },
@@ -4072,9 +4125,45 @@
         "enabled": true,
         "blend": "screen",
         "opacity": 0.7,
-        "clips": []
+        "clips": [
+          {
+            "preset": "pulse",
+            "targets": "all",
+            "color": [
+              0.22745098039215686,
+              1,
+              0.6901960784313725,
+              0
+            ],
+            "driver": "none",
+            "driverGain": 1,
+            "speed": 1,
+            "direction": "ltr",
+            "timing": "beat",
+            "motionMode": "serial",
+            "params": {},
+            "startSec": 241.98048387096773,
+            "durationSec": 1.548387096774178,
+            "id": "clip-mvwmqat61vrq",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.548387096774178,
+                "value": 1
+              }
+            ]
+          }
+        ]
       }
     ],
     "gridMode": "manual"
-  }
+  },
+  "showId": "sounds-35f793b7",
+  "updatedBy": "Mortu",
+  "updatedAt": "2026-10-31T16:42:39.295Z",
+  "summary": "+1 novi clip [pulse] · ukupno 57 clipova",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/df9bc9af913eb62867f1f4a79305626aa642e976107578cc8287a3e2eff59025.mp3"
 }

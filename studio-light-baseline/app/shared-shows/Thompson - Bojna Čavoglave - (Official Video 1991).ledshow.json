@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.790Z",
+  "exportedAt": "2026-10-28T23:52:14.341Z",
   "author": "Timon",
   "track": {
     "id": "415e336c-c777-45d4-9e1c-0f040780d226",
@@ -7139,5 +7139,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "thompson-bojna-avoglave-official-video-1991-f61b3d03",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:14.339Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 150 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/f48ea19ea9d552d77cee201f8be9972b940dba8d874f96cdd88cdf6624b138d9.mp3"
 }

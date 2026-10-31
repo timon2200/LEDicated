@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.713Z",
+  "exportedAt": "2026-10-28T23:52:11.699Z",
   "author": "Timon",
   "track": {
     "id": "12f110db-ca50-44ff-965a-5b54bf553c2c",
@@ -11,7 +11,9 @@
     "sha256": "a9b30e582814d7e73bd9181b873a5d6165a888f9055c7556c41dc1afe4ddf259",
     "sizeBytes": 11656454,
     "durationSec": 273.845,
-    "bpm": 156.6
+    "bpm": 156.6,
+    "videoId": "oelcyQCQmCI",
+    "sourceUrl": "https://www.youtube.com/watch?v=oelcyQCQmCI"
   },
   "analysis": {
     "durationSec": 273.845,
@@ -857,7 +859,7 @@
         "id": "base-wash",
         "name": "Atmosfera i baza",
         "color": "#3aa0ff",
-        "enabled": true,
+        "enabled": false,
         "blend": "screen",
         "opacity": 0.72,
         "clips": [
@@ -2177,7 +2179,7 @@
           },
           {
             "id": "wash-bld-sp1-6",
-            "startSec": 171.3185823754789,
+            "startSec": 168.25,
             "durationSec": 0.7662835249042146,
             "preset": "spiral",
             "targets": [
@@ -2222,7 +2224,7 @@
           },
           {
             "id": "wash-bld-sp2-6",
-            "startSec": 172.08486590038314,
+            "startSec": 169.01628352490422,
             "durationSec": 0.7662835249042146,
             "preset": "spiral",
             "targets": [
@@ -2267,7 +2269,7 @@
           },
           {
             "id": "wash-bld-sp3-6",
-            "startSec": 172.85114942528733,
+            "startSec": 169.78256704980842,
             "durationSec": 0.7662835249042146,
             "preset": "spiral",
             "targets": [
@@ -2312,7 +2314,7 @@
           },
           {
             "id": "wash-bld-sp4-6",
-            "startSec": 173.61743295019156,
+            "startSec": 170.54885057471265,
             "durationSec": 0.7662835249042146,
             "preset": "spiral",
             "targets": [
@@ -2357,8 +2359,8 @@
           },
           {
             "id": "wash-drop-rip-7",
-            "startSec": 175.15,
-            "durationSec": 34.86,
+            "startSec": 172.465,
+            "durationSec": 37.54499999999999,
             "preset": "ripple",
             "targets": [
               "C1",
@@ -2386,11 +2388,43 @@
                 "value": 1
               },
               {
-                "timeSec": 34.68,
+                "timeSec": 0.3830000000000098,
                 "value": 1
               },
               {
-                "timeSec": 34.86,
+                "timeSec": 0.7659999999999911,
+                "value": 1
+              },
+              {
+                "timeSec": 1.149000000000001,
+                "value": 1
+              },
+              {
+                "timeSec": 1.5320000000000107,
+                "value": 1
+              },
+              {
+                "timeSec": 1.9159999999999968,
+                "value": 1
+              },
+              {
+                "timeSec": 2.2990000000000066,
+                "value": 1
+              },
+              {
+                "timeSec": 2.681999999999988,
+                "value": 1
+              },
+              {
+                "timeSec": 2.6850000000000023,
+                "value": 1
+              },
+              {
+                "timeSec": 37.365,
+                "value": 1
+              },
+              {
+                "timeSec": 37.54499999999999,
                 "value": 0.9
               }
             ]
@@ -2897,7 +2931,7 @@
           },
           {
             "id": "bass-bld-chL-6",
-            "startSec": 171.3185823754789,
+            "startSec": 168.25,
             "durationSec": 3.0651340996168583,
             "preset": "chase",
             "targets": [
@@ -2932,45 +2966,6 @@
               {
                 "timeSec": 3.0651340996168583,
                 "value": 0.88
-              }
-            ]
-          },
-          {
-            "id": "bass-drop-7",
-            "startSec": 175.15,
-            "durationSec": 34.86,
-            "preset": "pulse",
-            "targets": [
-              "L3",
-              "C3",
-              "R3"
-            ],
-            "color": [
-              0.725,
-              0.05,
-              1,
-              0.45
-            ],
-            "driver": "bass",
-            "driverGain": 1.45,
-            "speed": 1,
-            "timing": "beat",
-            "params": {
-              "floor": 0.2,
-              "curve": "punch"
-            },
-            "keyframes": [
-              {
-                "timeSec": 0,
-                "value": 1
-              },
-              {
-                "timeSec": 34.68,
-                "value": 1
-              },
-              {
-                "timeSec": 34.86,
-                "value": 0.9
               }
             ]
           },
@@ -3010,6 +3005,36 @@
               {
                 "timeSec": 49.81,
                 "value": 0.9
+              }
+            ]
+          },
+          {
+            "preset": "fire",
+            "targets": "all",
+            "color": [
+              0.6980392156862745,
+              0.3607843137254902,
+              1,
+              0
+            ],
+            "driver": "bass",
+            "driverGain": 1.45,
+            "speed": 1,
+            "direction": "ltr",
+            "timing": "beat",
+            "motionMode": "serial",
+            "params": {},
+            "startSec": 147.178,
+            "durationSec": 23.75399999999999,
+            "id": "clip-mvsd75nn1rhz",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 23.75399999999999,
+                "value": 1
               }
             ]
           }
@@ -3378,8 +3403,8 @@
           },
           {
             "id": "syn-drop-rn1-7",
-            "startSec": 175.15,
-            "durationSec": 17,
+            "startSec": 172.465,
+            "durationSec": 19.685000000000002,
             "preset": "chase",
             "targets": [
               "L1",
@@ -3405,11 +3430,39 @@
                 "value": 1
               },
               {
-                "timeSec": 16.82,
+                "timeSec": 0.3830000000000098,
                 "value": 1
               },
               {
-                "timeSec": 17,
+                "timeSec": 0.7659999999999911,
+                "value": 1
+              },
+              {
+                "timeSec": 1.149000000000001,
+                "value": 1
+              },
+              {
+                "timeSec": 1.5320000000000107,
+                "value": 1
+              },
+              {
+                "timeSec": 1.9159999999999968,
+                "value": 1
+              },
+              {
+                "timeSec": 2.2990000000000066,
+                "value": 1
+              },
+              {
+                "timeSec": 2.6850000000000023,
+                "value": 1
+              },
+              {
+                "timeSec": 19.505000000000003,
+                "value": 1
+              },
+              {
+                "timeSec": 19.685000000000002,
                 "value": 0.9
               }
             ]
@@ -9009,7 +9062,7 @@
           },
           {
             "id": "rhy-bld-chR-6",
-            "startSec": 171.3185823754789,
+            "startSec": 168.25,
             "durationSec": 3.0651340996168583,
             "preset": "chase",
             "targets": [
@@ -11445,6 +11498,184 @@
                 "value": 0.9
               }
             ]
+          },
+          {
+            "id": "clip-mvsd85xl2tx5",
+            "startSec": 172.465,
+            "durationSec": 0.5329563248110958,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.725,
+              0.05,
+              1,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 0.45632797232066435,
+                "value": 1
+              },
+              {
+                "timeSec": 0.5329563248110958,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "clip-mvsd85xl3nke",
+            "startSec": 173.23128352490423,
+            "durationSec": 0.5329563248110958,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              0.05,
+              0.075,
+              0.8999999999999999,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 0.45632797232066435,
+                "value": 1
+              },
+              {
+                "timeSec": 0.5329563248110958,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "clip-mvsd85xl4wn6",
+            "startSec": 173.99756704980845,
+            "durationSec": 0.5329563248110958,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.725,
+              0.05,
+              1,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 0.45632797232066435,
+                "value": 1
+              },
+              {
+                "timeSec": 0.5329563248110958,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "clip-mvsd85xl5b4q",
+            "startSec": 174.76385057471268,
+            "durationSec": 0.5329563248110958,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              0.05,
+              0.075,
+              0.8999999999999999,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 0.45632797232066435,
+                "value": 1
+              },
+              {
+                "timeSec": 0.5329563248110958,
+                "value": 0.9
+              }
+            ]
           }
         ]
       },
@@ -11823,7 +12054,7 @@
           },
           {
             "id": "acc-bld-fl-6",
-            "startSec": 171.3185823754789,
+            "startSec": 168.25,
             "durationSec": 3.0651340996168583,
             "preset": "flash",
             "targets": "all",
@@ -11894,8 +12125,8 @@
           },
           {
             "id": "acc-drop-str-7",
-            "startSec": 175.15,
-            "durationSec": 6.32,
+            "startSec": 172.465,
+            "durationSec": 9.004999999999995,
             "preset": "strobe",
             "targets": [
               "C1",
@@ -11923,11 +12154,43 @@
                 "value": 1
               },
               {
-                "timeSec": 6.140000000000001,
+                "timeSec": 0.3830000000000098,
                 "value": 1
               },
               {
-                "timeSec": 6.32,
+                "timeSec": 0.7659999999999911,
+                "value": 1
+              },
+              {
+                "timeSec": 1.149000000000001,
+                "value": 1
+              },
+              {
+                "timeSec": 1.5320000000000107,
+                "value": 1
+              },
+              {
+                "timeSec": 1.9159999999999968,
+                "value": 1
+              },
+              {
+                "timeSec": 2.2990000000000066,
+                "value": 1
+              },
+              {
+                "timeSec": 2.681999999999988,
+                "value": 1
+              },
+              {
+                "timeSec": 2.6850000000000023,
+                "value": 1
+              },
+              {
+                "timeSec": 8.825000000000003,
+                "value": 1
+              },
+              {
+                "timeSec": 9.004999999999995,
                 "value": 0.9
               }
             ]
@@ -12108,5 +12371,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "klangkuenstler-ski-aggu-sonne-geht-auf-full-track-625e1d93",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:11.696Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 263 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/a9b30e582814d7e73bd9181b873a5d6165a888f9055c7556c41dc1afe4ddf259.mp3"
 }

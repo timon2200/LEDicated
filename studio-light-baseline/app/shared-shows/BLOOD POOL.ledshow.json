@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.832Z",
+  "exportedAt": "2026-10-28T23:52:16.227Z",
   "author": "Timon",
   "track": {
     "id": "387f4424-9b99-4241-aac2-085c917aa9e4",
@@ -1516,5 +1516,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "blood-pool-68802a6d",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:16.227Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 28 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/f66d7331adb61ff1deddee1eb3308434a748afa895a7cc8c81f6d82ba13ba148.mp3"
 }

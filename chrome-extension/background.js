@@ -207,9 +207,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         'ledicatedUseGemini',
         'ledicatedMaster',
         'ledicatedAutoImport',
+        'ledicatedPlaySession',
         'ledicatedServerUrl',
         'ledicatedUserName'
       ]);
+      if (settings.ledicatedAutoImport) {
+        await chrome.storage.local.set({ ledicatedAutoImport: false });
+      }
       sendResponse({
         success: true,
         settings: {
@@ -219,7 +223,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ledicatedTheme: settings.ledicatedTheme || 'midnight',
           ledicatedUseGemini: settings.ledicatedUseGemini !== false,
           ledicatedMaster: typeof settings.ledicatedMaster === 'number' ? settings.ledicatedMaster : 70,
-          ledicatedAutoImport: settings.ledicatedAutoImport === true,
+          ledicatedAutoImport: false,
+          ledicatedPlaySession: settings.ledicatedPlaySession || null,
           ledicatedServerUrl: baseUrl,
           ledicatedClientId: clientId,
           ledicatedUserName: settings.ledicatedUserName || clientName
@@ -232,6 +237,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'SAVE_SETTINGS') {
     (async () => {
       const nextSettings = { ...(message.settings || {}) };
+      nextSettings.ledicatedAutoImport = false;
       if (nextSettings.ledicatedServerUrl !== undefined) {
         nextSettings.ledicatedServerUrl = normalizeServerUrl(nextSettings.ledicatedServerUrl);
       }
@@ -267,6 +273,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'LEDICATED_IMPORT') {
     (async () => {
       const payload = message.data || message;
+      if (payload.userConsented !== true) {
+        sendResponse({
+          ok: false,
+          online: true,
+          error: 'Preuzimanje pjesme zahtijeva izričiti klik korisnika u Light Show izborniku.'
+        });
+        return;
+      }
       const body = {
         url: payload.url || '',
         videoId: payload.videoId || '',

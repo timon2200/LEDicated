@@ -20,10 +20,24 @@
   };
 
   // LEDicated runtime state
+  const PLAY_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
   const ledicatedState = {
     online: false,
     liveMode: false,
     popoverOpen: false,
+    reminderTooltipOpen: false,
+    pendingReminderVideoId: '',
+    currentHandledVideoId: '',
+    consentHighlightActive: false,
+    playSession: {
+      active: false,
+      lastConsentedVideoId: '',
+      lastWatchedVideoId: '',
+      lastWatchedConsented: false,
+      remindVideoId: '',
+      dismissedVideoId: '',
+      updatedAt: 0
+    },
     mode: 'idle', // 'idle' | 'live_stream' | 'timeline'
     outputMode: 'show', // 'show' | 'ambient'
     pendingTakeover: false,
@@ -37,7 +51,6 @@
     isStageOwner: true,
     lan: null,
     lastVideoId: '',
-    autoImportedVideoIds: new Set(),
     syncTimer: null,
     statusTimer: null,
     syncInFlight: false,
@@ -140,28 +153,30 @@
   let prevNavVideoId = '';
   let prevNavVideoTitle = '';
 
-  function fetchOembedTitle(videoId) {
-    if (!videoId) return Promise.resolve('');
+  async function fetchOembedTitle(videoId) {
+    if (!videoId) return '';
     if (verifiedTitlesByVideoId.has(videoId)) {
-      return Promise.resolve(verifiedTitlesByVideoId.get(videoId));
+      return verifiedTitlesByVideoId.get(videoId);
     }
     if (oembedInFlight.has(videoId)) {
       return oembedInFlight.get(videoId);
     }
-    const p = fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
+    const p = (async () => {
+      try {
+        const r = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}&format=json`);
+        const data = r.ok ? await r.json() : null;
         const t = typeof data?.title === 'string' ? data.title.trim() : '';
         if (t) {
           verifiedTitlesByVideoId.set(videoId, t);
           if (getVideoId() === videoId) updateLedicatedUI();
         }
         return t;
-      })
-      .catch(() => '')
-      .finally(() => {
+      } catch {
+        return '';
+      } finally {
         oembedInFlight.delete(videoId);
-      });
+      }
+    })();
     oembedInFlight.set(videoId, p);
     return p;
   }
@@ -257,6 +272,9 @@
       if (e.detail.videoId && e.detail.title && e.detail.isPlayerSynced && e.detail.title !== 'YouTube_Video') {
         verifiedTitlesByVideoId.set(e.detail.videoId, e.detail.title.trim());
       }
+      if (e.detail.videoId) {
+        handleVideoChange(e.detail.videoId);
+      }
     }
   });
 
@@ -264,18 +282,36 @@
     if (e.detail) audioTap.mainWorldStems = e.detail;
   });
 
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.ledicatedPlaySession && changes.ledicatedPlaySession.newValue) {
+        ledicatedState.playSession = {
+          ...ledicatedState.playSession,
+          ...changes.ledicatedPlaySession.newValue
+        };
+      }
+    });
+  }
+
   async function loadSettings() {
     const res = await sendRuntimeMessage({ action: 'GET_SETTINGS' });
     if (res && res.success && res.settings) {
-      userSettings = { ...userSettings, ...res.settings };
+      userSettings = { ...userSettings, ...res.settings, ledicatedAutoImport: false };
       ledicatedState.theme = userSettings.ledicatedTheme || 'midnight';
       ledicatedState.useGemini = userSettings.ledicatedUseGemini !== false;
       ledicatedState.master = typeof userSettings.ledicatedMaster === 'number' ? userSettings.ledicatedMaster : 70;
+      if (res.settings.ledicatedPlaySession && typeof res.settings.ledicatedPlaySession === 'object') {
+        ledicatedState.playSession = {
+          ...ledicatedState.playSession,
+          ...res.settings.ledicatedPlaySession
+        };
+      }
 
       const vSel = document.getElementById('yt-plus-v-quality');
       const aSel = document.getElementById('yt-plus-a-quality');
       if (vSel && userSettings.defaultVideoQuality) vSel.value = userSettings.defaultVideoQuality;
       if (aSel && userSettings.defaultAudioQuality) aSel.value = userSettings.defaultAudioQuality;
+      await handleVideoChange(getVideoId());
       updateLedicatedUI();
     }
   }
@@ -527,7 +563,127 @@
     return res;
   }
 
-  async function triggerSongImport({ autoTriggered = false } = {}) {
+  function isPlaySessionFresh(session) {
+    if (!session || !session.active) return false;
+    const ts = Number(session.updatedAt) || 0;
+    return ts > 0 && Date.now() - ts < PLAY_SESSION_TTL_MS;
+  }
+
+  async function savePlaySession(patch = {}) {
+    ledicatedState.playSession = {
+      ...ledicatedState.playSession,
+      ...patch,
+      updatedAt: Date.now()
+    };
+    await sendRuntimeMessage({
+      action: 'SAVE_SETTINGS',
+      settings: { ledicatedPlaySession: ledicatedState.playSession }
+    });
+  }
+
+  async function recordUserSongConsent(videoId) {
+    const vid = String(videoId || getVideoId() || '').trim();
+    if (!vid) return;
+    ledicatedState.currentHandledVideoId = vid;
+    ledicatedState.pendingReminderVideoId = '';
+    ledicatedState.consentHighlightActive = false;
+    hideReminderTooltip({ markDismissed: false });
+    await savePlaySession({
+      active: true,
+      lastConsentedVideoId: vid,
+      lastWatchedVideoId: vid,
+      lastWatchedConsented: true,
+      remindVideoId: '',
+      dismissedVideoId: ''
+    });
+    updateLedicatedUI();
+  }
+
+  async function handleVideoChange(rawVideoId) {
+    const videoId = String(rawVideoId || getVideoId() || '').trim();
+    if (!videoId) {
+      hideReminderTooltip({ markDismissed: false });
+      return;
+    }
+
+    if (videoId === ledicatedState.currentHandledVideoId) {
+      if (ledicatedState.pendingReminderVideoId === videoId) {
+        tryShowReminderTooltip();
+      }
+      return;
+    }
+
+    ledicatedState.currentHandledVideoId = videoId;
+    const session = ledicatedState.playSession || {};
+    const fresh = isPlaySessionFresh(session);
+
+    if (!fresh && !ledicatedState.liveMode) {
+      ledicatedState.pendingReminderVideoId = '';
+      ledicatedState.consentHighlightActive = false;
+      hideReminderTooltip({ markDismissed: false });
+      return;
+    }
+
+    // Case 1: On the last YouTube video the user pressed the Light Show download song button
+    if (
+      session.lastWatchedVideoId &&
+      session.lastWatchedVideoId !== videoId &&
+      session.lastWatchedConsented === true
+    ) {
+      ledicatedState.pendingReminderVideoId = videoId;
+      ledicatedState.consentHighlightActive = true;
+      if (ledicatedState.popoverOpen) {
+        closeLedicatedPopover();
+      }
+      await savePlaySession({
+        active: true,
+        lastConsentedVideoId: session.lastConsentedVideoId || session.lastWatchedVideoId,
+        lastWatchedVideoId: videoId,
+        lastWatchedConsented: false,
+        remindVideoId: videoId,
+        dismissedVideoId: ''
+      });
+      tryShowReminderTooltip();
+      updateLedicatedUI();
+      return;
+    }
+
+    // Case 2: Full page load or reload on the new YouTube link already flagged for reminder
+    if (
+      session.remindVideoId === videoId &&
+      session.dismissedVideoId !== videoId &&
+      !session.lastWatchedConsented
+    ) {
+      ledicatedState.pendingReminderVideoId = videoId;
+      ledicatedState.consentHighlightActive = true;
+      tryShowReminderTooltip();
+      updateLedicatedUI();
+      return;
+    }
+
+    // Case 3: Transitioning from a video where the user did NOT press the download button
+    if (session.lastWatchedVideoId !== videoId) {
+      ledicatedState.pendingReminderVideoId = '';
+      ledicatedState.consentHighlightActive = false;
+      hideReminderTooltip({ markDismissed: false });
+      await savePlaySession({
+        active: Boolean(session.active || ledicatedState.liveMode),
+        lastConsentedVideoId: session.lastConsentedVideoId || '',
+        lastWatchedVideoId: videoId,
+        lastWatchedConsented: false,
+        remindVideoId: '',
+        dismissedVideoId: ''
+      });
+      updateLedicatedUI();
+    }
+  }
+
+  async function triggerSongImport({ userConsented = false } = {}) {
+    // Explicit user consent is mandatory — never auto-download songs without a button press
+    if (userConsented !== true) {
+      return;
+    }
+
     requestPlayerData();
     const videoId = getVideoId();
     const url = getCleanWatchUrl();
@@ -536,20 +692,11 @@
       return;
     }
 
-    if (autoTriggered) {
-      const video = getMainVideoElement();
-      const dur = video && Number.isFinite(video.duration) ? Number(video.duration) : 0;
-      if (dur > 720) {
-        return; // Never auto-download videos longer than 12 minutes
-      }
-      if (videoId) {
-        ledicatedState.autoImportedVideoIds.add(videoId);
-      }
-    }
+    await recordUserSongConsent(videoId);
 
     // Turn ON Live Show mode if not already on so lights dance immediately while importing!
     if (!ledicatedState.liveMode) {
-      await setLiveShowMode(true, { skipAutoImport: true });
+      await setLiveShowMode(true);
     }
 
     ledicatedState.importJob = {
@@ -569,7 +716,8 @@
         videoId,
         title,
         theme: ledicatedState.theme,
-        useGemini: ledicatedState.useGemini
+        useGemini: ledicatedState.useGemini,
+        userConsented: true
       }
     });
 
@@ -613,7 +761,7 @@
     const title = getVideoTitle();
     const url = getCleanWatchUrl();
 
-    // Detect YouTube SPA video change while Live Mode is active
+    // Detect YouTube SPA video change / autoplay while Live Mode is active
     if (videoId && videoId !== ledicatedState.lastVideoId) {
       prevNavVideoId = ledicatedState.lastVideoId || '';
       prevNavVideoTitle =
@@ -626,23 +774,12 @@
       ledicatedState.importJob = null;
       currentVideoData = { videoId: '', title: '', isPlayerSynced: false };
       requestPlayerData();
-      resolveAccurateVideoTitle(videoId).then(() => {
+      handleVideoChange(videoId);
+      (async () => {
+        await resolveAccurateVideoTitle(videoId);
         if (getVideoId() !== videoId) return;
-        refreshLedicatedStatus().then((statusRes) => {
-          if (
-            getVideoId() === videoId &&
-            ledicatedState.liveMode &&
-            userSettings.ledicatedAutoImport &&
-            statusRes &&
-            statusRes.online &&
-            !statusRes.track &&
-            !statusRes.importJob &&
-            !ledicatedState.autoImportedVideoIds.has(videoId)
-          ) {
-            triggerSongImport({ autoTriggered: true });
-          }
-        });
-      });
+        refreshLedicatedStatus();
+      })();
     }
 
     const currentTime = video ? Number(video.currentTime || 0) : 0;
@@ -715,7 +852,7 @@
     }
   }
 
-  async function setLiveShowMode(enable, { skipAutoImport = false } = {}) {
+  async function setLiveShowMode(enable) {
     ledicatedState.liveMode = Boolean(enable);
 
     if (ledicatedState.syncTimer) {
@@ -744,21 +881,17 @@
       // Poll status every 1.5s to track background stem split / show creation
       ledicatedState.statusTimer = setInterval(refreshLedicatedStatus, 1500);
 
-      const statusRes = await refreshLedicatedStatus();
-      const videoId = getVideoId();
-      if (
-        !skipAutoImport &&
-        userSettings.ledicatedAutoImport &&
-        statusRes &&
-        statusRes.online &&
-        !statusRes.track &&
-        !statusRes.importJob &&
-        videoId &&
-        !ledicatedState.autoImportedVideoIds.has(videoId)
-      ) {
-        triggerSongImport({ autoTriggered: true });
-      }
+      await refreshLedicatedStatus();
     } else {
+      ledicatedState.pendingReminderVideoId = '';
+      ledicatedState.consentHighlightActive = false;
+      hideReminderTooltip({ markDismissed: false });
+      await savePlaySession({
+        active: false,
+        lastWatchedConsented: false,
+        remindVideoId: '',
+        dismissedVideoId: ''
+      });
       // Notify server that live mode ended
       const video = getMainVideoElement();
       await sendRuntimeMessage({
@@ -907,11 +1040,12 @@
       if (statusEl) {
         statusEl.style.display = 'inline-flex';
         statusEl.className = 'yt-plus-status is-success';
-        statusEl.textContent = 'LEDicated Light Show aktivan — sinkronizacija i izrada showa…';
+        statusEl.textContent = 'Otvoren Light Show izbornik — klikni "Dodaj pjesmu i kreiraj Show" za preuzimanje.';
       }
-      await setLiveShowMode(true, { skipAutoImport: true });
-      await triggerSongImport({ autoTriggered: false });
+      ledicatedState.consentHighlightActive = true;
+      await setLiveShowMode(true);
       openLedicatedPopover();
+      updateLedicatedUI();
     });
 
     return bar;
@@ -1239,7 +1373,7 @@
 
     const importBtn = popover.querySelector('#yt-ledicated-import-btn');
     importBtn.addEventListener('click', () => {
-      triggerSongImport({ autoTriggered: false });
+      triggerSongImport({ userConsented: true });
     });
 
     const geminiCheckbox = popover.querySelector('#yt-ledicated-gemini-checkbox');
@@ -1334,6 +1468,130 @@
     return popover;
   }
 
+  function ensureReminderTooltip() {
+    let tip = document.getElementById('yt-ledicated-reminder-tooltip');
+    if (tip) return tip;
+
+    tip = document.createElement('div');
+    tip.id = 'yt-ledicated-reminder-tooltip';
+    tip.className = 'yt-ledicated-reminder-tooltip';
+    tip.setAttribute('role', 'status');
+    tip.setAttribute('aria-live', 'polite');
+
+    setSafeHtml(tip, `
+      <div class="yt-led-tip-arrow" aria-hidden="true"></div>
+      <div class="yt-led-tip-main" id="yt-ledicated-tip-main" role="button" tabindex="0" title="Otvori Light Show izbornik i preuzmi pjesmu">
+        <span class="yt-led-tip-icon" aria-hidden="true">${SVG_SPARKLES}</span>
+        <div class="yt-led-tip-copy">
+          <span class="yt-led-tip-title">Preuzmi pjesmu za Light Show</span>
+          <span class="yt-led-tip-desc">Nova pjesma — klikni ovdje i pritisni <b>Dodaj pjesmu i kreiraj Show</b></span>
+        </div>
+      </div>
+      <button type="button" class="yt-led-tip-close" id="yt-ledicated-tip-close" title="Zatvori podsjetnik" aria-label="Zatvori podsjetnik">×</button>
+    `);
+
+    document.body.appendChild(tip);
+
+    tip.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+
+    const tipMain = tip.querySelector('#yt-ledicated-tip-main');
+    if (tipMain) {
+      const openFromTip = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        ledicatedState.consentHighlightActive = true;
+        hideReminderTooltip({ markDismissed: true });
+        openLedicatedPopover();
+        updateLedicatedUI();
+      };
+      tipMain.addEventListener('click', openFromTip);
+      tipMain.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          openFromTip(e);
+        }
+      });
+    }
+
+    const tipClose = tip.querySelector('#yt-ledicated-tip-close');
+    if (tipClose) {
+      tipClose.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        ledicatedState.consentHighlightActive = false;
+        hideReminderTooltip({ markDismissed: true });
+        updateLedicatedUI();
+      });
+    }
+
+    return tip;
+  }
+
+  function positionReminderTooltip() {
+    const tip = document.getElementById('yt-ledicated-reminder-tooltip');
+    const btn = document.getElementById('yt-ledicated-btn');
+    if (!tip || !btn || !ledicatedState.reminderTooltipOpen) return false;
+
+    const rect = btn.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+
+    const tipWidth = 300;
+    const btnCenterX = rect.left + window.scrollX + rect.width / 2;
+    let left = Math.round(btnCenterX - tipWidth / 2);
+    const minLeft = window.scrollX + 12;
+    const maxLeft = window.scrollX + document.documentElement.clientWidth - tipWidth - 12;
+    if (left < minLeft) left = minLeft;
+    if (left > maxLeft) left = Math.max(minLeft, maxLeft);
+
+    const arrowOffset = Math.max(20, Math.min(tipWidth - 20, Math.round(btnCenterX - left)));
+    const top = Math.round(rect.bottom + window.scrollY + 10);
+
+    tip.style.top = `${top}px`;
+    tip.style.left = `${left}px`;
+    tip.style.setProperty('--yt-led-tip-arrow-x', `${arrowOffset}px`);
+    return true;
+  }
+
+  function tryShowReminderTooltip() {
+    const currentVid = getVideoId();
+    if (!currentVid || ledicatedState.pendingReminderVideoId !== currentVid) {
+      return false;
+    }
+    if (ledicatedState.popoverOpen) {
+      return false;
+    }
+    const btn = document.getElementById('yt-ledicated-btn');
+    if (!btn) return false;
+    const rect = btn.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+
+    const tip = ensureReminderTooltip();
+    ledicatedState.reminderTooltipOpen = true;
+    tip.classList.add('is-open');
+    positionReminderTooltip();
+    updateLedicatedUI();
+    return true;
+  }
+
+  function hideReminderTooltip({ markDismissed = false } = {}) {
+    const tip = document.getElementById('yt-ledicated-reminder-tooltip');
+    ledicatedState.reminderTooltipOpen = false;
+    if (tip) {
+      tip.classList.remove('is-open');
+    }
+    if (markDismissed) {
+      const vid = getVideoId();
+      ledicatedState.pendingReminderVideoId = '';
+      if (vid && ledicatedState.playSession && ledicatedState.playSession.remindVideoId === vid) {
+        savePlaySession({
+          dismissedVideoId: vid,
+          remindVideoId: ''
+        });
+      }
+    }
+  }
+
   function positionLedicatedPopover() {
     const popover = document.getElementById('yt-ledicated-popover');
     const btn = document.getElementById('yt-ledicated-btn');
@@ -1351,10 +1609,12 @@
   }
 
   function openLedicatedPopover() {
+    hideReminderTooltip({ markDismissed: true });
     const popover = ensureLedicatedPopover();
     ledicatedState.popoverOpen = true;
     popover.classList.add('is-open');
     positionLedicatedPopover();
+    updateLedicatedUI();
     refreshLedicatedStatus();
   }
 
@@ -1450,6 +1710,7 @@
       watchBtn.classList.toggle('is-streaming', isLiveStreaming && canDrive && ledicatedState.armed);
       watchBtn.classList.toggle('is-synced', isSyncedWithDb && canDrive && ledicatedState.armed);
       watchBtn.classList.toggle('is-solo', Boolean(ledicatedState.liveMode && (!canDrive || isAmbient || !ledicatedState.armed)));
+      watchBtn.classList.toggle('has-reminder', Boolean(ledicatedState.reminderTooltipOpen || ledicatedState.consentHighlightActive));
       const labelEl = watchBtn.querySelector('.yt-ledicated-btn-label');
       if (labelEl) {
         if (ledicatedState.liveMode && isAmbient) {
@@ -1577,6 +1838,11 @@
     const liveToggle = document.getElementById('yt-ledicated-live-toggle');
     if (liveToggle) {
       liveToggle.checked = Boolean(ledicatedState.liveMode);
+    }
+
+    const importBtn = document.getElementById('yt-ledicated-import-btn');
+    if (importBtn) {
+      importBtn.classList.toggle('is-consent-pulse', Boolean(ledicatedState.consentHighlightActive && !ledicatedState.track));
     }
 
     const importBtnText = document.getElementById('yt-ledicated-import-btn-text');
@@ -1768,6 +2034,10 @@
       ensureLedicatedPopover();
       updateLedicatedUI();
     }
+
+    if (ledicatedState.pendingReminderVideoId && ledicatedState.pendingReminderVideoId === getVideoId()) {
+      tryShowReminderTooltip();
+    }
   }
 
   // MutationObserver
@@ -1806,22 +2076,39 @@
     }
   }, true);
 
-  window.addEventListener('resize', positionLedicatedPopover);
-  window.addEventListener('scroll', positionLedicatedPopover, { passive: true });
+  const handleViewportShift = () => {
+    positionLedicatedPopover();
+    positionReminderTooltip();
+  };
+  window.addEventListener('resize', handleViewportShift);
+  window.addEventListener('scroll', handleViewportShift, { passive: true });
 
   window.addEventListener('yt-navigate-finish', () => {
     requestPlayerData();
     injectQuickButton();
+    handleVideoChange(getVideoId());
     setTimeout(() => {
       injectQuickButton();
       injectIntoShareModal();
+      handleVideoChange(getVideoId());
       refreshLedicatedStatus();
-    }, 300);
+    }, 350);
   });
 
   window.addEventListener('yt-page-data-updated', () => {
     injectQuickButton();
+    handleVideoChange(getVideoId());
   });
+
+  // Lightweight watcher for YouTube autoplay / playlist transitions
+  setInterval(() => {
+    const vid = getVideoId();
+    if (vid && vid !== ledicatedState.currentHandledVideoId) {
+      handleVideoChange(vid);
+    } else if (vid && ledicatedState.pendingReminderVideoId === vid && !ledicatedState.reminderTooltipOpen && !ledicatedState.popoverOpen) {
+      tryShowReminderTooltip();
+    }
+  }, 600);
 
   injectPageScript();
   loadSettings();

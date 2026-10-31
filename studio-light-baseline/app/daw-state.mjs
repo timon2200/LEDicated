@@ -4,7 +4,7 @@
  * the renderer and validator, so the deterministic RGBW output is unchanged.
  */
 import { BAR_IDS } from './engine.mjs';
-import { validateTimeline, snapTimeToBeat, DEFAULT_BAND } from './timeline.mjs';
+import { validateTimeline, snapTimeToBeat, DEFAULT_BAND, sanitizeKeyframes } from './timeline.mjs';
 import { SPECTRUM_MAX_HZ, SPECTRUM_MIN_HZ } from './audio-spectrum.mjs';
 
 export const MIN_CLIP_SEC = 0.05;
@@ -32,11 +32,13 @@ export function easeValue(aValue, bValue, fraction, easeMode = 'linear') {
 }
 
 export function envelopeAt(keys, t) {
+  if (!Array.isArray(keys) || !keys.length) return 1;
   if (t <= keys[0].timeSec) return keys[0].value;
   for (let i = 1; i < keys.length; i++) {
     if (t <= keys[i].timeSec) {
       const a = keys[i - 1], b = keys[i];
-      const fraction = (t - a.timeSec) / (b.timeSec - a.timeSec);
+      const span = b.timeSec - a.timeSec;
+      const fraction = span > 1e-9 ? (t - a.timeSec) / span : 1;
       const ease = a.ease || b.ease || 'linear';
       return easeValue(a.value, b.value, fraction, ease);
     }
@@ -48,13 +50,22 @@ export function envelopeAt(keys, t) {
  * Boundary values are interpolated, so the visible envelope is unchanged.
  */
 export function trimKeyframes(keys, lo, hi) {
-  const out = [{ timeSec: 0, value: envelopeAt(keys, lo), ...(keys[0]?.ease ? { ease: keys[0].ease } : {}) }];
+  const len = Math.max(EPS, hi - lo);
+  if (!Array.isArray(keys) || !keys.length) return [{ timeSec: 0, value: 1 }, { timeSec: len, value: 1 }];
+  const out = [{ timeSec: 0, value: clamp(envelopeAt(keys, lo), 0, 1), ...(keys[0]?.ease ? { ease: keys[0].ease } : {}) }];
   for (const key of keys) {
     if (key.timeSec > lo + EPS && key.timeSec < hi - EPS) {
-      out.push({ timeSec: key.timeSec - lo, value: key.value, ...(key.ease ? { ease: key.ease } : {}) });
+      const t = key.timeSec - lo;
+      if (t > out.at(-1).timeSec + 1e-6 && t < len - 1e-6) {
+        out.push({ timeSec: t, value: clamp(key.value, 0, 1), ...(key.ease ? { ease: key.ease } : {}) });
+      }
     }
   }
-  out.push({ timeSec: hi - lo, value: envelopeAt(keys, hi), ...(keys.at(-1)?.ease ? { ease: keys.at(-1).ease } : {}) });
+  if (len > out.at(-1).timeSec + 1e-6) {
+    out.push({ timeSec: len, value: clamp(envelopeAt(keys, hi), 0, 1), ...(keys.at(-1)?.ease ? { ease: keys.at(-1).ease } : {}) });
+  } else {
+    out[out.length - 1].timeSec = len;
+  }
   return out;
 }
 
@@ -144,13 +155,48 @@ export function clipsInRect(timeline, t0, t1, layer0, layer1) {
 
 /* --------------------------------------------------------- timeline setup */
 
-/** Ensure editor-only fields exist. Idempotent; returns the same object. */
+/** Strip transient recording flags and repair colliding keyframe timestamps without mutating layer metadata. */
+export function sanitizeTimelineClips(timeline) {
+  if (!timeline || typeof timeline !== 'object') return timeline;
+  if (!Array.isArray(timeline.layers)) return timeline;
+  for (const layer of timeline.layers) {
+    if (!layer || typeof layer !== 'object' || !Array.isArray(layer.clips)) continue;
+    for (const clip of layer.clips) {
+      if (!clip || typeof clip !== 'object') continue;
+      delete clip.recording;
+      if (Number.isFinite(clip.durationSec) && clip.durationSec > 0 && Array.isArray(clip.keyframes) && clip.keyframes.length > 0) {
+        let needsRepair = false;
+        let allFinite = true;
+        let prev = -Infinity;
+        for (const k of clip.keyframes) {
+          if (!k || typeof k !== 'object' || !Number.isFinite(k.timeSec) || !Number.isFinite(k.value)) {
+            allFinite = false;
+            break;
+          }
+          if (k.timeSec < 0 || k.timeSec > clip.durationSec || k.timeSec <= prev || k.value < 0 || k.value > 1) {
+            needsRepair = true;
+          }
+          prev = k.timeSec;
+        }
+        if (allFinite && needsRepair) {
+          clip.keyframes = sanitizeKeyframes(clip.keyframes, clip.durationSec);
+        }
+      }
+    }
+  }
+  return timeline;
+}
+
+/** Ensure editor-only fields exist and keyframe invariants hold. Idempotent; returns the same object. */
 export function normalizeTimeline(timeline) {
+  if (!timeline || typeof timeline !== 'object') return timeline;
+  if (!Array.isArray(timeline.layers)) timeline.layers = [];
   timeline.layers.forEach((layer, i) => {
+    if (!layer || typeof layer !== 'object') return;
     layer.name ??= layer.id;
     layer.color ??= LAYER_COLORS[i % LAYER_COLORS.length];
   });
-  return timeline;
+  return sanitizeTimelineClips(timeline);
 }
 
 /* ------------------------------------------------------------- layer ops */
@@ -192,16 +238,129 @@ export const CLIP_DEFAULTS = Object.freeze({
   direction: 'ltr', timing: 'beat', motionMode: 'serial', params: {}
 });
 
+function driverSignature(clip) {
+  if (!clip || !clip.driver || clip.driver === 'none') return 'none';
+  if (clip.driver === 'band' && clip.band) {
+    const b = clip.band;
+    return `band:${b.source || 'master'}:${b.lowHz}-${b.highHz}:${b.mode || 'follow'}`;
+  }
+  return clip.driver;
+}
+
+/** Infer the audio driver for a layer from its existing driven clips (weighted by
+ * total duration so primary section clips beat tiny build/accent slices), falling
+ * back to the layer's name or ID when no driven clips exist on the layer yet.
+ */
+export function inferLayerDriver(layer, startSec = null) {
+  if (!layer || typeof layer !== 'object') return { driver: 'none', driverGain: 1 };
+  const driven = Array.isArray(layer.clips)
+    ? layer.clips.filter(c => c && c.driver && c.driver !== 'none')
+    : [];
+
+  if (driven.length > 0) {
+    const groups = new Map();
+    for (const c of driven) {
+      const sig = driverSignature(c);
+      let g = groups.get(sig);
+      if (!g) {
+        g = { sig, totalDur: 0, count: 0, clips: [] };
+        groups.set(sig, g);
+      }
+      g.totalDur += Math.max(MIN_CLIP_SEC, Number.isFinite(c.durationSec) ? c.durationSec : 0);
+      g.count += 1;
+      g.clips.push(c);
+    }
+
+    let bestGroup = null;
+    for (const g of groups.values()) {
+      if (
+        !bestGroup ||
+        g.totalDur > bestGroup.totalDur + 1e-6 ||
+        (Math.abs(g.totalDur - bestGroup.totalDur) <= 1e-6 && g.count > bestGroup.count)
+      ) {
+        bestGroup = g;
+      }
+    }
+
+    let chosen = bestGroup.clips[0];
+    if (Number.isFinite(startSec) && bestGroup.clips.length > 1) {
+      let bestDist = Infinity;
+      for (const c of bestGroup.clips) {
+        const cStart = Number.isFinite(c.startSec) ? c.startSec : 0;
+        const cEnd = cStart + (Number.isFinite(c.durationSec) ? c.durationSec : 0);
+        const dist = startSec >= cStart && startSec <= cEnd
+          ? 0
+          : Math.min(Math.abs(startSec - cStart), Math.abs(startSec - cEnd));
+        if (dist < bestDist) {
+          bestDist = dist;
+          chosen = c;
+        }
+      }
+    }
+
+    const res = {
+      driver: chosen.driver,
+      driverGain: Number.isFinite(chosen.driverGain) ? clamp(chosen.driverGain, 0, 2) : 1
+    };
+    if (chosen.driver === 'band') {
+      res.band = chosen.band ? clampBand(chosen.band) : structuredClone(DEFAULT_BAND);
+    }
+    return res;
+  }
+
+  const rawText = `${layer.id || ''} ${layer.name || ''}`
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd');
+
+  if (/\b(sub|bas|bass|low|dubok\w*)\b/.test(rawText)) {
+    return { driver: 'bass', driverGain: 1 };
+  }
+  if (/\b(atmosfer\w*|atmosphere\w*|baza|base|wash|pad|ambijent\w*|ambient\w*|ostalo|other|sint\w*|synth\w*|melod\w*|harmoni\w*)\b/.test(rawText)) {
+    if (/\b(vokal\w*|vocal\w*|glas\w*|voice\w*)\b/.test(rawText) && !/\b(sint\w*|synth\w*|atmosfer\w*|baza|wash)\b/.test(rawText)) {
+      return { driver: 'vocals', driverGain: 1 };
+    }
+    return { driver: 'other', driverGain: 1 };
+  }
+  if (/\b(vokal\w*|vocal\w*|glas\w*|voice\w*|pjev\w*|lead)\b/.test(rawText)) {
+    return { driver: 'vocals', driverGain: 1 };
+  }
+  if (/\b(ritam\w*|rhythm\w*|kretanj\w*|motion|bubnj\w*|drum\w*|kick\w*|snare\w*|clap\w*|hat|hihat|beat\w*|udar\w*|perkus\w*|perc\w*|akcent\w*|accent\w*|strob\w*|flash\w*)\b/.test(rawText)) {
+    return { driver: 'drums', driverGain: 1 };
+  }
+
+  return { driver: 'none', driverGain: 1 };
+}
+
+function applyInferredDriverToClip(clip, layer, startSec = clip?.startSec) {
+  const inferred = inferLayerDriver(layer, startSec);
+  if (!inferred.driver || inferred.driver === 'none') return false;
+  clip.driver = inferred.driver;
+  clip.driverGain = inferred.driverGain;
+  if (inferred.driver === 'band') {
+    clip.band = inferred.band ? structuredClone(inferred.band) : structuredClone(DEFAULT_BAND);
+  } else {
+    delete clip.band;
+  }
+  return true;
+}
+
 export function addClip(timeline, layerId, spec = {}) {
   const layer = timeline.layers.find(l => l.id === layerId);
   if (!layer) throw new RangeError('layer does not exist');
-  const durationSec = Math.max(MIN_CLIP_SEC, spec.durationSec ?? 2);
-  const startSec = Math.max(0, spec.startSec ?? 0);
+  const durationSec = Math.max(MIN_CLIP_SEC, Number.isFinite(spec.durationSec) ? spec.durationSec : 2);
+  const startSec = Math.max(0, Number.isFinite(spec.startSec) ? spec.startSec : 0);
+  const rawKeys = spec.keyframes ? structuredClone(spec.keyframes) : [{ timeSec: 0, value: 1 }, { timeSec: durationSec, value: 1 }];
+  const inheritedDriver = spec.driver === undefined ? inferLayerDriver(layer, startSec) : {};
   const clip = {
-    ...structuredClone(CLIP_DEFAULTS), ...structuredClone(spec),
+    ...structuredClone(CLIP_DEFAULTS), ...inheritedDriver, ...structuredClone(spec),
     id: uid('clip'), startSec, durationSec,
-    keyframes: spec.keyframes ? structuredClone(spec.keyframes) : [{ timeSec: 0, value: 1 }, { timeSec: durationSec, value: 1 }]
+    keyframes: sanitizeKeyframes(rawKeys, durationSec)
   };
+  if (clip.driver === 'band' && !clip.band) {
+    clip.band = inheritedDriver.band ? structuredClone(inheritedDriver.band) : structuredClone(DEFAULT_BAND);
+  }
   layer.clips.push(clip);
   return { layerId, clipId: clip.id };
 }
@@ -215,6 +374,7 @@ export function moveClip(timeline, ref, { startSec, layerId } = {}) {
     if (!target) return ref;
     hit.layer.clips.splice(hit.clipIndex, 1);
     if (target.clips.some(c => c.id === hit.clip.id)) hit.clip.id = uid('clip');
+    applyInferredDriverToClip(hit.clip, target, hit.clip.startSec);
     target.clips.push(hit.clip);
     return { layerId: target.id, clipId: hit.clip.id };
   }
@@ -228,28 +388,37 @@ export function resizeClip(timeline, ref, edge, timeSec, limitSec = Infinity) {
   const hit = findClip(timeline, ref);
   if (!hit) return false;
   const { clip } = hit, end = clipEnd(clip);
+  if (!Array.isArray(clip.keyframes) || !clip.keyframes.length) {
+    clip.keyframes = [{ timeSec: 0, value: 1 }, { timeSec: clip.durationSec, value: 1 }];
+  }
   if (edge === 'end') {
     const newEnd = clamp(timeSec, clip.startSec + MIN_CLIP_SEC, Math.max(limitSec, clip.startSec + MIN_CLIP_SEC));
-    const length = newEnd - clip.startSec;
+    const length = Math.max(MIN_CLIP_SEC, newEnd - clip.startSec);
     if (length < clip.durationSec) clip.keyframes = trimKeyframes(clip.keyframes, 0, length);
     else if (length > clip.durationSec) {
       const last = clip.keyframes.at(-1);
-      if (last.timeSec < length - EPS) clip.keyframes.push({ timeSec: length, value: last.value }); else last.timeSec = length;
+      if (clip.keyframes.length === 1 || last.timeSec < clip.durationSec - EPS) {
+        clip.keyframes.push({ timeSec: length, value: last.value, ...(last.ease ? { ease: last.ease } : {}) });
+      } else {
+        last.timeSec = length;
+      }
     }
+    clip.keyframes = sanitizeKeyframes(clip.keyframes, length);
     clip.durationSec = length;
     return true;
   }
   const newStart = clamp(timeSec, 0, end - MIN_CLIP_SEC), delta = newStart - clip.startSec;
   if (Math.abs(delta) < EPS) return true;
-  const length = end - newStart;
+  const length = Math.max(MIN_CLIP_SEC, end - newStart);
   if (delta > 0) clip.keyframes = trimKeyframes(clip.keyframes, delta, clip.durationSec);
   else {
-    const shifted = clip.keyframes.map(k => ({ timeSec: k.timeSec - delta, value: k.value }));
-    clip.keyframes = [{ timeSec: 0, value: shifted[0].value }, ...shifted];
-    if (clip.keyframes[1].timeSec <= EPS) clip.keyframes.splice(0, 1);
+    const shifted = clip.keyframes.map(k => ({ timeSec: k.timeSec - delta, value: k.value, ...(k.ease ? { ease: k.ease } : {}) }));
+    clip.keyframes = [{ timeSec: 0, value: shifted[0].value, ...(shifted[0].ease ? { ease: shifted[0].ease } : {}) }, ...shifted];
+    if (clip.keyframes.length > 1 && clip.keyframes[1].timeSec <= EPS) clip.keyframes.splice(0, 1);
     clip.keyframes[0].timeSec = 0;
   }
   clip.keyframes.at(-1).timeSec = length;
+  clip.keyframes = sanitizeKeyframes(clip.keyframes, length);
   clip.startSec = newStart; clip.durationSec = length;
   return true;
 }
@@ -284,6 +453,9 @@ export function duplicateClips(timeline, refs, offsetSec = 0, layerOffset = 0) {
     const target = timeline.layers[clamp(hit.layerIndex + layerOffset, 0, timeline.layers.length - 1)];
     const copy = structuredClone(hit.clip);
     copy.id = uid('clip'); copy.startSec = Math.max(0, hit.clip.startSec + offsetSec);
+    if (target.id !== hit.layer.id || !copy.driver || copy.driver === 'none') {
+      applyInferredDriverToClip(copy, target, copy.startSec);
+    }
     target.clips.push(copy);
     created.push({ layerId: target.id, clipId: copy.id });
   }
@@ -306,6 +478,7 @@ export function pasteClips(timeline, clipboard, atSec, baseLayerIndex = 0) {
     const layer = timeline.layers[clamp(base + item.layerOffset, 0, timeline.layers.length - 1)];
     const clip = structuredClone(item.clip);
     clip.id = uid('clip'); clip.startSec = Math.max(0, atSec + item.offsetSec);
+    applyInferredDriverToClip(clip, layer, clip.startSec);
     layer.clips.push(clip);
     created.push({ layerId: layer.id, clipId: clip.id });
   }
@@ -360,19 +533,32 @@ export function toggleTarget(targets, barId) {
 
 /* ------------------------------------------------------------- keyframes */
 
-export function addKeyframe(clip, timeSec, value) {
+export function addKeyframe(clip, timeSec, value, ease) {
   const t = clamp(timeSec, 0, clip.durationSec);
   if (clip.keyframes.some(k => Math.abs(k.timeSec - t) < 0.01)) return -1;
-  clip.keyframes.push({ timeSec: t, value: clamp(value, 0, 1) });
+  const entry = { timeSec: t, value: clamp(value, 0, 1) };
+  if (ease && ease !== 'linear') entry.ease = ease;
+  clip.keyframes.push(entry);
   clip.keyframes.sort((a, b) => a.timeSec - b.timeSec);
   return clip.keyframes.findIndex(k => k.timeSec === t);
 }
 
 export function moveKeyframe(clip, index, timeSec, value) {
-  const keys = clip.keyframes, key = keys[index];
+  const keys = clip.keyframes, key = keys?.[index];
   if (!key) return index;
-  const lo = index > 0 ? keys[index - 1].timeSec + 0.005 : 0, hi = index < keys.length - 1 ? keys[index + 1].timeSec - 0.005 : clip.durationSec;
-  key.timeSec = clamp(timeSec, lo, Math.max(lo, hi));
+  const prevT = index > 0 ? keys[index - 1].timeSec : null;
+  const nextT = index < keys.length - 1 ? keys[index + 1].timeSec : null;
+  let lo = prevT !== null ? prevT + 0.005 : 0;
+  let hi = nextT !== null ? nextT - 0.005 : clip.durationSec;
+  if (lo > hi) {
+    const mid = prevT !== null && nextT !== null
+      ? (prevT + nextT) / 2
+      : prevT !== null
+        ? Math.min(clip.durationSec, prevT + 1e-5)
+        : Math.max(0, nextT - 1e-5);
+    lo = hi = mid;
+  }
+  key.timeSec = clamp(timeSec, lo, hi);
   key.value = clamp(value, 0, 1);
   return index;
 }
@@ -412,7 +598,7 @@ export function moveKeyframes(clip, initialKeys, indices, dt, dv) {
   const effectiveDt = minDt > maxDt ? 0 : clamp(dt, minDt, maxDt);
   const effectiveDv = minDv > maxDv ? 0 : clamp(dv, minDv, maxDv);
 
-  clip.keyframes = base.map((k, i) => {
+  clip.keyframes = sanitizeKeyframes(base.map((k, i) => {
     if (set.has(i)) {
       return {
         timeSec: clamp(k.timeSec + effectiveDt, 0, clip.durationSec),
@@ -421,7 +607,7 @@ export function moveKeyframes(clip, initialKeys, indices, dt, dv) {
       };
     }
     return { timeSec: k.timeSec, value: k.value, ...(k.ease ? { ease: k.ease } : {}) };
-  });
+  }), clip.durationSec);
 
   return { dt: effectiveDt, dv: effectiveDv };
 }
@@ -435,13 +621,13 @@ export function setKeyframeEase(clip, index, ease = 'linear') {
 }
 
 export function removeKeyframe(clip, index) {
-  if (clip.keyframes.length <= 1 || !clip.keyframes[index]) return false;
+  if (!Array.isArray(clip.keyframes) || clip.keyframes.length <= 1 || !clip.keyframes[index]) return false;
   clip.keyframes.splice(index, 1);
   return true;
 }
 
 export function removeKeyframes(clip, indices) {
-  if (!indices || !indices.length) return false;
+  if (!indices || !indices.length || !Array.isArray(clip.keyframes)) return false;
   const set = new Set(indices);
   const remaining = clip.keyframes.filter((_, i) => !set.has(i));
   if (remaining.length === 0) {
@@ -457,11 +643,21 @@ export function removeKeyframes(clip, indices) {
 
 /** Snapshot undo/redo store. commit() is atomic and rolls back invalid edits;
  * begin()/update()/end() coalesce a drag gesture into one undo step.
+ * beginRecording()/endRecording()/cancelRecording() isolate live performance
+ * recording sessions so concurrent UI clicks/drags never corrupt or abort them.
  */
 export function createStore(initial, { limit = 120 } = {}) {
-  let timeline = initial, undoStack = [], redoStack = [], gesture = null;
+  let timeline = initial, undoStack = [], redoStack = [], gesture = null, recordingSnapshot = null;
   const subscribers = new Set(), emit = kind => subscribers.forEach(fn => fn(kind));
-  const push = (snapshot, label) => { undoStack.push({ snapshot, label }); if (undoStack.length > limit) undoStack.shift(); redoStack = []; };
+  const push = (snapshot, label) => {
+    // Ensure undo snapshots never retain transient recording flags
+    if (snapshot?.layers) {
+      for (const l of snapshot.layers) if (l?.clips) for (const c of l.clips) delete c.recording;
+    }
+    undoStack.push({ snapshot, label });
+    if (undoStack.length > limit) undoStack.shift();
+    redoStack = [];
+  };
   return {
     get timeline() { return timeline; },
     get canUndo() { return undoStack.length > 0; },
@@ -469,7 +665,7 @@ export function createStore(initial, { limit = 120 } = {}) {
     get undoLabel() { return undoStack.at(-1)?.label ?? ''; },
     get redoLabel() { return redoStack.at(-1)?.label ?? ''; },
     subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); },
-    replace(next) { timeline = next; undoStack = []; redoStack = []; gesture = null; emit('replace'); },
+    replace(next) { timeline = next; undoStack = []; redoStack = []; gesture = null; recordingSnapshot = null; emit('replace'); },
     commit(label, mutate) {
       const before = structuredClone(timeline);
       let result;
@@ -491,6 +687,40 @@ export function createStore(initial, { limit = 120 } = {}) {
       return changed;
     },
     cancel() { if (gesture) { timeline = gesture; gesture = null; emit('change'); } },
+    discardGesture() { gesture = null; },
+    beginRecording() {
+      recordingSnapshot = structuredClone(timeline);
+    },
+    endRecording(label = 'Snimi izvedbu') {
+      const snapshot = recordingSnapshot ?? gesture;
+      recordingSnapshot = null;
+      gesture = null;
+      if (!snapshot) return false;
+      normalizeTimeline(timeline);
+      if (!validateTimeline(timeline).valid) {
+        timeline = snapshot;
+        emit('change');
+        return false;
+      }
+      const changed = JSON.stringify(snapshot) !== JSON.stringify(timeline);
+      if (changed) {
+        push(snapshot, label);
+        emit('change');
+      }
+      return changed;
+    },
+    cancelRecording() {
+      if (recordingSnapshot) {
+        timeline = recordingSnapshot;
+        recordingSnapshot = null;
+        gesture = null;
+        emit('change');
+      } else if (gesture) {
+        timeline = gesture;
+        gesture = null;
+        emit('change');
+      }
+    },
     undo() { const entry = undoStack.pop(); if (!entry) return false; redoStack.push({ snapshot: structuredClone(timeline), label: entry.label }); timeline = entry.snapshot; emit('change'); return true; },
     redo() { const entry = redoStack.pop(); if (!entry) return false; undoStack.push({ snapshot: structuredClone(timeline), label: entry.label }); timeline = entry.snapshot; emit('change'); return true; }
   };

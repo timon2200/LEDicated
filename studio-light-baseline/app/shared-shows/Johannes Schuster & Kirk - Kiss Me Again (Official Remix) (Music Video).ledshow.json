@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.827Z",
+  "exportedAt": "2026-10-28T23:52:16.025Z",
   "author": "Timon",
   "track": {
     "id": "32e3f8e9-8b9d-4003-af9a-32c3c687fd79",
@@ -5308,5 +5308,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "johannes-schuster-kirk-kiss-me-again-official-remix-music-video-562952ab",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:16.023Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 112 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/e956613de06fd74acbeb642c842ae749f32098f27fb9421da246d97c9796490c.mp3"
 }

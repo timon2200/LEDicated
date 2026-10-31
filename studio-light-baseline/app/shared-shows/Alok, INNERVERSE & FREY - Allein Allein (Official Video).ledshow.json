@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.722Z",
+  "exportedAt": "2026-10-28T23:52:11.998Z",
   "author": "Timon",
   "track": {
     "id": "f17570fc-5ca7-4578-a959-16cddb10ec67",
@@ -11,7 +11,9 @@
     "sha256": "709b34a81dfc8eafd66d455bbc85c6568774ccc99bf8d796ca64b08b635077e7",
     "sizeBytes": 5074579,
     "durationSec": 211.371,
-    "bpm": 129.2
+    "bpm": 129.2,
+    "videoId": "WVH12tO6n6Q",
+    "sourceUrl": "https://www.youtube.com/watch?v=WVH12tO6n6Q"
   },
   "analysis": {
     "durationSec": 211.371,
@@ -7066,8 +7068,8 @@
               0.5411764705882353,
               0
             ],
-            "driver": "none",
-            "driverGain": 1,
+            "driver": "band",
+            "driverGain": 1.45,
             "speed": 1,
             "direction": "ltr",
             "timing": "beat",
@@ -7085,10 +7087,24 @@
                 "timeSec": 1.8569999999999993,
                 "value": 1
               }
-            ]
+            ],
+            "band": {
+              "source": "drums",
+              "lowHz": 180,
+              "highHz": 450,
+              "threshold": 0.6,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.12
+            }
           }
         ]
       }
     ]
-  }
+  },
+  "showId": "alok-innerverse-frey-allein-allein-official-video-f4b5b9d9",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:11.997Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 152 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/709b34a81dfc8eafd66d455bbc85c6568774ccc99bf8d796ca64b08b635077e7.mp3"
 }

@@ -34,16 +34,11 @@ export function createLedPreview(container, section) {
     <div class="detail-canvas-wrap">
       <canvas id="led-detail-canvas" height="52" aria-label="Pojedinačne LED diode odabranog bara"></canvas>
     </div>
-    <div id="led-readout" class="led-readout" aria-live="polite">
-      <span class="readout-chip" id="readout-chip"></span>
-      <span id="readout-text">Pomakni pokazivač preko diode za točne RGBW vrijednosti.</span>
-    </div>
   `;
   section.querySelector('.stage').after(detail);
 
   const detailCanvas = detail.querySelector('canvas');
-  const readoutText = detail.querySelector('#readout-text');
-  const readoutChip = detail.querySelector('#readout-chip');
+  const selectedBarCount = detail.querySelector('#selected-bar-count');
   const pillBox = detail.querySelector('.bar-selector-pills');
   const mode = detail.querySelector('#preview-mode');
 
@@ -116,9 +111,11 @@ export function createLedPreview(container, section) {
   const barHFrac = 0.215;
 
   function resetReadout() {
-    readoutText.textContent = 'Pomakni pokazivač preko diode za točne RGBW vrijednosti.';
-    readoutChip.style.background = '#000000';
-    readoutChip.style.boxShadow = 'none';
+    if (!lastConfig || !lastFrame) return;
+    const bar = lastConfig.bars?.find(item => item.id === selected);
+    if (!bar) return;
+    const ledCount = bar.physicalLeds || 72;
+    selectedBarCount.textContent = `${ledCount} fizičkih LED · ${bar.pixels} grupa`;
   }
 
   function selectBar(id) {
@@ -151,7 +148,6 @@ export function createLedPreview(container, section) {
       rail.style.left = `${colCenterFrac(col) * 100}%`;
       rail.style.top = `${rowTopFrac(row) * 100}%`;
       rail.style.height = `${barHFrac * 100}%`;
-      rail.title = `${id}: klikni za odabir`;
       rail.onclick = () => selectBar(id);
       container.append(rail);
 
@@ -163,7 +159,6 @@ export function createLedPreview(container, section) {
       label.dataset.bar = id;
       label.style.left = `${colCenterFrac(col) * 100}%`;
       label.style.top = `${(rowTopFrac(row) - 0.008) * 100}%`;
-      label.title = `${id}: klikni za odabir`;
       label.onclick = () => selectBar(id);
       container.append(label);
 
@@ -173,7 +168,6 @@ export function createLedPreview(container, section) {
       pill.className = 'bar-pill';
       pill.textContent = id;
       pill.dataset.bar = id;
-      pill.title = `Odaberi bar ${id}`;
       pill.onclick = () => selectBar(id);
       pillBox.append(pill);
     }
@@ -192,7 +186,13 @@ export function createLedPreview(container, section) {
 
     const pixels = physicalLedPixels(frame.bars[selected], bar);
     detail.querySelector('#selected-bar-name').textContent = selected;
-    detail.querySelector('#selected-bar-count').textContent = `${pixels.length} fizičkih LED · ${bar.pixels} grupa`;
+    if (hoveredIndex >= 0 && pixels[hoveredIndex]) {
+      const group = Math.min(bar.pixels, Math.floor((hoveredIndex * bar.pixels) / pixels.length) + 1);
+      const [r, g, b, w] = pixels[hoveredIndex];
+      selectedBarCount.textContent = `Grupa ${group}/${bar.pixels} · LED ${hoveredIndex + 1}/${pixels.length} · RGBW ${r},${g},${b},${w}`;
+    } else {
+      selectedBarCount.textContent = `${pixels.length} fizičkih LED · ${bar.pixels} grupa`;
+    }
 
     if (detailCanvas.width !== Math.round(width * dpr) || detailCanvas.height !== Math.round(height * dpr)) {
       detailCanvas.width = Math.round(width * dpr);
@@ -288,14 +288,6 @@ export function createLedPreview(container, section) {
     const rect = detailCanvas.getBoundingClientRect();
     const index = Math.max(0, Math.min(pixels.length - 1, Math.floor(((event.clientX - rect.left) / rect.width) * pixels.length)));
     hoveredIndex = index;
-    const group = Math.min(bar.pixels, Math.floor((index * bar.pixels) / pixels.length) + 1);
-    const [r, g, b, w] = pixels[index];
-    const [cr, cg, cb] = display(pixels[index]).map(v => Math.round(v * 255));
-
-    readoutText.textContent = `${selected} · Grupa ${group}/${bar.pixels} · LED ${index + 1}/${pixels.length} · RGBW ${r}, ${g}, ${b}, ${w}`;
-    readoutChip.style.background = `rgb(${cr},${cg},${cb})`;
-    readoutChip.style.boxShadow = `0 0 8px rgb(${cr},${cg},${cb})`;
-
     drawDetail(lastFrame, lastConfig, true);
   });
 

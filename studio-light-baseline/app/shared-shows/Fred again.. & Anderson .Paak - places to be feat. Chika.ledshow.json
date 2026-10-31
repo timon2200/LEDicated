@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.729Z",
+  "exportedAt": "2026-10-28T23:52:12.222Z",
   "author": "Timon",
   "track": {
     "id": "476adbec-f383-4d7b-bc3f-c0657792e51e",
@@ -11,7 +11,9 @@
     "sha256": "09700255bc96042f67a0a03c8d0c20a692c1e35785292704b7ed39c4f1b31426",
     "sizeBytes": 5474925,
     "durationSec": 228.053,
-    "bpm": 86.1
+    "bpm": 86.1,
+    "videoId": "pX9E8JEUC8Y",
+    "sourceUrl": "https://www.youtube.com/watch?v=pX9E8JEUC8Y"
   },
   "analysis": {
     "durationSec": 228.053,
@@ -7068,5 +7070,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "fred-again-anderson-paak-places-to-be-feat-chika-2387b6c2",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:12.220Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 153 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/09700255bc96042f67a0a03c8d0c20a692c1e35785292704b7ed39c4f1b31426.mp3"
 }

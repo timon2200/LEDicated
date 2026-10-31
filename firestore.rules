@@ -1,0 +1,193 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model — LEDicated Studio Collaborative Catalog
+// Project: ledicated-studio-vz
+// ===============================================================
+//
+// This security rules file assumes the following data structures:
+//
+// 1. Collection: /shows/{showId}
+//    Document ID: showId (string slug or UUID)
+//    Fields:
+//      - studioKey: string (required, must equal "ledicated-varazdin-3x3")
+//      - title: string (required, 1..200 chars) - human-readable show/song title
+//      - version: int (required, >= 1) - current latest version counter
+//      - timelineJson: string (required, <= 900000 chars) - serialized show timeline payload
+//      - additional metadata fields (optional, bounded key count <= 40, e.g. artist, bpm,
+//        durationSec, updatedBy, updatedAt, createdAt, summary, audioHash)
+//
+// 2. Subcollection: /shows/{showId}/versions/{versionId}
+//    Document ID: versionId (e.g., "v1", "v2", or timestamp/UUID)
+//    Fields:
+//      - studioKey: string (required, must equal "ledicated-varazdin-3x3")
+//      - version: int (required, >= 1) - sequential version number
+//      - timelineJson: string (required, <= 900000 chars) - snapshot of timeline JSON
+//      - additional metadata fields (optional, bounded key count <= 40, e.g. versionNumber,
+//        title, authorName, note, createdAt)
+//    Notes:
+//      - Deletions are strictly disallowed to preserve immutable version history.
+//
+// 3. Collection: /presence/{clientId}
+//    Document ID: clientId (unique studio peer identifier)
+//    Fields:
+//      - studioKey: string (required, must equal "ledicated-varazdin-3x3")
+//      - name: string (required, 1..100 chars) - display name of the active studio peer
+//      - additional status fields (optional, bounded key count <= 25, e.g. activeShowId,
+//        activeShowTitle, mode, lastSeenAt, clientVersion)
+//
+// 4. Collection: /activity/{eventId}
+//    Document ID: eventId (unique activity event ID)
+//    Fields:
+//      - studioKey: string (required, must equal "ledicated-varazdin-3x3")
+//      - title: string (required, 0..200 chars) - activity headline or show title
+//      - additional event fields (optional, bounded key count <= 25, e.g. action,
+//        actorName, showId, version, createdAt, message)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Verify the shared zero-config studio token is present and matches the Varaždin 3x3 rig key
+    function hasValidStudioKey(data) {
+      return ('studioKey' in data) &&
+        (data.studioKey is string) &&
+        (data.studioKey == "ledicated-varazdin-3x3");
+    }
+
+    // Ensure studioKey cannot be modified on update
+    function studioKeyUnchanged() {
+      return !('studioKey' in resource.data) ||
+        request.resource.data.studioKey == resource.data.studioKey;
+    }
+
+    // Validate required fields exist on the incoming document
+    function hasRequiredFields(data, fields) {
+      return data.keys().hasAll(fields);
+    }
+
+    // Validate string field type and character length bounds
+    function isValidString(data, field, minLen, maxLen) {
+      return (field in data) &&
+        (data[field] is string) &&
+        (data[field].size() >= minLen) &&
+        (data[field].size() <= maxLen);
+    }
+
+    // Validate optional string field if present
+    function isValidOptionalString(data, field, maxLen) {
+      return !(field in data) ||
+        data[field] == null ||
+        ((data[field] is string) && (data[field].size() <= maxLen));
+    }
+
+    // Validate positive integer (>= 1)
+    function isPositiveInt(data, field) {
+      return (field in data) &&
+        (data[field] is int) &&
+        (data[field] >= 1);
+    }
+
+    // Prevent schema bloat / resource exhaustion via excessive field count
+    function hasBoundedKeyCount(data, maxKeys) {
+      return data.keys().size() <= maxKeys;
+    }
+
+    // ===============================================================
+    // Domain Validators (Applied on BOTH create and update)
+    // ===============================================================
+
+    function isValidShow(data) {
+      return hasRequiredFields(data, ['studioKey', 'title', 'version', 'timelineJson']) &&
+        hasBoundedKeyCount(data, 40) &&
+        hasValidStudioKey(data) &&
+        isValidString(data, 'title', 1, 200) &&
+        isPositiveInt(data, 'version') &&
+        isValidString(data, 'timelineJson', 0, 900000) &&
+        isValidOptionalString(data, 'artist', 200) &&
+        isValidOptionalString(data, 'author', 120) &&
+        isValidOptionalString(data, 'updatedBy', 120) &&
+        isValidOptionalString(data, 'note', 1000) &&
+        isValidOptionalString(data, 'summary', 2000);
+    }
+
+    function isValidShowVersion(data) {
+      return hasRequiredFields(data, ['studioKey', 'version', 'timelineJson']) &&
+        hasBoundedKeyCount(data, 40) &&
+        hasValidStudioKey(data) &&
+        isPositiveInt(data, 'version') &&
+        isValidString(data, 'timelineJson', 0, 900000) &&
+        isValidOptionalString(data, 'title', 200) &&
+        isValidOptionalString(data, 'author', 120) &&
+        isValidOptionalString(data, 'updatedBy', 120) &&
+        isValidOptionalString(data, 'note', 1000);
+    }
+
+    function isValidPresence(data) {
+      return hasRequiredFields(data, ['studioKey', 'name']) &&
+        hasBoundedKeyCount(data, 25) &&
+        hasValidStudioKey(data) &&
+        isValidString(data, 'name', 1, 100) &&
+        isValidOptionalString(data, 'activeShowId', 200) &&
+        isValidOptionalString(data, 'activeShowTitle', 200) &&
+        isValidOptionalString(data, 'status', 100);
+    }
+
+    function isValidActivity(data) {
+      return hasRequiredFields(data, ['studioKey', 'title']) &&
+        hasBoundedKeyCount(data, 25) &&
+        hasValidStudioKey(data) &&
+        isValidString(data, 'title', 0, 200) &&
+        isValidOptionalString(data, 'action', 100) &&
+        isValidOptionalString(data, 'actorName', 100) &&
+        isValidOptionalString(data, 'showId', 200) &&
+        isValidOptionalString(data, 'message', 1000);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // 1. Collaborative Shows Catalog (/shows/{showId})
+    match /shows/{showId} {
+      allow get, list: if true;
+      allow create: if isValidShow(request.resource.data);
+      allow update: if isValidShow(request.resource.data) && studioKeyUnchanged();
+      allow delete: if false;
+
+      // 2. Immutable Show Version Snapshots (/shows/{showId}/versions/{versionId})
+      match /versions/{versionId} {
+        allow get, list: if true;
+        allow create: if isValidShowVersion(request.resource.data);
+        allow update: if isValidShowVersion(request.resource.data) && studioKeyUnchanged();
+        allow delete: if false;
+      }
+    }
+
+    // 3. Live Studio Presence (/presence/{clientId})
+    match /presence/{clientId} {
+      allow get, list: if true;
+      allow create: if isValidPresence(request.resource.data);
+      allow update: if isValidPresence(request.resource.data) && studioKeyUnchanged();
+      allow delete: if resource.data.studioKey == "ledicated-varazdin-3x3";
+    }
+
+    // 4. Studio Activity Feed (/activity/{eventId})
+    match /activity/{eventId} {
+      allow get, list: if true;
+      allow create: if isValidActivity(request.resource.data);
+      allow update: if isValidActivity(request.resource.data) && studioKeyUnchanged();
+      allow delete: if false;
+    }
+
+    // Default deny for all other paths and collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

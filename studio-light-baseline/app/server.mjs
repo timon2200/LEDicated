@@ -1,7 +1,7 @@
 import http from 'node:http';
 import dgram from 'node:dgram';
 import { randomUUID } from 'node:crypto';
-import { createReadStream, existsSync } from 'node:fs';
+import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, watch as fsWatch } from 'node:fs';
 import { appendFile, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname as osHostname, networkInterfaces, tmpdir } from 'node:os';
 import { basename, dirname, resolve, extname, join } from 'node:path';
@@ -10,6 +10,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createLibrary } from './library.mjs';
 import { analyzeAudio } from './audio-analysis.mjs';
 import { createAutoShow, validateTimeline, renderTimelineFrame, SHOW_THEMES, PALETTES } from './timeline.mjs';
+import { normalizeTimeline, sanitizeTimelineClips } from './daw-state.mjs';
 import { createDirectedShow } from './gemini-director.mjs';
 import { mapBarPixels } from './mapping.mjs';
 import { BAR_IDS, HARDWARE_PROFILES, hardwareProfile, routesForNode } from './hardware-topology.mjs';
@@ -18,6 +19,7 @@ import { discoverWled, normalizeMac } from './wled-discovery.mjs';
 import { applyTimelineOp } from './daw-remote.mjs';
 import { createPerformance, DEFAULT_PADS, PAD_KEYS } from './live-performance-state.mjs';
 import { createLanCoordinator, DEFAULT_LAN_BUS_PORT } from './lan-coordinator.mjs';
+import { createCloudSync, computeShowId } from './cloud-sync.mjs';
 import {
   sanitizeFilename,
   encodeShowJson,
@@ -26,6 +28,11 @@ import {
   decodeLedPack,
   detectBundleKind
 } from './show-bundle.mjs';
+import {
+  BUILT_IN_GENERATORS,
+  serializeGeneratorSpec,
+  validateGeneratorSpec
+} from './show-generators.mjs';
 
 const clampVal = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 
@@ -98,6 +105,143 @@ async function readYtDlpInfoMeta(tempDir, jobId) {
   }
 }
 
+function extractYouTubeVideoId(text) {
+  if (typeof text !== 'string' || !text) return null;
+  const m = /(?:youtube\.com\/watch\?(?:[^&\s]*&)*v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/.exec(text);
+  return m ? m[1] : null;
+}
+
+function runExecFile(bin, args, timeoutMs = 6000) {
+  return new Promise((res, rej) => {
+    execFile(bin, args, {
+      timeout: timeoutMs,
+      maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` }
+    }, (err, stdout, stderr) => {
+      if (err) return rej(err);
+      res({ stdout, stderr });
+    });
+  });
+}
+
+const artworkInFlight = new Map();
+
+async function resolveTrackArtwork(track, library, fetcher = fetch) {
+  if (!track?.id || typeof library.getArtworkPath !== 'function') return null;
+  const artworkPath = await library.getArtworkPath(track.id);
+  const existing = await stat(artworkPath).catch(() => null);
+  if (existing && existing.size > 200) return artworkPath;
+
+  if (artworkInFlight.has(track.sha256)) {
+    return artworkInFlight.get(track.sha256);
+  }
+
+  const job = (async () => {
+    const audioPath = await library.getAudioPath(track.id).catch(() => null);
+    const ffmpegBin = existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg';
+    const ffprobeBin = existsSync('/opt/homebrew/bin/ffprobe') ? '/opt/homebrew/bin/ffprobe' : 'ffprobe';
+
+    // 1. Try extracting embedded cover art from the local audio file via ffmpeg
+    if (audioPath) {
+      const tempJpg = `${artworkPath}.${randomUUID()}.tmp.jpg`;
+      try {
+        await runExecFile(ffmpegBin, [
+          '-y', '-v', 'error', '-i', audioPath,
+          '-an', '-vcodec', 'mjpeg',
+          '-vf', "scale='min(640,iw)':-2",
+          '-q:v', '3', '-vframes', '1',
+          tempJpg
+        ], 5000);
+        const st = await stat(tempJpg).catch(() => null);
+        if (st && st.size > 200) {
+          await rename(tempJpg, artworkPath);
+          return artworkPath;
+        }
+      } catch {} finally {
+        await rm(tempJpg, { force: true }).catch(() => {});
+      }
+    }
+
+    // 2. Determine YouTube videoId (from track metadata or embedded ffprobe tags)
+    let videoId = track.videoId || extractYouTubeVideoId(track.sourceUrl);
+    if (!videoId && audioPath) {
+      try {
+        const { stdout } = await runExecFile(ffprobeBin, [
+          '-v', 'quiet', '-print_format', 'json', '-show_format', audioPath
+        ], 4000);
+        const info = JSON.parse(stdout);
+        const tags = info?.format?.tags || {};
+        for (const val of Object.values(tags)) {
+          const found = extractYouTubeVideoId(String(val));
+          if (found) {
+            videoId = found;
+            const sourceUrl = `https://www.youtube.com/watch?v=${found}`;
+            await library.updateTrack(track.id, { videoId: found, sourceUrl }).catch(() => {});
+            break;
+          }
+        }
+      } catch {}
+    }
+
+    // 3. Fetch YouTube thumbnail if videoId is available
+    if (videoId && typeof fetcher === 'function') {
+      const thumbUrls = [
+        `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`,
+        `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/mqdefault.jpg`
+      ];
+      for (const url of thumbUrls) {
+        try {
+          const res = await fetcher(url, { signal: AbortSignal.timeout(4000) });
+          if (res.ok) {
+            const buf = Buffer.from(await res.arrayBuffer());
+            if (buf.byteLength > 200) {
+              const tempJpg = `${artworkPath}.${randomUUID()}.tmp.jpg`;
+              await writeFile(tempJpg, buf, { mode: 0o600 });
+              await rename(tempJpg, artworkPath);
+              return artworkPath;
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 4. Fallback: search iTunes cover art by cleaned track title
+    const rawTitle = (track.title || track.originalName || '').replace(/\.(mp3|wav|m4a|flac|ogg)$/i, '').replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').trim();
+    if (rawTitle.length >= 3 && typeof fetcher === 'function') {
+      try {
+        const searchUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(rawTitle)}&media=music&entity=song&limit=1`;
+        const res = await fetcher(searchUrl, { signal: AbortSignal.timeout(3500) });
+        if (res.ok) {
+          const data = await res.json();
+          const art100 = data?.results?.[0]?.artworkUrl100;
+          if (typeof art100 === 'string' && art100.startsWith('https://')) {
+            const art600 = art100.replace(/100x100bb\.jpg$/i, '600x600bb.jpg');
+            const imgRes = await fetcher(art600, { signal: AbortSignal.timeout(4000) });
+            if (imgRes.ok) {
+              const buf = Buffer.from(await imgRes.arrayBuffer());
+              if (buf.byteLength > 200) {
+                const tempJpg = `${artworkPath}.${randomUUID()}.tmp.jpg`;
+                await writeFile(tempJpg, buf, { mode: 0o600 });
+                await rename(tempJpg, artworkPath);
+                return artworkPath;
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    return null;
+  })();
+
+  artworkInFlight.set(track.sha256, job);
+  try {
+    return await job;
+  } finally {
+    artworkInFlight.delete(track.sha256);
+  }
+}
+
 function downloadWithYtDlp(url, tempDir, jobId, onProgress) {
   const bin = existsSync('/opt/homebrew/bin/yt-dlp') ? '/opt/homebrew/bin/yt-dlp' : 'yt-dlp';
   const outTemplate = join(tempDir, `${jobId}.%(ext)s`);
@@ -143,23 +287,55 @@ function downloadWithYtDlp(url, tempDir, jobId, onProgress) {
 const ROOT = dirname(fileURLToPath(import.meta.url));
 export const LOG_DIR = resolve(ROOT, '../../logs');
 export const LOG_FILE_PATH = join(LOG_DIR, 'ledicated.log');
-const MAX_LOG_BYTES = 5 * 1024 * 1024;
-let logDirReady = false;
+const MAX_LOG_BYTES = 10 * 1024 * 1024;
+const readyLogDirs = new Set();
 
-async function writeDiskLogLine(line) {
+async function writeDiskLogLine(line, targetPath = LOG_FILE_PATH) {
   try {
-    if (!logDirReady) {
-      await mkdir(LOG_DIR, { recursive: true, mode: 0o755 });
-      logDirReady = true;
+    const dir = dirname(targetPath);
+    if (!readyLogDirs.has(dir)) {
+      await mkdir(dir, { recursive: true, mode: 0o755 });
+      readyLogDirs.add(dir);
     }
     try {
-      const st = await stat(LOG_FILE_PATH);
+      const st = await stat(targetPath);
       if (st.size > MAX_LOG_BYTES) {
-        await rename(LOG_FILE_PATH, `${LOG_FILE_PATH}.1`).catch(() => {});
+        await rename(targetPath, `${targetPath}.1`).catch(() => {});
       }
     } catch {}
-    await appendFile(LOG_FILE_PATH, `${line}\n`, 'utf8');
+    await appendFile(targetPath, `${line}\n`, 'utf8');
   } catch {}
+}
+
+export function writeDiskLogLineSync(line, targetPath = LOG_FILE_PATH) {
+  try {
+    const dir = dirname(targetPath);
+    if (!readyLogDirs.has(dir)) {
+      mkdirSync(dir, { recursive: true, mode: 0o755 });
+      readyLogDirs.add(dir);
+    }
+    appendFileSync(targetPath, `${line}\n`, 'utf8');
+  } catch {}
+}
+
+class PayloadTooLargeError extends Error {
+  constructor(msg = 'Zahtjev je prevelik.') {
+    super(msg);
+    this.statusCode = 413;
+  }
+}
+
+async function readJsonBody(request, maxBytes) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of request) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buf.length;
+    if (total > maxBytes) throw new PayloadTooLargeError('Zahtjev je prevelik.');
+    chunks.push(buf);
+  }
+  const raw = chunks.length ? Buffer.concat(chunks, total).toString('utf8') : '';
+  return { raw, bytes: total, data: JSON.parse(raw || '{}') };
 }
 
 export const defaultConfig = (profileId = 'c3-five') => {
@@ -273,10 +449,63 @@ export function validateConfig(input, allowLoopback = false) {
   return config;
 }
 
+/** Parse WLED's compact 294-byte `/win` XML response. */
+export function parseWledWinXml(xml) {
+  if (typeof xml !== 'string' || !xml.includes('<vs>')) return null;
+  const tag = name => {
+    const m = new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml);
+    return m ? m[1].trim() : null;
+  };
+  const acStr = tag('ac');
+  if (acStr === null) return null;
+  const ac = Number(acStr);
+  if (!Number.isFinite(ac)) return null;
+  const clMatches = [...xml.matchAll(/<cl>(\d+)<\/cl>/g)].map(m => Number(m[1]) || 0);
+  const wv = Number(tag('wv')) || 0;
+  const rawDs = tag('ds') || 'E8-WiFi Plus';
+  const isLive = rawDs.endsWith(' (live)');
+  const deviceName = isLive ? rawDs.slice(0, -7) : rawDs;
+  return {
+    on: ac > 0,
+    bri: Math.max(0, Math.min(255, ac)),
+    col: [clMatches[0] || 0, clMatches[1] || 0, clMatches[2] || 0, wv],
+    deviceName: deviceName || 'E8-WiFi Plus',
+    isLive
+  };
+}
+
 /** Read-only status query. This does not prove that a physical strip is connected. */
 export async function probeWled(host, { fetcher = fetch, timeoutMs = 1500, includeBuses = true } = {}) {
   const started = performance.now();
-  const response = await fetcher(`http://${host}/json/info`, { signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
+  let response;
+  try {
+    response = await fetcher(`http://${host}/json/info`, { signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
+  } catch (err) {
+    if (fetcher === fetch) {
+      const winRes = await fetcher(`http://${host}/win`, { signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
+      if (winRes.ok) {
+        const xml = await winRes.text();
+        const win = parseWledWinXml(xml);
+        if (win) {
+          return {
+            reachable: true,
+            name: win.deviceName.slice(0, 64),
+            version: 'WLED',
+            arch: 'esp32',
+            ledCount: null,
+            rgbw: true,
+            signal: null,
+            fps: null,
+            live: win.isLive,
+            mac: null,
+            buses: null,
+            responseMs: Math.round(performance.now() - started)
+          };
+        }
+      }
+    }
+    throw err;
+  }
   if (!response.ok) throw new Error(`WLED HTTP ${response.status}`);
   const info = await response.json();
   if (!info || typeof info !== 'object' || !info.leds || typeof info.leds !== 'object') throw new Error('Uređaj nije vratio WLED /json/info.');
@@ -324,6 +553,84 @@ export function rgbFromRgbw(pixel) {
   return [Math.min(255, r + w), Math.min(255, Math.round(g + w * 0.78)), Math.min(255, Math.round(b + w * 0.45))];
 }
 
+export function rgbwForKelvin(kelvin = 4000) {
+  const minK = 2700;
+  const maxK = 6500;
+  const clamped = Math.max(minK, Math.min(maxK, Number(kelvin) || 4000));
+  const t = (clamped - minK) / (maxK - minK);
+  let r, g, b, w;
+  if (t <= 0.22) {
+    const p = t / 0.22;
+    r = 255;
+    g = 115 + 65 * p;
+    b = 18 + 72 * p;
+    w = 255;
+  } else if (t <= 0.56) {
+    const p = (t - 0.22) / 0.34;
+    r = 255;
+    g = 180 + 75 * p;
+    b = 90 + 165 * p;
+    w = 255;
+  } else {
+    const p = (t - 0.56) / 0.44;
+    r = 255 - 45 * p;
+    g = 255 - 12 * p;
+    b = 255;
+    w = 255 - 80 * p;
+  }
+  return [
+    Math.max(0, Math.min(255, Math.round(r))),
+    Math.max(0, Math.min(255, Math.round(g))),
+    Math.max(0, Math.min(255, Math.round(b))),
+    Math.max(0, Math.min(255, Math.round(w)))
+  ];
+}
+
+export function kelvinFromRgbw(col, fallback = 4000) {
+  if (!Array.isArray(col) || col.length < 4) return fallback;
+  const [r, g, b, w] = col.map(v => Number(v) || 0);
+  if (r === 0 && g === 0 && b === 0 && w === 0) return fallback;
+  const expected = rgbwForKelvin(fallback);
+  if (
+    Math.abs(expected[0] - r) <= 6 &&
+    Math.abs(expected[1] - g) <= 6 &&
+    Math.abs(expected[2] - b) <= 6 &&
+    Math.abs(expected[3] - w) <= 6
+  ) {
+    return fallback;
+  }
+  const minK = 2700, maxK = 6500;
+  if (w < 250 && b >= 245) {
+    const p = Math.min(1, Math.max(0, (255 - w) / 80));
+    const t = 0.56 + p * 0.44;
+    return Math.round((minK + t * (maxK - minK)) / 50) * 50;
+  }
+  if (b < 90) {
+    const p = Math.min(1, Math.max(0, (b - 18) / 72));
+    const t = p * 0.22;
+    return Math.round((minK + t * (maxK - minK)) / 50) * 50;
+  }
+  const p = Math.min(1, Math.max(0, (b - 90) / 165));
+  const t = 0.22 + p * 0.34;
+  return Math.round((minK + t * (maxK - minK)) / 50) * 50;
+}
+
+export function computeAmbientWatts({ isOn = false, wledPwrMa = null, isLive = false, bri = 255, col = null } = {}) {
+  if (!isOn) return 3.2;
+  const baseWatts = 5.5;
+  if (Number.isFinite(wledPwrMa) && wledPwrMa > 150) {
+    const ratio = Math.max(0, Math.min(1, (wledPwrMa - 150) / 5910));
+    return Math.round((baseWatts + ratio * 171) * 10) / 10;
+  }
+  if (!isLive && Array.isArray(col) && col.length >= 4) {
+    const sum = (Number(col[0]) || 0) + (Number(col[1]) || 0) + (Number(col[2]) || 0) + (Number(col[3]) || 0);
+    const scale = Math.max(0, Math.min(255, Number(bri) || 0)) / 255;
+    const ratio = (sum / 1020) * scale;
+    return Math.round((baseWatts + ratio * 171) * 10) / 10;
+  }
+  return baseWatts;
+}
+
 export function encodeDDP(channels, sequence = 1, transport = 'rgb') {
   const payload = Buffer.from(channels);
   const packet = Buffer.alloc(10 + payload.length);
@@ -339,7 +646,11 @@ export function encodeDDP(channels, sequence = 1, transport = 'rgb') {
   return packet;
 }
 
-export function createLightingServer({ configPath = resolve(ROOT, 'config.json'), libraryRoot = resolve(ROOT, 'data'), library: customLibrary = null, sharedShowsDir = resolve(ROOT, 'shared-shows'), initialConfig, allowLoopback = false, udpPort = 4048, watchdogMs = 3500, minFrameMs = 8, stageIdleMs = 20000, lanBusPort = 0, lanMulticastAddr, lanBroadcastAddrs, lanHeartbeatMs = 1500, lanPeerTtlMs = 6000, resolveHost = host => host, probe = probeWled, discovery = discoverWled, maxAudioBytes, ytDownloader = downloadWithYtDlp, peerFetcher = fetch } = {}) {
+export function createLightingServer({ configPath = resolve(ROOT, 'config.json'), libraryRoot = resolve(ROOT, 'data'), library: customLibrary = null, sharedShowsDir: customSharedShowsDir, generatorsDir = resolve(ROOT, 'generators'), cloudEnabled, initialConfig, allowLoopback = false, udpPort = 4048, watchdogMs = 3500, minFrameMs = 8, stageIdleMs = 20000, lanBusPort = 0, lanMulticastAddr, lanBroadcastAddrs, lanHeartbeatMs = 1500, lanPeerTtlMs = 6000, resolveHost = host => host, probe = probeWled, discovery = discoverWled, maxAudioBytes, ytDownloader = downloadWithYtDlp, peerFetcher = fetch, logFilePath = LOG_FILE_PATH, enableDiskLog: customEnableDiskLog } = {}) {
+  const isDefaultDataRoot = libraryRoot === resolve(ROOT, 'data') && !customLibrary && !customSharedShowsDir && !allowLoopback;
+  const sharedShowsDir = customSharedShowsDir || (isDefaultDataRoot ? resolve(ROOT, 'shared-shows') : join(libraryRoot, 'shared-shows'));
+  const cloudDataDir = isDefaultDataRoot ? libraryRoot : (libraryRoot !== resolve(ROOT, 'data') ? libraryRoot : dirname(sharedShowsDir));
+  const effectiveCloudEnabled = cloudEnabled !== undefined ? Boolean(cloudEnabled) : isDefaultDataRoot;
   let config = validateConfig(initialConfig ?? defaultConfig(), allowLoopback);
   let cachedNodeRoutes = new Map(config.nodes.map(node => [node.id, routesForNode(config, node.id)]));
   const updateConfig = next => {
@@ -347,10 +658,87 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     cachedNodeRoutes = new Map(config.nodes.map(node => [node.id, routesForNode(config, node.id)]));
   };
   const library = customLibrary || createLibrary({ root: libraryRoot, ...(maxAudioBytes ? { maxAudioBytes } : {}) });
-  let analysisRunning = false;
+  let analysisQueue = Promise.resolve();
   let armed = false;
   let outputMode = 'show'; // 'show' (live DDP from DAW / YouTube) | 'ambient' (static Menu Bar light)
   let reason = 'Pregled bez izlaza';
+  let wledShowCarrierAwake = false;
+  const ambientStatePath = configPath ? join(dirname(configPath), 'ambient-light.json') : null;
+  let ambientLight = {
+    on: false,
+    brightness: 15,
+    kelvin: 4700,
+    watts: 3.2,
+    connected: false,
+    isLive: false,
+    updatedAt: 0
+  };
+  if (ambientStatePath && existsSync(ambientStatePath)) {
+    try {
+      const saved = JSON.parse(readFileSync(ambientStatePath, 'utf8'));
+      if (saved && typeof saved === 'object') {
+        if (typeof saved.on === 'boolean') ambientLight.on = saved.on;
+        if (Number.isFinite(Number(saved.brightness))) {
+          ambientLight.brightness = Math.max(1, Math.min(100, Math.round(Number(saved.brightness))));
+        }
+        if (Number.isFinite(Number(saved.kelvin))) {
+          ambientLight.kelvin = Math.max(2700, Math.min(6500, Math.round(Number(saved.kelvin) / 50) * 50));
+        }
+        if (Number.isFinite(Number(saved.updatedAt))) {
+          ambientLight.updatedAt = Number(saved.updatedAt);
+        }
+        const rgbw = rgbwForKelvin(ambientLight.kelvin);
+        const briByte = Math.max(1, Math.min(255, Math.round((ambientLight.brightness / 100) * 255)));
+        ambientLight.watts = computeAmbientWatts({ isOn: ambientLight.on, wledPwrMa: null, isLive: false, bri: briByte, col: rgbw });
+      }
+    } catch {}
+  }
+  const persistAmbientLight = () => {
+    if (!ambientStatePath) return;
+    const payload = {
+      on: Boolean(ambientLight.on),
+      brightness: ambientLight.brightness,
+      kelvin: ambientLight.kelvin,
+      updatedAt: ambientLight.updatedAt || Date.now()
+    };
+    writeFile(ambientStatePath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 }).catch(() => {});
+  };
+  const syncSavedAmbientFields = (input = {}) => {
+    if (!input || typeof input !== 'object') return false;
+    let changed = false;
+    if (typeof input.on === 'boolean' && input.on !== ambientLight.on) {
+      ambientLight.on = input.on;
+      changed = true;
+    }
+    if (Number.isFinite(Number(input.brightness))) {
+      const nextBri = Math.max(1, Math.min(100, Math.round(Number(input.brightness))));
+      if (nextBri !== ambientLight.brightness) {
+        ambientLight.brightness = nextBri;
+        changed = true;
+      }
+    } else if (Number.isFinite(Number(input.bri))) {
+      const nextBri = Math.max(1, Math.min(100, Math.round((Number(input.bri) / 255) * 100)));
+      if (nextBri !== ambientLight.brightness) {
+        ambientLight.brightness = nextBri;
+        changed = true;
+      }
+    }
+    if (Number.isFinite(Number(input.kelvin))) {
+      const nextKelvin = Math.max(2700, Math.min(6500, Math.round(Number(input.kelvin) / 50) * 50));
+      if (nextKelvin !== ambientLight.kelvin) {
+        ambientLight.kelvin = nextKelvin;
+        changed = true;
+      }
+    }
+    if (changed) {
+      const rgbw = rgbwForKelvin(ambientLight.kelvin);
+      const briByte = Math.max(1, Math.min(255, Math.round((ambientLight.brightness / 100) * 255)));
+      ambientLight.watts = computeAmbientWatts({ isOn: ambientLight.on, wledPwrMa: null, isLive: false, bri: briByte, col: rgbw });
+      ambientLight.updatedAt = Date.now();
+      persistAmbientLight();
+    }
+    return changed;
+  };
   let lastFrame = 0;
   let lastClientFrame = -Infinity;
   let lastAcceptedFrame = -Infinity;
@@ -371,7 +759,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
   const serverPerformDesk = createPerformance(DEFAULT_PADS);
   let hadServerPadsActive = false;
   const recentLogs = [];
-  const enableDiskLog = Boolean(configPath && !allowLoopback);
+  const enableDiskLog = customEnableDiskLog !== undefined ? Boolean(customEnableDiskLog) : Boolean((configPath && !allowLoopback) || logFilePath !== LOG_FILE_PATH);
 
   const getServerPerfContext = () => {
     const nowMs = Date.now();
@@ -415,6 +803,19 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
 
   const getPadsSnapshot = () => {
     serverPerformDesk.tick(getServerPerfContext());
+    const freshDaw = latestLiveState && (Date.now() - (latestLiveState.timestamp || 0) < 4000);
+    const activeSet = new Set([
+      ...serverPerformDesk.active.keys(),
+      ...(freshDaw && Array.isArray(latestLiveState.activePads) ? latestLiveState.activePads : [])
+    ]);
+    const pendingSet = new Set([
+      ...serverPerformDesk.pending.keys(),
+      ...(freshDaw && Array.isArray(latestLiveState.pendingPads) ? latestLiveState.pendingPads : [])
+    ]);
+    const heldSet = new Set([
+      ...serverPerformDesk.held.keys(),
+      ...(freshDaw && Array.isArray(latestLiveState.heldPads) ? latestLiveState.heldPads : [])
+    ]);
     return {
       pads: serverPerformDesk.pads.map((p, idx) => {
         if (!p) return null;
@@ -425,10 +826,12 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           bars: p.targets === 'all' ? [...BAR_IDS] : (Array.isArray(p.targets) ? [...p.targets] : [...BAR_IDS])
         };
       }),
-      activePads: [...serverPerformDesk.active.keys()],
-      pendingPads: [...serverPerformDesk.pending.keys()],
-      heldPads: [...serverPerformDesk.held.keys()],
-      quantize: serverPerformDesk.quantize
+      activePads: [...activeSet],
+      pendingPads: [...pendingSet],
+      heldPads: [...heldSet],
+      quantize: serverPerformDesk.quantize,
+      color: serverPerformDesk.color,
+      intensity: serverPerformDesk.intensity
     };
   };
 
@@ -442,6 +845,58 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     if (cmd.action === 'release_all') {
       serverPerformDesk.releaseAll();
       return 'released_all';
+    }
+    if (cmd.action === 'touch_down') {
+      return serverPerformDesk.touchDown(cmd.touchId ?? 'default', {
+        x: Number(cmd.x),
+        y: Number(cmd.y),
+        clockTime: ctx.clockTime,
+        color: Array.isArray(cmd.color) ? cmd.color : null,
+        intensity: Number.isFinite(Number(cmd.intensity)) ? Number(cmd.intensity) : null,
+        spread: Number.isFinite(Number(cmd.spread)) ? Number(cmd.spread) : null,
+        velocityGain: Number.isFinite(Number(cmd.velocityGain)) ? Number(cmd.velocityGain) : null,
+        effect: typeof cmd.effect === 'string' ? cmd.effect : null,
+        lockedCols: Array.isArray(cmd.lockedCols) ? cmd.lockedCols : null,
+        lockedRows: Array.isArray(cmd.lockedRows) ? cmd.lockedRows : null
+      });
+    }
+    if (cmd.action === 'touch_move') {
+      return serverPerformDesk.touchMove(cmd.touchId ?? 'default', {
+        x: Number(cmd.x),
+        y: Number(cmd.y),
+        velocityGain: Number.isFinite(Number(cmd.velocityGain)) ? Number(cmd.velocityGain) : undefined,
+        dragDown: Number.isFinite(Number(cmd.dragDown)) ? Number(cmd.dragDown) : undefined,
+        clockTime: ctx.clockTime
+      });
+    }
+    if (cmd.action === 'touch_up') {
+      return serverPerformDesk.touchUp(cmd.touchId ?? 'default', {
+        clockTime: ctx.clockTime,
+        cancel: Boolean(cmd.cancel)
+      });
+    }
+    if (cmd.action === 'set_color' && Array.isArray(cmd.color)) {
+      serverPerformDesk.setColor(cmd.color);
+      return 'color_updated';
+    }
+    if (cmd.action === 'set_intensity' && Number.isFinite(Number(cmd.intensity))) {
+      serverPerformDesk.setIntensity(Number(cmd.intensity));
+      return 'intensity_updated';
+    }
+    if (cmd.action === 'set_spread' && Number.isFinite(Number(cmd.spread))) {
+      serverPerformDesk.setSpread(Number(cmd.spread));
+      return 'spread_updated';
+    }
+    if (cmd.action === 'set_locks') {
+      serverPerformDesk.setLocks({
+        lockedCols: Array.isArray(cmd.lockedCols) ? cmd.lockedCols : undefined,
+        lockedRows: Array.isArray(cmd.lockedRows) ? cmd.lockedRows : undefined
+      });
+      return 'locks_updated';
+    }
+    if (cmd.action === 'set_effect' && typeof cmd.effect === 'string') {
+      serverPerformDesk.setEffect(cmd.effect);
+      return 'effect_updated';
     }
     if (cmd.action === 'quantize') {
       const nextQ = cmd.value !== undefined ? Boolean(cmd.value) : !serverPerformDesk.quantize;
@@ -487,19 +942,34 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     const nowIso = new Date().toISOString();
     const entry = { ts: nowIso, category, action, ...details };
     recentLogs.push(entry);
-    if (recentLogs.length > 300) recentLogs.shift();
+    if (recentLogs.length > 500) recentLogs.shift();
     if (enableDiskLog) {
       const detailStr = Object.keys(details).length ? ` ${JSON.stringify(details)}` : '';
-      writeDiskLogLine(`${nowIso} [${category}] ${action}${detailStr}`);
+      writeDiskLogLine(`${nowIso} [${category}] ${action}${detailStr}`, logFilePath);
     }
   };
 
-  const broadcastLive = (event, data) => {
+  const broadcastLive = (event, data, { excludeClientId = null } = {}) => {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of liveClients) {
+      if (excludeClientId && client.clientId && client.clientId === excludeClientId) continue;
       try { client.write(payload); } catch { liveClients.delete(client); }
     }
   };
+  const cloudSync = createCloudSync({
+    sharedShowsDir,
+    dataDir: cloudDataDir,
+    library,
+    enabled: effectiveCloudEnabled,
+    onRemoteUpdate: ({ changedShows }) => {
+      sharedShowsIndexCache = null;
+      broadcastLive('command', {
+        type: 'cloud_updated',
+        shows: changedShows
+      });
+    }
+  });
+  cloudSync.init().catch(() => {});
   const cleanPeerIp = req => {
     const raw = String(req?.socket?.remoteAddress || '127.0.0.1');
     return raw.startsWith('::ffff:') ? raw.slice(7) : raw;
@@ -627,8 +1097,10 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     }
     if (prevMode !== 'show' || !wasArmed) {
       logEvent('MODE', 'ACTIVATE_SHOW', { source, prevMode, wasArmed, armed, forceWake });
-    }
-    if (broadcast) {
+      if (broadcast) {
+        broadcastLive('command', { type: 'hardware_sync', state: state() });
+      }
+    } else if (broadcast && clearBlackout) {
       broadcastLive('command', { type: 'hardware_sync', state: state() });
     }
     return armed;
@@ -748,12 +1220,59 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           currentOwner.ip === peer.ip &&
           currentOwner.source !== peer.source
         );
-        if (stageIsFree || sameMachinePausedSwitch) {
+        const hasLocalDawPeer = isCompanionPadSource(peer.source) && [...lanPeers.values()].some(p => p.clientId !== peer.clientId && p.source === 'daw');
+        if ((stageIsFree && !hasLocalDawPeer) || sameMachinePausedSwitch) {
           claimStageForPeer(peer, { takeover: false });
         }
       }
     }
     return peer;
+  };
+
+  const isCompanionPadSource = src => src === 'ios-pad' || src === 'pad' || src === 'ios';
+  const companionDevices = new Map();
+
+  const touchCompanionDevice = (clientId, patch = {}, req = null) => {
+    const cid = String(clientId || 'ios-pad').trim().slice(0, 64);
+    const prev = companionDevices.get(cid);
+    const nowMs = Date.now();
+    const latency = Number(patch.latencyMs);
+    const entry = {
+      clientId: cid,
+      name: (typeof patch.name === 'string' && patch.name.trim()) ? patch.name.trim().slice(0, 48) : (prev?.name || 'iPhone Pad'),
+      ip: req ? cleanPeerIp(req) : (prev?.ip || '127.0.0.1'),
+      latencyMs: Number.isFinite(latency) && latency > 0 ? Math.max(1, Math.round(latency)) : (prev?.latencyMs || 2),
+      lastSeenAt: nowMs,
+      sseConnected: patch.sseConnected !== undefined ? Boolean(patch.sseConnected) : Boolean(prev?.sseConnected)
+    };
+    companionDevices.set(cid, entry);
+    return entry;
+  };
+
+  const getActiveCompanions = (nowMs = Date.now()) => {
+    const activeSseIds = new Set();
+    for (const res of liveClients) {
+      if (res.isCompanionClient && res.clientId) {
+        activeSseIds.add(res.clientId);
+      }
+    }
+    const list = [];
+    for (const [cid, dev] of companionDevices.entries()) {
+      const sseAlive = activeSseIds.has(cid);
+      if (!sseAlive && (nowMs - dev.lastSeenAt) > 15000) {
+        companionDevices.delete(cid);
+        continue;
+      }
+      list.push({
+        clientId: dev.clientId,
+        name: dev.name,
+        ip: dev.ip,
+        latencyMs: dev.latencyMs || 2,
+        lastSeenAt: dev.lastSeenAt,
+        connected: true
+      });
+    }
+    return list;
   };
 
   const canClientDriveStage = clientId => {
@@ -764,7 +1283,12 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     const peer = lanPeers.get(cid);
     if (peer?.releasedWhilePlaying) return false;
     if (stageOwnerId) {
-      return stageOwnerId === cid;
+      if (stageOwnerId === cid) return true;
+      const owner = lanPeers.get(stageOwnerId);
+      if (isCompanionPadSource(owner?.source) || isCompanionPadSource(peer?.source)) {
+        return true;
+      }
+      return false;
     }
     return true;
   };
@@ -843,7 +1367,8 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
       stageOwnerSource: effectiveOwner?.source || null,
       isRemoteStageOwner: Boolean(remoteStageOwner),
       nowPlaying,
-      peers: allPeers
+      peers: allPeers,
+      companions: getActiveCompanions(nowMs)
     };
   };
 
@@ -991,26 +1516,201 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     if (wasArmed && sendZeros) await zeros().catch(() => {});
   };
   const wakeWled = host => {
+    wledShowCarrierAwake = true;
     if (probe === probeWled && host) {
       logEvent('WLED', 'WAKE_SHOW', { host, lor: 0 });
-      fetch(`http://${host}/json/state`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ on: true, bri: 255, transition: 0, lor: 0 }),
-        signal: AbortSignal.timeout(800)
+      fetch(`http://${host}/win&T=1&A=255&R=0&G=0&B=0&W=0&R2=0&G2=0&B2=0&W2=0&FX=0&LO=0`, {
+        signal: AbortSignal.timeout(1200)
       }).catch(() => {});
     }
   };
-  const restoreAmbientWled = host => {
+  const buildAmbientWinQuery = ({ lockLor = true, savePreset = false } = {}) => {
+    const rgbw = rgbwForKelvin(ambientLight.kelvin);
+    const briByte = Math.max(1, Math.min(255, Math.round((ambientLight.brightness / 100) * 255)));
+    const isOn = Boolean(ambientLight.on);
+    const lor = lockLor ? 2 : 0;
+    return `win&T=${isOn ? 1 : 0}&A=${briByte}&R=${rgbw[0]}&G=${rgbw[1]}&B=${rgbw[2]}&W=${rgbw[3]}&R2=0&G2=0&B2=0&W2=0&FX=0&LO=${lor}${savePreset ? '&PS=1' : ''}`;
+  };
+  const restoreAmbientWled = (host, { lockLor = true, savePreset = false } = {}) => {
+    wledShowCarrierAwake = false;
     if (probe === probeWled && host) {
-      logEvent('WLED', 'LOCK_AMBIENT', { host, lor: 2, ps: 1 });
-      fetch(`http://${host}/json/state`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lor: 2, ps: 1, transition: 2 }),
-        signal: AbortSignal.timeout(800)
+      const query = buildAmbientWinQuery({ lockLor, savePreset });
+      logEvent('WLED', 'LOCK_AMBIENT', {
+        host,
+        lor: lockLor ? 2 : 0,
+        on: Boolean(ambientLight.on),
+        brightness: ambientLight.brightness,
+        kelvin: ambientLight.kelvin
+      });
+      fetch(`http://${host}/${query}`, {
+        signal: AbortSignal.timeout(1200)
       }).catch(() => {});
     }
+  };
+  const restoreWledAfterShowStop = (reasonTag = 'show_stop', { sendZeros = true } = {}) => {
+    if (!wledShowCarrierAwake) return;
+    wledShowCarrierAwake = false;
+    if (sendZeros && !Boolean(ambientLight.on)) {
+      zeros().catch(() => {});
+    }
+    const activeNodes = config.nodes.filter(n => n.host);
+    for (const node of activeNodes) {
+      restoreAmbientWled(node.host, { lockLor: false, savePreset: false });
+    }
+    logEvent('WLED', 'RESTORE_AFTER_SHOW', {
+      reason: reasonTag,
+      on: Boolean(ambientLight.on),
+      brightness: ambientLight.brightness,
+      kelvin: ambientLight.kelvin
+    });
+  };
+  const primaryWledHost = () => {
+    const e8 = config.nodes.find(n => n.id === 'E8-1' && n.host) || config.nodes.find(n => n.host);
+    return e8?.host || '192.168.0.117';
+  };
+  const queryAmbientLightStatus = async ({ forceProbe = true } = {}) => {
+    const host = primaryWledHost();
+    if (forceProbe && probe === probeWled && host) {
+      try {
+        const res = await fetch(`http://${host}/win`, { signal: AbortSignal.timeout(1500) });
+        if (res.ok) {
+          const xml = await res.text();
+          const win = parseWledWinXml(xml);
+          if (win) {
+            let hasNonZeroColor = true;
+            if (Array.isArray(win.col) && win.col.length >= 4) {
+              const sum = (Number(win.col[0]) || 0) + (Number(win.col[1]) || 0) + (Number(win.col[2]) || 0) + (Number(win.col[3]) || 0);
+              if (sum <= 0) {
+                hasNonZeroColor = false;
+              }
+            }
+            const canSyncFromHardware = outputMode === 'ambient' && !armed && !win.isLive && !wledShowCarrierAwake && hasNonZeroColor;
+            if (canSyncFromHardware) {
+              ambientLight.kelvin = kelvinFromRgbw(win.col, ambientLight.kelvin);
+              ambientLight.on = Boolean(win.on);
+              if (Number(win.bri) > 0) {
+                ambientLight.brightness = Math.max(1, Math.min(100, Math.round((Number(win.bri) / 255) * 100)));
+              }
+            }
+            const rgbw = rgbwForKelvin(ambientLight.kelvin);
+            const briByte = Math.max(1, Math.min(255, Math.round((ambientLight.brightness / 100) * 255)));
+            const watts = computeAmbientWatts({
+              isOn: Boolean(ambientLight.on),
+              wledPwrMa: null,
+              isLive: false,
+              bri: briByte,
+              col: rgbw
+            });
+            ambientLight = {
+              ...ambientLight,
+              watts,
+              connected: true,
+              isLive: win.isLive
+            };
+          }
+        }
+      } catch {
+        ambientLight = { ...ambientLight, connected: false };
+      }
+    }
+    return {
+      ok: true,
+      ...ambientLight,
+      ambientLight,
+      outputMode,
+      armed,
+      host
+    };
+  };
+  const applyAmbientLightState = async (input = {}) => {
+    const presetMap = {
+      warm: { on: true, kelvin: 2700, brightness: 85 },
+      neutral: { on: true, kelvin: 4000, brightness: 100 },
+      full: { on: true, kelvin: 4800, brightness: 100 },
+      cool: { on: true, kelvin: 6500, brightness: 100 },
+      dim: { on: true, kelvin: 3000, brightness: 25 },
+      off: { on: false }
+    };
+    const preset = typeof input.preset === 'string' ? presetMap[input.preset.toLowerCase()] : null;
+    const merged = preset ? { ...input, ...preset } : input;
+
+    let nextKelvin = ambientLight.kelvin;
+    if (Number.isFinite(Number(merged.kelvin))) {
+      nextKelvin = Math.max(2700, Math.min(6500, Math.round(Number(merged.kelvin) / 50) * 50));
+    }
+    let nextBrightness = ambientLight.brightness;
+    if (Number.isFinite(Number(merged.brightness))) {
+      nextBrightness = Math.max(1, Math.min(100, Math.round(Number(merged.brightness))));
+    } else if (Number.isFinite(Number(merged.bri))) {
+      nextBrightness = Math.max(1, Math.min(100, Math.round((Number(merged.bri) / 255) * 100)));
+    }
+    let nextOn = ambientLight.on;
+    if (merged.toggle === true || merged.action === 'toggle') {
+      nextOn = !ambientLight.on;
+    } else if (merged.action === 'on') {
+      nextOn = true;
+    } else if (merged.action === 'off') {
+      nextOn = false;
+    } else if (typeof merged.on === 'boolean') {
+      nextOn = merged.on;
+    } else if (Number.isFinite(Number(merged.brightness)) || Number.isFinite(Number(merged.bri)) || Number.isFinite(Number(merged.kelvin))) {
+      nextOn = true;
+    }
+
+    const rgbw = rgbwForKelvin(nextKelvin);
+    const briByte = Math.max(1, Math.min(255, Math.round((nextBrightness / 100) * 255)));
+    const watts = computeAmbientWatts({ isOn: nextOn, wledPwrMa: null, isLive: false, bri: briByte, col: rgbw });
+
+    wledShowCarrierAwake = false;
+    ambientLight = {
+      on: nextOn,
+      brightness: nextBrightness,
+      kelvin: nextKelvin,
+      watts,
+      connected: true,
+      isLive: false,
+      updatedAt: Date.now()
+    };
+    persistAmbientLight();
+
+    const reqSource = String(merged.source || 'light_switch').slice(0, 32);
+    activateAmbientOutput({ restorePresetOnE8: false, broadcast: false, source: reqSource });
+
+    const targets = config.nodes.filter(n => n.host).map(n => n.host);
+    if (!targets.length) targets.push('192.168.0.117');
+    const savePreset = merged.savePreset !== false;
+    const winQuery = `win&T=${nextOn ? 1 : 0}&A=${briByte}&R=${rgbw[0]}&G=${rgbw[1]}&B=${rgbw[2]}&W=${rgbw[3]}&R2=0&G2=0&B2=0&W2=0&FX=0&LO=2${savePreset ? '&PS=1' : ''}`;
+
+    if (probe === probeWled) {
+      await Promise.all(targets.map(host =>
+        fetch(`http://${host}/${winQuery}`, {
+          signal: AbortSignal.timeout(1400)
+        }).catch(() => {})
+      ));
+    }
+
+    logEvent('LIGHT', nextOn ? 'LIGHT_ON' : 'LIGHT_OFF', {
+      source: reqSource,
+      on: nextOn,
+      brightness: nextBrightness,
+      kelvin: nextKelvin,
+      watts
+    });
+
+    const currentState = state();
+    broadcastLive('command', { type: 'ambient_light_sync', ambientLight, state: currentState });
+    broadcastLive('command', { type: 'hardware_sync', state: { ...currentState, ambientOverride: true } });
+    broadcastLanPresence({ reason: 'mode_ambient' });
+
+    return {
+      ok: true,
+      ...ambientLight,
+      ambientLight,
+      outputMode,
+      armed,
+      host: primaryWledHost(),
+      state: currentState
+    };
   };
   let autoConnectPromise = null;
   const autoConnect = ({ allowDiscovery = true, forceTakeover = false } = {}) => {
@@ -1146,10 +1846,85 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     })();
     return autoConnectPromise;
   };
+  let lastDispatchedBars = null;
+  let lastDispatchedAt = 0;
+  let smoothedDdpIntervalMs = 16.6;
+  let lastBaseBars = null;
+  let lastBaseBarsAt = 0;
+  let lastCompanionFramePushAt = 0;
+  let lastSyncedDawPadsJson = '';
+
+  const hasActiveCompanionClient = () => {
+    for (const c of liveClients) {
+      if (c.isCompanionClient) return true;
+    }
+    return false;
+  };
+
+  const unscaleBarsForPreview = (bars, masterPct = 100) => {
+    if (!bars || typeof bars !== 'object') return bars;
+    const scale = clampVal((Number(masterPct) || 100) / 100, 0, 1);
+    if (scale <= 0.005 || scale >= 0.995) return bars;
+    const inv = 1 / scale;
+    const out = {};
+    for (const barId of BAR_IDS) {
+      const pxList = bars[barId];
+      if (!Array.isArray(pxList)) continue;
+      out[barId] = pxList.map(px => [
+        Math.min(255, Math.round((Number(px[0]) || 0) * inv)),
+        Math.min(255, Math.round((Number(px[1]) || 0) * inv)),
+        Math.min(255, Math.round((Number(px[2]) || 0) * inv)),
+        Math.min(255, Math.round((Number(px[3]) || 0) * inv))
+      ]);
+    }
+    return out;
+  };
+
+  const pushFrameToCompanionClients = (bars, nowPerf = performance.now(), { isPreScaled = false, masterPct = null } = {}) => {
+    if (!bars || Object.keys(bars).length !== 9) return;
+    if (nowPerf - lastCompanionFramePushAt < 30) return;
+    if (!hasActiveCompanionClient()) return;
+    lastCompanionFramePushAt = nowPerf;
+    const effectiveMaster = masterPct ?? latestLiveState?.master ?? liveControl.state.master ?? 35;
+    const previewBars = isPreScaled ? unscaleBarsForPreview(bars, effectiveMaster) : bars;
+    const perfCtx = getServerPerfContext();
+    const snap = getPadsSnapshot();
+    const payload = `event: command\ndata: ${JSON.stringify({
+      type: 'frame_sync',
+      bars: previewBars,
+      unscaled: true,
+      activePads: snap.activePads,
+      heldPads: snap.heldPads,
+      pendingPads: snap.pendingPads,
+      quantize: snap.quantize,
+      isPlaying: perfCtx.playing,
+      timeSec: perfCtx.songTime,
+      bpm: perfCtx.bpm,
+      master: effectiveMaster,
+      blackout: Boolean(liveControl.state.blackout)
+    })}\n\n`;
+    for (const c of liveClients) {
+      if (!c.isCompanionClient) continue;
+      try { c.write(payload); } catch { liveClients.delete(c); }
+    }
+  };
+
   const sendBarsToWled = async (bars, scale = 1, source = 'internal') => {
-    if (!armed || outputMode === 'ambient' || remoteStageOwner || !bars || Object.keys(bars).length !== 9) return false;
+    if (!bars || Object.keys(bars).length !== 9) return false;
     const now = performance.now();
+    // Always push full-brightness (unscaled) bars to connected iPhone companion clients,
+    // even when physical WLED output is disarmed or in ambient mode.
+    pushFrameToCompanionClients(bars, now, { isPreScaled: false });
+    if (!armed || outputMode === 'ambient' || remoteStageOwner) return false;
     if (now - lastAcceptedFrame < minFrameMs) return false;
+    if (lastDispatchedAt > 0) {
+      const dt = now - lastDispatchedAt;
+      if (dt > 4 && dt < 1000) {
+        smoothedDdpIntervalMs = smoothedDdpIntervalMs * 0.8 + dt * 0.2;
+      }
+    }
+    lastDispatchedBars = bars;
+    lastDispatchedAt = now;
     const values = new Map(config.nodes.map(node => [node.id, []]));
     const masterScale = clampVal(scale, 0, 1);
     for (const node of config.nodes) {
@@ -1172,6 +1947,9 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         }
       }
     }
+    if (!wledShowCarrierAwake && !liveControl.state.blackout) {
+      for (const node of config.nodes.filter(n => n.host)) wakeWled(node.host);
+    }
     if (framesSentSinceArm === 0) {
       logEvent('DDP', 'STREAM_FIRST_FRAME', { source, scale: masterScale });
     }
@@ -1181,7 +1959,35 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     await Promise.all(config.nodes.filter(node => node.host).map(node => send(node.host, values.get(node.id))));
     return true;
   };
-  const state = () => ({ armed, outputMode, ambientOverride: outputMode === 'ambient', yieldedToRemote, reason, config, transport: config.transport === 'rgbw' ? 'DDP RGBW' : 'DDP RGB', ceiling: 255, maxFps: 120, watchdogMs });
+  const computeLiveTelemetry = () => {
+    const nowPerf = performance.now();
+    const isFresh = Boolean(armed && outputMode === 'show' && lastDispatchedBars && (nowPerf - lastDispatchedAt < 1800));
+    if (!isFresh) {
+      return {
+        active: false,
+        watts: armed ? 5.5 : (ambientLight?.watts ?? 3.2),
+        fps: armed ? 2 : 0
+      };
+    }
+    let totalSum = 0;
+    let groupCount = 0;
+    for (const barId of BAR_IDS) {
+      if (config.profile === 'e8-columns' && barId === 'C1') continue;
+      const pxList = lastDispatchedBars[barId];
+      if (!Array.isArray(pxList)) continue;
+      for (let i = 0; i < pxList.length; i++) {
+        const px = pxList[i];
+        totalSum += (Number(px[0]) || 0) + (Number(px[1]) || 0) + (Number(px[2]) || 0) + (Number(px[3]) || 0);
+        groupCount++;
+      }
+    }
+    const ratio = groupCount > 0 ? Math.max(0, Math.min(1, totalSum / (groupCount * 1020))) : 0;
+    const watts = Math.round((5.5 + ratio * 171.0) * 10) / 10;
+    const rawFps = smoothedDdpIntervalMs > 0 ? Math.round(1000 / smoothedDdpIntervalMs) : 60;
+    const fps = (nowPerf - lastDispatchedAt < 350) ? Math.max(1, Math.min(120, rawFps)) : 4;
+    return { active: true, watts, fps };
+  };
+  const state = () => ({ armed, outputMode, ambientOverride: outputMode === 'ambient', ambientLight, liveTelemetry: computeLiveTelemetry(), yieldedToRemote, reason, config, transport: config.transport === 'rgbw' ? 'DDP RGBW' : 'DDP RGB', ceiling: 255, maxFps: 120, watchdogMs });
   const json = (response, status, data) => {
     if (response.headersSent || response.destroyed || response.writableEnded) return;
     response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -1241,14 +2047,18 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
   };
   let fallbackBusy = false;
   const renderHighRateTick = () => {
-    if (!armed || outputMode === 'ambient' || remoteStageOwner || liveControl.state.blackout || testRunning) return;
+    if (liveControl.state.blackout || testRunning) return;
+    const canSendWled = armed && outputMode !== 'ambient' && !remoteStageOwner;
+    const hasCompanion = hasActiveCompanionClient();
+    if (!canSendWled && !hasCompanion) return;
     const nowPerf = performance.now();
-    if (nowPerf - lastAcceptedFrame < 13) return;
+    if (canSendWled && nowPerf - lastAcceptedFrame < 13) return;
+    if (!canSendWled && nowPerf - lastCompanionFramePushAt < 30) return;
     const browserFrameIdleMs = nowPerf - lastClientFrame;
     const nowMs = Date.now();
     const perfCtx = getServerPerfContext();
     serverPerformDesk.tick(perfCtx);
-    const hasServerPads = serverPerformDesk.active.size > 0;
+    const hasServerPads = serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0;
 
     const extActivelyPlaying = Boolean(
       (extState.mode === 'synced' || extState.mode === 'live_stream') &&
@@ -1297,7 +2107,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
 
     const dawActivelyPlaying = Boolean(
       latestLiveState?.isPlaying &&
-      (nowMs - (latestLiveState.timestamp || 0) < 15000)
+      (hasCompanion || (nowMs - (latestLiveState.timestamp || 0) < 15000))
     );
     if (liveClients.size > 0 && dawActivelyPlaying && browserFrameIdleMs > 40 && !fallbackBusy) {
       const trackId = latestLiveState?.trackId || liveControl.state.trackId;
@@ -1306,7 +2116,16 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         if (cached && nowMs - cached.loadedAt < 10000) {
           const elapsedSec = Math.max(0, (nowMs - (latestLiveState.timestamp || nowMs)) / 1000);
           const durationLimit = cached.analysis?.durationSec || cached.timeline?.durationSec || Infinity;
-          const tSec = Math.min(durationLimit, Math.max(0, (Number(latestLiveState?.timeSec) || 0) + elapsedSec));
+          let tSec = Math.max(0, (Number(latestLiveState?.timeSec) || 0) + elapsedSec);
+          if (Number.isFinite(durationLimit) && durationLimit > 1 && tSec >= durationLimit) {
+            tSec = tSec % durationLimit;
+            if (nowMs - (latestLiveState.timestamp || 0) > 4000) {
+              latestLiveState.timeSec = tSec;
+              latestLiveState.timestamp = nowMs;
+            }
+          } else {
+            tSec = Math.min(durationLimit, tSec);
+          }
           let rendered = renderTimelineFrame(cached.timeline, cached.analysis, tSec, null, true);
           if (hasServerPads) {
             rendered = serverPerformDesk.render(rendered, perfCtx.clockTime, perfCtx.bpm, 1, cached.analysis, tSec);
@@ -1318,14 +2137,14 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         fallbackBusy = true;
         getCachedShow(trackId)
           .then(show => {
-            if (!show || !armed || outputMode === 'ambient' || remoteStageOwner) return;
+            if (!show || (!armed && !hasActiveCompanionClient())) return;
             const elapsedSec = latestLiveState?.isPlaying
               ? Math.max(0, (Date.now() - (latestLiveState.timestamp || Date.now())) / 1000)
               : 0;
             const durationLimit = show.analysis?.durationSec || show.timeline?.durationSec || Infinity;
             const tSec = Math.min(durationLimit, Math.max(0, (Number(latestLiveState?.timeSec) || 0) + elapsedSec));
             let rendered = renderTimelineFrame(show.timeline, show.analysis, tSec, null, true);
-            if (serverPerformDesk.active.size > 0) {
+            if (serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0) {
               const pCtx = getServerPerfContext();
               rendered = serverPerformDesk.render(rendered, pCtx.clockTime, pCtx.bpm, 1, show.analysis, tSec);
             }
@@ -1340,16 +2159,51 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
 
     if (hasServerPads && browserFrameIdleMs > 35) {
       hadServerPadsActive = true;
-      const darkBase = {
-        bars: Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])]))
-      };
-      const rendered = serverPerformDesk.render(darkBase, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime);
+      const trackId = latestLiveState?.trackId || liveControl.state.trackId;
+      const cached = trackId ? serverShowCache.get(trackId) : null;
+      const tSec = Math.max(0, Number(latestLiveState?.timeSec) || 0);
+      const baseFrame = cached?.timeline
+        ? renderTimelineFrame(cached.timeline, cached.analysis, tSec, null, true)
+        : { bars: Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])])) };
+      const rendered = serverPerformDesk.render(baseFrame, perfCtx.clockTime, perfCtx.bpm, 1, cached?.analysis || null, perfCtx.songTime);
       const scale = clampVal((latestLiveState?.master ?? liveControl.state.master ?? 70) / 100, 0, 1);
       sendBarsToWled(rendered.bars, scale, 'companion_pads').catch(() => {});
+      return;
     } else if (hadServerPadsActive && !hasServerPads && browserFrameIdleMs > 35) {
       hadServerPadsActive = false;
-      const darkBase = Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])]));
-      sendBarsToWled(darkBase, 1, 'companion_pads_clear').catch(() => {});
+      const trackId = latestLiveState?.trackId || liveControl.state.trackId;
+      const cached = trackId ? serverShowCache.get(trackId) : null;
+      const tSec = Math.max(0, Number(latestLiveState?.timeSec) || 0);
+      const clearBars = cached?.timeline
+        ? renderTimelineFrame(cached.timeline, cached.analysis, tSec, null, true).bars
+        : Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])]));
+      const scale = clampVal((latestLiveState?.master ?? liveControl.state.master ?? 70) / 100, 0, 1);
+      sendBarsToWled(clearBars, scale, 'companion_pads_clear').catch(() => {});
+      return;
+    }
+
+    // Keep companion preview updated at the current playhead even when paused or scrubbing
+    if (hasCompanion && !dawActivelyPlaying && browserFrameIdleMs > 180 && (nowPerf - lastCompanionFramePushAt >= 240) && !fallbackBusy) {
+      const trackId = latestLiveState?.trackId || liveControl.state.trackId;
+      if (trackId) {
+        const cached = serverShowCache.get(trackId);
+        const tSec = Math.max(0, Number(latestLiveState?.timeSec) || 0);
+        if (cached?.timeline) {
+          const rendered = renderTimelineFrame(cached.timeline, cached.analysis, tSec, null, true);
+          pushFrameToCompanionClients(rendered.bars, nowPerf, { isPreScaled: false });
+        } else {
+          fallbackBusy = true;
+          getCachedShow(trackId)
+            .then(show => {
+              if (show?.timeline) {
+                const rendered = renderTimelineFrame(show.timeline, show.analysis, tSec, null, true);
+                pushFrameToCompanionClients(rendered.bars, performance.now(), { isPreScaled: false });
+              }
+            })
+            .catch(() => {})
+            .finally(() => { fallbackBusy = false; });
+        }
+      }
     }
   };
   const renderTimer = setInterval(renderHighRateTick, 16);
@@ -1376,7 +2230,10 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         lanPeers: lanPeers.size
       });
       disarm('Prekid veze: izlaz ugašen', { sendZeros: sendZerosOnTimeout })
-        .then(() => broadcastLive('command', { type: 'hardware_sync', state: state() }))
+        .then(() => {
+          restoreWledAfterShowStop('watchdog_timeout', { sendZeros: !sendZerosOnTimeout });
+          broadcastLive('command', { type: 'hardware_sync', state: state() });
+        })
         .catch(() => {});
     }
   }, Math.min(50, watchdogMs / 2));
@@ -1604,6 +2461,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               extState.liveStems = null;
               extState.smoothedStems = null;
               extState.lastPaused = true;
+              restoreWledAfterShowStop('ext_stop');
               liveControl.broadcastCommand({
                 type: 'ext_sync',
                 mode: 'idle',
@@ -1662,9 +2520,11 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (!paused && outputMode === 'show' && !liveControl.state.blackout && !yieldedToRemote) {
             if (!armed) {
               activateShowOutput({ forceWake: true, broadcast: true, source: 'ext_sync' });
-            } else if (extState.lastPaused !== false) {
+            } else if (extState.lastPaused !== false || !wledShowCarrierAwake) {
               for (const node of config.nodes.filter(n => n.host)) wakeWled(node.host);
             }
+          } else if (paused && extState.lastPaused === false && !dawPlayingLocally && serverPerformDesk.active.size === 0 && serverPerformDesk.touches.size === 0) {
+            restoreWledAfterShowStop('ext_pause');
           }
           extState.lastPaused = Boolean(paused);
           extState.lastTime = Number(currentTime || 0);
@@ -1880,6 +2740,33 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           stream.pipe(response);
           return;
         }
+        if ((request.method === 'GET' || request.method === 'HEAD') && /^\/api\/library\/artwork\/[a-f0-9-]{36}$/.test(pathname)) {
+          const id = pathname.split('/').at(-1);
+          const track = await library.getTrack(id).catch(() => null);
+          if (!track) return json(response, 404, { error: 'Pjesma ne postoji.' });
+          const artPath = await resolveTrackArtwork(track, library, peerFetcher);
+          if (!artPath) {
+            response.writeHead(404, { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+            return response.end();
+          }
+          const st = await stat(artPath).catch(() => null);
+          if (!st || st.size === 0) {
+            response.writeHead(404, { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+            return response.end();
+          }
+          response.writeHead(200, {
+            'Content-Type': 'image/jpeg',
+            'Content-Length': st.size,
+            'Cache-Control': 'public, max-age=86400',
+            'X-Content-Type-Options': 'nosniff'
+          });
+          if (request.method === 'HEAD') return response.end();
+          const stream = createReadStream(artPath);
+          stream.on('error', error => response.destroy(error));
+          response.on('close', () => { if (!response.writableFinished) stream.destroy(); });
+          stream.pipe(response);
+          return;
+        }
         if (request.method === 'GET' && /^\/api\/library\/track\/[a-f0-9-]{36}$/.test(pathname)) {
           const id = pathname.split('/').at(-1);
           return json(response, 200, { track: await library.getTrack(id), analysis: await library.getAnalysis(id), timeline: await library.getTimeline(id) });
@@ -1924,37 +2811,26 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           return response.end(packBuf);
         }
         if (request.method === 'GET' && pathname === '/api/library/shared-shows') {
-          await mkdir(sharedShowsDir, { recursive: true, mode: 0o755 }).catch(() => {});
-          const files = (await readdir(sharedShowsDir).catch(() => [])).filter(f => f.endsWith('.ledshow.json')).sort();
-          const sharedShows = [];
-          for (const filename of files) {
-            try {
-              const raw = await readFile(join(sharedShowsDir, filename), 'utf8');
-              const parsed = decodeShowJson(raw);
-              const matched = library.findTrackByVideo({
-                sha256: parsed.track?.sha256,
-                videoId: parsed.track?.videoId,
-                title: parsed.track?.title
-              });
-              const clipCount = (parsed.timeline?.layers || []).reduce((sum, l) => sum + (l.clips?.length || 0), 0);
-              sharedShows.push({
-                filename,
-                title: parsed.track?.title || filename.replace(/\.ledshow\.json$/i, ''),
-                videoId: parsed.track?.videoId || null,
-                sha256: parsed.track?.sha256 || null,
-                bpm: parsed.track?.bpm || parsed.timeline?.bpm || 120,
-                durationSec: parsed.track?.durationSec || parsed.timeline?.durationSec || 0,
-                author: parsed.author || 'Studio',
-                exportedAt: raw ? (JSON.parse(raw).exportedAt || null) : null,
-                track: parsed.track,
-                layerCount: parsed.timeline?.layers?.length || 0,
-                clipCount,
-                sectionCount: parsed.analysis?.sections?.length || 0,
-                installedTrackId: matched?.id || null
-              });
-            } catch {}
+          const forceRefresh = parsedUrl.searchParams.get('refresh') === '1';
+          const snapshot = await cloudSync.getCatalogSnapshot({ forceRefresh });
+          return json(response, 200, snapshot);
+        }
+        if (request.method === 'GET' && pathname === '/api/library/versions') {
+          const trackId = parsedUrl.searchParams.get('trackId') || '';
+          let showId = parsedUrl.searchParams.get('showId') || '';
+          if (!showId && trackId) {
+            const track = await library.getTrack(trackId).catch(() => null);
+            if (track) showId = track.showId || computeShowId(track);
           }
-          return json(response, 200, { ok: true, shows: sharedShows, sharedShows });
+          if (!showId) return json(response, 400, { error: 'Nedostaje showId ili trackId.' });
+          const history = await cloudSync.getVersionsForShow(showId);
+          return json(response, 200, {
+            ok: true,
+            showId: history.showId,
+            title: history.title,
+            latestVersion: history.latestVersion,
+            versions: history.versions
+          });
         }
         if (request.method === 'POST' && pathname === '/api/library/import') {
           const filename = parsedUrl.searchParams.get('name') || '';
@@ -2040,10 +2916,8 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           }
           return json(response, 400, { error: 'Nepoznat format paketa (podržani su .ledpack i .ledshow.json).' });
         }
-        if (request.method === 'POST' && /^\/api\/library\/(analyze|timeline|sections|track|set|set-update|set-delete|track-delete|share-to-git|install-shared-show)$/.test(pathname)) {
-          let body = '';
-          for await (const chunk of request) { body += chunk; if (Buffer.byteLength(body) > 5 * 1024 * 1024) return json(response, 413, { error: 'Zahtjev je prevelik.' }); }
-          const input = JSON.parse(body || '{}');
+        if (request.method === 'POST' && /^\/api\/library\/(analyze|timeline|sections|track|set|set-update|set-delete|track-delete|share-to-git|install-shared-show|restore-version)$/.test(pathname)) {
+          const { bytes: bodyBytes, data: input } = await readJsonBody(request, 32 * 1024 * 1024);
           if (pathname === '/api/library/share-to-git') {
             const targetId = input.trackId || input.id;
             const track = await library.getTrack(targetId);
@@ -2051,22 +2925,118 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             let timeline = await library.getTimeline(targetId).catch(() => null);
             if (!timeline && analysis) timeline = createAutoShow(analysis);
             if (!timeline) return json(response, 400, { error: 'Pjesma još nema show za dijeljenje.' });
+            normalizeTimeline(timeline);
             const author = (typeof input.author === 'string' && input.author.trim()) ? input.author.trim() : (track.author || 'Studio');
-            if (author && author !== track.author) await library.updateTrack(track.id, { author }).catch(() => {});
-            const showObj = encodeShowJson({ track, analysis, timeline, author });
-            await mkdir(sharedShowsDir, { recursive: true, mode: 0o755 });
-            const filename = `${sanitizeFilename(track.title || track.originalName)}.ledshow.json`;
-            await writeFile(join(sharedShowsDir, filename), `${JSON.stringify(showObj, null, 2)}\n`, 'utf8');
+            const pub = await cloudSync.publishShowSave({
+              track,
+              analysis,
+              timeline,
+              author,
+              clientId: input.clientId || '',
+              note: input.note || '',
+              action: 'share',
+              forceNewVersion: Boolean(input.forceNewVersion)
+            });
+            await library.updateTrack(track.id, {
+              author,
+              updatedBy: author,
+              version: pub.version,
+              showId: pub.showId,
+              lastSummary: pub.summary
+            }).catch(() => {});
             sharedShowsIndexCache = null;
-            broadcastLive('command', { type: 'library_updated', trackId: track.id, action: 'share_to_git' });
-            return json(response, 200, { ok: true, filename, author });
+            logEvent('SAVE', 'SHARE_TO_GIT', { trackId: track.id, filename: pub.filename, author, version: pub.version });
+            broadcastLive('command', { type: 'library_updated', trackId: track.id, action: 'share_to_git', version: pub.version });
+            return json(response, 200, { ok: true, filename: pub.filename, showId: pub.showId, version: pub.version, summary: pub.summary, author });
+          }
+          if (pathname === '/api/library/restore-version') {
+            const targetTrackId = input.trackId || input.id || '';
+            const track = targetTrackId ? await library.getTrack(targetTrackId).catch(() => null) : null;
+            const showId = input.showId || (track ? (track.showId || computeShowId(track)) : '');
+            const targetVer = Number(input.version);
+            if (!showId || !Number.isInteger(targetVer) || targetVer < 1) {
+              return json(response, 400, { error: 'Neispravan showId ili broj verzije.' });
+            }
+            const payload = await cloudSync.fetchFullShowPayload(showId, targetVer);
+            if (!payload?.timeline) return json(response, 404, { error: `Verzija v${targetVer} nije pronađena.` });
+            normalizeTimeline(payload.timeline);
+            const author = (typeof input.author === 'string' && input.author.trim()) ? input.author.trim() : 'Studio';
+            let matchedTrack = track || library.findTrackByVideo({
+              sha256: payload.track?.sha256,
+              videoId: payload.track?.videoId,
+              title: payload.track?.title
+            });
+            const existingAnalysis = matchedTrack ? await library.getAnalysis(matchedTrack.id).catch(() => null) : payload.analysis;
+            const pub = await cloudSync.publishShowSave({
+              track: matchedTrack || payload.track,
+              analysis: existingAnalysis || payload.analysis,
+              timeline: payload.timeline,
+              author,
+              clientId: input.clientId || '',
+              note: `Vraćena verzija v${targetVer}`,
+              action: 'restore',
+              forceNewVersion: true
+            });
+            if (matchedTrack) {
+              await library.saveTimeline(matchedTrack.id, payload.timeline, {
+                author,
+                updatedBy: author,
+                version: pub.version,
+                showId: pub.showId,
+                lastSummary: pub.summary
+              });
+              serverShowCache.delete(matchedTrack.id);
+              matchedTrack = await library.getTrack(matchedTrack.id);
+            }
+            sharedShowsIndexCache = null;
+            logEvent('SAVE', 'RESTORE_VERSION', { showId, restoredFrom: targetVer, newVersion: pub.version, author });
+            broadcastLive('command', { type: 'library_updated', trackId: matchedTrack?.id || null, action: 'restore_version', version: pub.version });
+            if (matchedTrack) {
+              broadcastLive('command', {
+                type: 'timeline_op',
+                trackId: matchedTrack.id,
+                op: 'replace',
+                timeline: payload.timeline,
+                label: `Vraćena verzija v${targetVer} (→ v${pub.version})`
+              });
+            }
+            return json(response, 200, {
+              ok: true,
+              track: matchedTrack,
+              timeline: payload.timeline,
+              version: pub.version,
+              restoredFrom: targetVer,
+              summary: pub.summary
+            });
           }
           if (pathname === '/api/library/install-shared-show') {
-            const safeFile = basename(String(input.filename || ''));
-            if (!safeFile.endsWith('.ledshow.json')) return json(response, 400, { error: 'Neispravan naziv .ledshow.json datoteke.' });
-            const raw = await readFile(join(sharedShowsDir, safeFile), 'utf8');
-            const bundle = decodeShowJson(raw);
-            let matched = input.targetTrackId ? await library.getTrack(input.targetTrackId).catch(() => null) : null;
+            let bundle = null;
+            let safeFile = input.filename ? basename(String(input.filename)) : '';
+            if (input.showId) {
+              bundle = await cloudSync.fetchFullShowPayload(String(input.showId), input.version ?? null);
+              if (!safeFile) safeFile = `${sanitizeFilename(bundle.track?.title || input.showId)}.ledshow.json`;
+            } else {
+              if (!safeFile.endsWith('.ledshow.json')) return json(response, 400, { error: 'Neispravan naziv .ledshow.json datoteke.' });
+              const cloudEntry = cloudSync.getByFilename(safeFile);
+              if (cloudEntry?.showId) {
+                bundle = await cloudSync.fetchFullShowPayload(cloudEntry.showId, input.version ?? null).catch(() => null);
+              }
+              if (!bundle) {
+                const raw = await readFile(join(sharedShowsDir, safeFile), 'utf8');
+                const rawObj = JSON.parse(raw);
+                const parsed = decodeShowJson(rawObj);
+                bundle = {
+                  ...parsed,
+                  showId: rawObj.showId || computeShowId(parsed.track),
+                  version: rawObj.version || 1,
+                  summary: rawObj.summary || '',
+                  audioUrl: rawObj.audioUrl || null
+                };
+              }
+            }
+            let matched = (input.targetTrackId || input.trackId)
+              ? await library.getTrack(input.targetTrackId || input.trackId).catch(() => null)
+              : null;
             if (!matched) {
               matched = library.findTrackByVideo({
                 sha256: bundle.track?.sha256,
@@ -2074,24 +3044,58 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
                 title: bundle.track?.title
               });
             }
-            if (!matched && input.downloadAudio !== false && (bundle.track?.sourceUrl || bundle.track?.videoId)) {
-              const targetUrl = bundle.track.sourceUrl || `https://www.youtube.com/watch?v=${bundle.track.videoId}`;
+            // 1. Fast direct HTTP download of exact audio file from Cloud/GitHub Release if available
+            if (!matched && input.downloadAudio !== false && bundle.audioUrl) {
+              try {
+                const audioRes = await peerFetcher(bundle.audioUrl, { signal: AbortSignal.timeout(20000) });
+                if (audioRes && audioRes.ok) {
+                  const audioBuf = Buffer.from(await audioRes.arrayBuffer());
+                  if (audioBuf.byteLength > 1024) {
+                    matched = await library.importBuffer(
+                      bundle.track?.originalName || `${bundle.track?.title || 'song'}.mp3`,
+                      audioBuf,
+                      {
+                        videoId: bundle.track?.videoId,
+                        sourceUrl: bundle.track?.sourceUrl,
+                        theme: bundle.track?.theme,
+                        author: bundle.author,
+                        updatedBy: bundle.author,
+                        version: bundle.version || 1,
+                        showId: bundle.showId
+                      }
+                    );
+                    const fullAnalysis = await library.analyzeTrack(matched.id);
+                    if (bundle.analysis?.sections?.length) {
+                      fullAnalysis.sections = bundle.analysis.sections;
+                      await library.saveAnalysis(matched.id, fullAnalysis);
+                    }
+                  }
+                }
+              } catch {}
+            }
+            // 2. Fallback to yt-dlp (by sourceUrl, videoId, or ytsearch1:<Title>)
+            if (!matched && input.downloadAudio !== false && (bundle.track?.sourceUrl || bundle.track?.videoId || bundle.track?.title)) {
+              const targetUrl = bundle.track.sourceUrl ||
+                (bundle.track.videoId ? `https://www.youtube.com/watch?v=${bundle.track.videoId}` : `ytsearch1:${bundle.track.title}`);
               let tempDir = null;
               try {
                 tempDir = await mkdtemp(join(tmpdir(), 'ledicated-shared-'));
                 const mp3Path = await ytDownloader(targetUrl, tempDir, randomUUID());
                 matched = await library.importTrack(mp3Path, bundle.track.originalName || `${bundle.track.title}.mp3`, {
                   videoId: bundle.track.videoId,
-                  sourceUrl: targetUrl,
+                  sourceUrl: bundle.track.sourceUrl,
                   theme: bundle.track.theme,
-                  author: bundle.author
+                  author: bundle.author,
+                  updatedBy: bundle.author,
+                  version: bundle.version || 1,
+                  showId: bundle.showId
                 });
                 const fullAnalysis = await library.analyzeTrack(matched.id);
                 if (bundle.analysis?.sections?.length) {
                   fullAnalysis.sections = bundle.analysis.sections;
                   await library.saveAnalysis(matched.id, fullAnalysis);
                 }
-              } finally {
+              } catch {} finally {
                 if (tempDir) await rm(tempDir, { recursive: true, force: true }).catch(() => {});
               }
             }
@@ -2102,37 +3106,107 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
                 showManifest: bundle.track
               });
             }
-            if (bundle.author) await library.updateTrack(matched.id, { author: bundle.author }).catch(() => {});
             if (bundle.analysis?.sections?.length) {
               const existingAnalysis = (await library.getAnalysis(matched.id).catch(() => null)) || bundle.analysis;
               await library.saveAnalysis(matched.id, { ...existingAnalysis, sections: bundle.analysis.sections });
             }
-            await library.saveTimeline(matched.id, bundle.timeline);
+            normalizeTimeline(bundle.timeline);
+            await library.saveTimeline(matched.id, bundle.timeline, {
+              author: bundle.author || 'Studio',
+              updatedBy: bundle.author || 'Studio',
+              version: bundle.version || 1,
+              showId: bundle.showId || computeShowId(matched),
+              lastSummary: bundle.summary || ''
+            });
             serverShowCache.delete(matched.id);
             const finalTrack = await library.getTrack(matched.id);
-            broadcastLive('command', { type: 'library_updated', trackId: finalTrack.id, action: 'install_shared' });
-            broadcastLive('command', { type: 'timeline_op', trackId: finalTrack.id, op: 'replace', timeline: bundle.timeline, label: `Show: ${finalTrack.title}` });
-            return json(response, 200, { ok: true, track: finalTrack });
+            logEvent('SAVE', 'INSTALL_SHARED_SHOW', { trackId: finalTrack.id, filename: safeFile, version: bundle.version || 1 });
+            broadcastLive('command', { type: 'library_updated', trackId: finalTrack.id, action: 'install_shared', version: bundle.version || 1 });
+            broadcastLive('command', { type: 'timeline_op', trackId: finalTrack.id, op: 'replace', timeline: bundle.timeline, label: `Show: ${finalTrack.title} (v${bundle.version || 1})` });
+            return json(response, 200, { ok: true, track: finalTrack, version: bundle.version || 1 });
           }
           if (pathname === '/api/library/analyze') {
-            if (analysisRunning) return json(response, 409, { error: 'Analiza druge pjesme već traje.' });
-            analysisRunning = true;
-            try { const analysis = await analyzeAudio(await library.getAudioPath(input.id)); await library.setAnalysis(input.id, analysis); serverShowCache.delete(input.id); return json(response, 200, { analysis }); }
-            finally { analysisRunning = false; }
+            const runAnalysis = async () => {
+              const t0 = performance.now();
+              const audioPath = await library.getAudioPath(input.id);
+              const analysis = await analyzeAudio(audioPath);
+              await library.setAnalysis(input.id, analysis);
+              serverShowCache.delete(input.id);
+              logEvent('SAVE', 'ANALYZE_COMPLETED', { trackId: input.id, bpm: analysis.bpm, durationSec: analysis.durationSec, durationMs: Math.round(performance.now() - t0) });
+              return analysis;
+            };
+            const job = analysisQueue.then(runAnalysis);
+            analysisQueue = job.catch(() => {});
+            const analysis = await job;
+            return json(response, 200, { analysis });
           }
           if (pathname === '/api/library/timeline') {
+            const t0 = performance.now();
+            if (input.timeline && typeof input.timeline === 'object') {
+              sanitizeTimelineClips(input.timeline);
+            }
             const checked = validateTimeline(input.timeline);
-            if (!checked.valid) return json(response, 400, { error: checked.errors[0] });
-            await library.saveTimeline(input.id, input.timeline);
+            if (!checked.valid) {
+              logEvent('VALIDATION_ERROR', 'TIMELINE_SAVE_REJECTED', {
+                trackId: input.id || null,
+                errors: checked.errors.slice(0, 5),
+                clientId: input.clientId || null,
+                bytes: bodyBytes
+              });
+              return json(response, 400, { error: checked.errors[0], errors: checked.errors });
+            }
+            const track = await library.getTrack(input.id);
+            const analysis = await library.getAnalysis(input.id).catch(() => null);
+            const author = (typeof input.author === 'string' && input.author.trim()) ? input.author.trim() : (track.updatedBy || track.author || 'Studio');
+            const pub = await cloudSync.publishShowSave({
+              track,
+              analysis,
+              timeline: input.timeline,
+              author,
+              clientId: input.clientId || '',
+              note: input.note || '',
+              action: 'save',
+              forceNewVersion: Boolean(input.forceVersion)
+            });
+            await library.saveTimeline(input.id, input.timeline, {
+              author,
+              updatedBy: author,
+              version: pub.version,
+              showId: pub.showId,
+              lastSummary: pub.summary
+            });
             serverShowCache.delete(input.id);
+            sharedShowsIndexCache = null;
+            const layerCount = input.timeline.layers?.length || 0;
+            const clipCount = (input.timeline.layers || []).reduce((sum, l) => sum + (l.clips?.length || 0), 0);
+            logEvent('SAVE', 'TIMELINE_SAVED', {
+              trackId: input.id,
+              version: pub.version,
+              showId: pub.showId,
+              layerCount,
+              clipCount,
+              bytes: bodyBytes,
+              durationMs: Math.round(performance.now() - t0),
+              clientId: input.clientId || null,
+              author
+            });
             broadcastLive('command', {
               type: 'timeline_updated',
               trackId: input.id,
+              version: pub.version,
+              summary: pub.summary,
               clientId: input.clientId || null,
-              author: input.author || null,
+              author,
               timeline: input.timeline
+            }, { excludeClientId: input.clientId || null });
+            return json(response, 200, {
+              ok: true,
+              version: pub.version,
+              showId: pub.showId,
+              summary: pub.summary,
+              updatedBy: author,
+              updatedAt: pub.updatedAt
             });
-            return json(response, 200, { ok: true });
           }
           if (pathname === '/api/library/sections') {
             if (!Array.isArray(input.sections)) return json(response, 400, { error: 'Dionice moraju biti polje.' });
@@ -2144,6 +3218,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             const updatedAnalysis = { ...existingAnalysis, sections: input.sections };
             await library.saveAnalysis(input.id, updatedAnalysis);
             serverShowCache.delete(input.id);
+            logEvent('SAVE', 'SECTIONS_SAVED', { trackId: input.id, sectionCount: input.sections.length });
             return json(response, 200, { ok: true, sections: input.sections });
           }
           if (pathname === '/api/library/track') {
@@ -2163,7 +3238,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         return json(response, 404, { error: 'Nepoznat API biblioteke.' });
       }
       if (pathname.startsWith('/api/')) {
-        if (pathname === '/api/live/stream' && request.method === 'GET') {
+        if ((pathname === '/api/live/stream' || pathname === '/api/live/events') && request.method === 'GET') {
           response.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache, no-transform',
@@ -2171,14 +3246,30 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             'X-Content-Type-Options': 'nosniff'
           });
           response.write(': connected\n\n');
-          liveClients.add(response);
           const clientId = parsedUrl.searchParams.get('clientId') || '';
           const clientName = parsedUrl.searchParams.get('name') || '';
-          if (clientId) {
+          const isCompanionClient = /^(ios-|iphone-)/.test(clientId) || parsedUrl.searchParams.get('role') === 'companion' || /Pad/i.test(clientName);
+          response.clientId = clientId || null;
+          response.isCompanionClient = isCompanionClient;
+          liveClients.add(response);
+          if (clientId && !isCompanionClient) {
             touchLanPeer(clientId, { name: clientName, sseRes: response }, request);
             broadcastLanPresence();
           } else {
+            if (clientId && lanPeers.has(clientId)) {
+              lanPeers.delete(clientId);
+            }
+            if (isCompanionClient) {
+              touchCompanionDevice(clientId || 'ios-pad', {
+                name: clientName || 'iPhone Pad',
+                latencyMs: parsedUrl.searchParams.get('latencyMs'),
+                sseConnected: true
+              }, request);
+              broadcastLanPresence();
+            }
             response.write(`event: command\ndata: ${JSON.stringify({ type: 'lan_presence', ...getLanStatus() })}\n\n`);
+            const snap = getPadsSnapshot();
+            response.write(`event: command\ndata: ${JSON.stringify({ type: 'pads_sync', pads: snap.pads, quantize: snap.quantize, activePads: snap.activePads, heldPads: snap.heldPads })}\n\n`);
           }
           request.on('close', () => {
             liveClients.delete(response);
@@ -2186,9 +3277,23 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               const peer = lanPeers.get(clientId);
               if (peer.sseRes === response) peer.sseRes = null;
               broadcastLanPresence();
+            } else if (isCompanionClient) {
+              if (clientId && companionDevices.has(clientId)) {
+                companionDevices.delete(clientId);
+              }
+              broadcastLanPresence();
             }
           });
           return;
+        }
+        if (pathname === '/api/live/state' && request.method === 'GET') {
+          return json(response, 200, {
+            ok: true,
+            ...(latestLiveState || {}),
+            color: serverPerformDesk.color,
+            intensity: serverPerformDesk.intensity,
+            lan: getLanStatus()
+          });
         }
         if (pathname === '/api/live/status' && request.method === 'GET') {
           return json(response, 200, {
@@ -2214,25 +3319,39 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           return json(response, 200, { ok: true, ...getLanStatus() });
         }
         if (pathname === '/api/live/frame' && request.method === 'GET') {
-          await library.init();
-          const trackId = parsedUrl.searchParams.get('trackId') || latestLiveState?.trackId || (await library.list())[0]?.id;
           try {
-            const timeSec = parsedUrl.searchParams.has('time') ? Number(parsedUrl.searchParams.get('time')) : (latestLiveState?.timeSec || 0);
-            let frame;
-            let analysis = null;
-            if (trackId) {
-              const timeline = await library.getTimeline(trackId);
-              analysis = await library.getAnalysis(trackId).catch(() => null);
-              frame = renderTimelineFrame(timeline, analysis, timeSec);
-            } else {
-              frame = {
-                bars: Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])]))
-              };
-            }
+            const hasExplicitTime = parsedUrl.searchParams.has('time');
+            const hasExplicitTrack = parsedUrl.searchParams.has('trackId');
             const perfCtx = getServerPerfContext();
             serverPerformDesk.tick(perfCtx);
-            if (serverPerformDesk.active.size > 0) {
-              frame = serverPerformDesk.render(frame, perfCtx.clockTime, perfCtx.bpm, 1, analysis, perfCtx.songTime);
+            let timeSec = hasExplicitTime ? Number(parsedUrl.searchParams.get('time')) : perfCtx.songTime;
+            let trackId = parsedUrl.searchParams.get('trackId') || latestLiveState?.trackId || null;
+            let frame = null;
+
+            if (!hasExplicitTime && !hasExplicitTrack && lastDispatchedBars && (performance.now() - lastDispatchedAt < 180)) {
+              frame = { bars: lastDispatchedBars };
+            } else {
+              await library.init();
+              if (!trackId) trackId = (await library.list())[0]?.id || null;
+              let analysis = null;
+              if (trackId) {
+                const cached = await getCachedShow(trackId);
+                if (cached?.timeline) {
+                  analysis = cached.analysis;
+                  frame = renderTimelineFrame(cached.timeline, analysis, timeSec, null, true);
+                } else {
+                  const timeline = await library.getTimeline(trackId);
+                  analysis = await library.getAnalysis(trackId).catch(() => null);
+                  frame = renderTimelineFrame(timeline, analysis, timeSec);
+                }
+              } else {
+                frame = {
+                  bars: Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])]))
+                };
+              }
+              if (serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0) {
+                frame = serverPerformDesk.render(frame, perfCtx.clockTime, perfCtx.bpm, 1, analysis, perfCtx.songTime);
+              }
             }
             let sumR = 0, sumG = 0, sumB = 0, sumW = 0, count = 0;
             for (const barId of BAR_IDS) {
@@ -2257,34 +3376,98 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           }
         }
         if (request.method === 'GET' && pathname === '/api/logs') {
-          const limit = Math.max(1, Math.min(1000, Number(parsedUrl.searchParams.get('limit')) || 150));
+          const limit = Math.max(1, Math.min(2000, Number(parsedUrl.searchParams.get('limit') || parsedUrl.searchParams.get('lines')) || 150));
           const format = parsedUrl.searchParams.get('format') || 'json';
+          const categoryFilter = (parsedUrl.searchParams.get('category') || '').trim().toUpperCase();
+          const searchFilter = (parsedUrl.searchParams.get('search') || '').trim().toLowerCase();
+          const catList = categoryFilter ? categoryFilter.split(',').map(s => s.trim()).filter(Boolean) : [];
           let diskTail = [];
           try {
-            const raw = await readFile(LOG_FILE_PATH, 'utf8');
-            diskTail = raw.trim().split('\n').filter(Boolean).slice(-limit);
+            const raw = await readFile(logFilePath, 'utf8');
+            let lines = raw.trim().split('\n').filter(Boolean);
+            if (catList.length) {
+              lines = lines.filter(l => catList.some(c => l.toUpperCase().includes(`[${c}]`) || l.toUpperCase().includes(c)));
+            }
+            if (searchFilter) {
+              lines = lines.filter(l => l.toLowerCase().includes(searchFilter));
+            }
+            diskTail = lines.slice(-limit);
           } catch {}
           if (format === 'text') {
             response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
             return response.end(`${diskTail.join('\n')}\n`);
           }
+          let filteredRecent = recentLogs;
+          if (catList.length) {
+            filteredRecent = filteredRecent.filter(e => catList.some(c => String(e.category || '').toUpperCase().includes(c) || String(e.action || '').toUpperCase().includes(c)));
+          }
+          if (searchFilter) {
+            filteredRecent = filteredRecent.filter(e => JSON.stringify(e).toLowerCase().includes(searchFilter));
+          }
+          const errorLogs = recentLogs.filter(e => /ERROR|CRASH|FAIL|REJECT/i.test(`${e.category} ${e.action}`)).slice(-50);
           return json(response, 200, {
             ok: true,
-            logFile: LOG_FILE_PATH,
-            count: recentLogs.length,
-            recent: recentLogs.slice(-limit),
+            logFile: logFilePath,
+            count: filteredRecent.length,
+            recent: filteredRecent.slice(-limit),
+            errors: errorLogs,
             diskLines: diskTail
           });
         }
         if (request.method === 'GET' && pathname === '/api/state') return json(response, 200, state());
-        if (request.method === 'GET' && pathname === '/api/profiles') return json(response, 200, { profiles: HARDWARE_PROFILES.map(profile => ({ id: profile.id, label: profile.label, description: profile.description, config: defaultConfig(profile.id) })) });
-        if (request.method !== 'POST') return json(response, 405, { error: 'Metoda nije podržana.' });
-        let body = '';
-        for await (const chunk of request) {
-          body += chunk;
-          if (Buffer.byteLength(body) > 250000) return json(response, 413, { error: 'Zahtjev je prevelik.' });
+        if (request.method === 'GET' && pathname === '/api/ambient-light') {
+          const forceProbe = parsedUrl.searchParams.get('probe') !== '0';
+          return json(response, 200, await queryAmbientLightStatus({ forceProbe }));
         }
-        const input = JSON.parse(body || '{}');
+        if (request.method === 'GET' && pathname === '/api/profiles') return json(response, 200, { profiles: HARDWARE_PROFILES.map(profile => ({ id: profile.id, label: profile.label, description: profile.description, config: defaultConfig(profile.id) })) });
+        if (request.method === 'GET' && pathname === '/api/generators') {
+          await mkdir(generatorsDir, { recursive: true }).catch(() => {});
+          const files = await readdir(generatorsDir).catch(() => []);
+          const shared = [];
+          for (const file of files) {
+            if (!file.endsWith('.generator.json')) continue;
+            try {
+              const raw = await readFile(join(generatorsDir, file), 'utf8');
+              const parsed = JSON.parse(raw);
+              const check = validateGeneratorSpec(parsed);
+              if (check.valid) {
+                shared.push({ ...parsed, filename: file, builtin: false, gitShared: true });
+              }
+            } catch {}
+          }
+          return json(response, 200, {
+            ok: true,
+            builtin: BUILT_IN_GENERATORS,
+            shared,
+            generatorsDir
+          });
+        }
+        if (request.method !== 'POST') return json(response, 405, { error: 'Metoda nije podržana.' });
+        const { data: input } = await readJsonBody(request, 16 * 1024 * 1024);
+        if (pathname === '/api/generators/save') {
+          await mkdir(generatorsDir, { recursive: true });
+          const spec = serializeGeneratorSpec(input.meta || input, input.config || input);
+          const check = validateGeneratorSpec(spec);
+          if (!check.valid) {
+            return json(response, 400, { ok: false, error: check.errors.join(' ') });
+          }
+          const filename = `${sanitizeFilename(spec.id)}.generator.json`;
+          const targetPath = join(generatorsDir, filename);
+          await writeFile(targetPath, `${JSON.stringify(spec, null, 2)}\n`, 'utf8');
+          logEvent('SAVE', 'GENERATOR_SAVED', { id: spec.id, name: spec.name, filename });
+          return json(response, 200, {
+            ok: true,
+            generator: { ...spec, filename, builtin: false, gitShared: true },
+            path: `studio-light-baseline/app/generators/${filename}`
+          });
+        }
+        if (pathname === '/api/generators/delete') {
+          const rawId = String(input.id || input.filename || '').replace(/\.generator\.json$/i, '');
+          const filename = `${sanitizeFilename(rawId)}.generator.json`;
+          const targetPath = join(generatorsDir, filename);
+          await rm(targetPath, { force: true });
+          return json(response, 200, { ok: true, deleted: filename });
+        }
         if (pathname === '/api/live/pads') {
           if (Array.isArray(input.pads)) {
             for (let idx = 0; idx < 12; idx++) {
@@ -2323,6 +3506,17 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             const updated = lanPeers.get(String(input.clientId));
             const nextPeerSnap = updated ? `${updated.name}|${updated.trackId}|${updated.isPlaying}|${updated.hasActivePads}` : '';
             if (prevPeerSnap !== nextPeerSnap || prevOwner !== stageOwnerId) broadcastLanPresence();
+            cloudSync.updatePresence({
+              clientId: String(input.clientId),
+              name: input.clientName || updated?.name || 'Kolega',
+              activeShowId: input.showId || (input.trackTitle ? computeShowId({ title: input.trackTitle }) : ''),
+              activeShowTitle: input.trackTitle || '',
+              status: input.isPlaying ? 'playing' : 'editing',
+              isPlaying: Boolean(input.isPlaying),
+              version: Number(input.version) || 1,
+              bpm: Number(input.bpm) || 120,
+              timeSec: Number(input.timeSec) || 0
+            }).catch(() => {});
           }
           const isStageOwner = canClientDriveStage(input.clientId);
           if (isStageOwner) {
@@ -2332,6 +3526,19 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             if (Array.isArray(input.pads)) {
               for (let idx = 0; idx < 12; idx++) {
                 syncServerPadSlot(idx, input.pads[idx]);
+              }
+              const nextPadsJson = JSON.stringify(input.pads);
+              if (nextPadsJson !== lastSyncedDawPadsJson) {
+                lastSyncedDawPadsJson = nextPadsJson;
+                const snap = getPadsSnapshot();
+                broadcastLive('command', {
+                  type: 'pads_sync',
+                  clientId: input.clientId || null,
+                  pads: snap.pads,
+                  quantize: snap.quantize,
+                  activePads: snap.activePads,
+                  heldPads: snap.heldPads
+                });
               }
             }
             if (typeof input.quantize === 'boolean') {
@@ -2344,6 +3551,8 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             if (input.takeover === true || (!wasActive && nowActive && !liveControl.state.blackout)) {
               activateShowOutput({ forceWake: true, broadcast: true });
               broadcastLanPresence({ reason: 'daw_play' });
+            } else if (wasActive && !nowActive && serverPerformDesk.active.size === 0 && serverPerformDesk.touches.size === 0 && !liveControl.state.blackout) {
+              restoreWledAfterShowStop('daw_stop');
             }
           }
           const lanStat = getLanStatus();
@@ -2460,6 +3669,20 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           return json(response, 200, { ok: true, track: finalTrack });
         }
         if (pathname === '/api/live/command') {
+          if (isCompanionPadSource(input.source) || /^(ios-|iphone-)/.test(String(input.clientId || ''))) {
+            touchCompanionDevice(input.clientId || 'ios-pad', {
+              name: input.clientName || 'iPhone Pad',
+              latencyMs: input.latencyMs
+            }, request);
+            if (input.type === 'companion_ping') {
+              broadcastLanPresence();
+              return json(response, 200, { ok: true, serverTime: Date.now() });
+            }
+          }
+          if (input.type === 'ambient_light') {
+            const res = await applyAmbientLightState(input);
+            return json(response, 200, res);
+          }
           if (input.type === 'timeline_op') {
             await library.init();
             const trackId = input.trackId || latestLiveState?.trackId || (await library.list())[0]?.id;
@@ -2467,19 +3690,35 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             let timeline;
             let result = null;
             if (input.timeline && !input.op) {
+              normalizeTimeline(input.timeline);
               const check = validateTimeline(input.timeline);
-              if (!check.valid) return json(response, 400, { error: check.errors[0] });
+              if (!check.valid) {
+                logEvent('VALIDATION_ERROR', 'REMOTE_TIMELINE_REPLACE_REJECTED', { trackId, errors: check.errors.slice(0, 5) });
+                return json(response, 400, { error: check.errors[0], errors: check.errors });
+              }
               timeline = input.timeline;
               result = { ok: true, layerCount: timeline.layers.length, clipCount: timeline.layers.reduce((sum, l) => sum + l.clips.length, 0) };
             } else {
               timeline = await library.getTimeline(trackId);
               const analysis = await library.getAnalysis(trackId).catch(() => null);
+              if (!timeline && analysis) timeline = createAutoShow(analysis);
+              if (!timeline) return json(response, 404, { error: 'Pjesma još nema vremensku traku.' });
               result = applyTimelineOp(timeline, input.op, input.args, analysis);
+              normalizeTimeline(timeline);
               const check = validateTimeline(timeline);
-              if (!check.valid) return json(response, 400, { error: check.errors[0] });
+              if (!check.valid) {
+                logEvent('VALIDATION_ERROR', 'REMOTE_TIMELINE_OP_REJECTED', { trackId, op: input.op, errors: check.errors.slice(0, 5) });
+                return json(response, 400, { error: check.errors[0], errors: check.errors });
+              }
             }
             await library.saveTimeline(trackId, timeline);
             serverShowCache.delete(trackId);
+            logEvent('SAVE', 'REMOTE_TIMELINE_OP', {
+              trackId,
+              op: input.op || 'replace',
+              layerCount: timeline.layers?.length || 0,
+              clipCount: (timeline.layers || []).reduce((sum, l) => sum + (l.clips?.length || 0), 0)
+            });
             broadcastLive('command', { type: 'timeline_op', trackId, op: input.op || 'replace', args: input.args, timeline, label: input.label || input.op || 'Učitavanje showa' });
             return json(response, 200, { ok: true, trackId, result, clientCount: liveClients.size });
           }
@@ -2488,17 +3727,89 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             if (testRunning) { testAbort = true; stopTest?.(); await testSettled; }
             await disarm('Blackout');
           }
+          if (input.type === 'select_track' || input.type === 'play_show') {
+            await library.init();
+            const targetTrackId = String(input.trackId || '').trim();
+            if (targetTrackId) {
+              const track = await library.getTrack(targetTrackId).catch(() => null);
+              const show = await getCachedShow(targetTrackId).catch(() => null);
+              const wantPlay = Boolean(input.autoPlay || input.type === 'play_show');
+              liveControl.state.trackId = targetTrackId;
+              latestLiveState = {
+                ...(latestLiveState || {}),
+                connected: true,
+                trackId: targetTrackId,
+                trackTitle: track?.title || track?.originalName || latestLiveState?.trackTitle || 'Light Show',
+                bpm: track?.bpm || show?.analysis?.bpm || show?.timeline?.bpm || latestLiveState?.bpm || 120,
+                durationSec: track?.durationSec || show?.analysis?.durationSec || show?.timeline?.durationSec || latestLiveState?.durationSec || 180,
+                timeSec: Number.isFinite(input.timeSec) ? Math.max(0, Number(input.timeSec)) : 0,
+                isPlaying: wantPlay,
+                timestamp: Date.now()
+              };
+              if (wantPlay && !liveControl.state.blackout) {
+                activateShowOutput({ forceWake: true, clearBlackout: true, broadcast: true, source: 'ios-pad' });
+              }
+            }
+          }
+          if (input.type === 'transport' || input.type === 'play' || input.type === 'pause' || input.type === 'stop' || input.type === 'seek') {
+            const action = input.type === 'transport' ? input.action : input.type;
+            if (latestLiveState) {
+              const elapsedSec = latestLiveState.isPlaying
+                ? Math.max(0, (Date.now() - (latestLiveState.timestamp || Date.now())) / 1000)
+                : 0;
+              const currentSec = Math.max(0, (Number(latestLiveState.timeSec) || 0) + elapsedSec);
+              if (action === 'play') {
+                latestLiveState = { ...latestLiveState, isPlaying: true, timeSec: currentSec, timestamp: Date.now() };
+                if (!liveControl.state.blackout) {
+                  activateShowOutput({ forceWake: true, clearBlackout: true, broadcast: true, source: 'ios-pad' });
+                }
+              } else if (action === 'pause') {
+                latestLiveState = { ...latestLiveState, isPlaying: false, timeSec: currentSec, timestamp: Date.now() };
+                if (serverPerformDesk.active.size === 0 && serverPerformDesk.touches.size === 0 && !liveControl.state.blackout) {
+                  restoreWledAfterShowStop('transport_pause');
+                }
+              } else if (action === 'stop') {
+                latestLiveState = { ...latestLiveState, isPlaying: false, timeSec: 0, timestamp: Date.now() };
+                if (serverPerformDesk.active.size === 0 && serverPerformDesk.touches.size === 0 && !liveControl.state.blackout) {
+                  restoreWledAfterShowStop('transport_stop');
+                }
+              } else if (action === 'seek' && Number.isFinite(input.timeSec)) {
+                latestLiveState = { ...latestLiveState, timeSec: Math.max(0, Number(input.timeSec)), timestamp: Date.now() };
+              }
+            }
+          }
           if (input.type === 'live_pad') {
             const padResult = applyServerPadCommand(input);
-            if (input.clientId) {
-              touchLanPeer(String(input.clientId).trim(), {
-                name: input.clientName || 'LEDicated Pad',
-                source: input.source || 'pad',
-                hasActivePads: serverPerformDesk.active.size > 0
-              }, request);
+            if (input.clientId && lanPeers.has(String(input.clientId).trim())) {
+              const existingPeer = lanPeers.get(String(input.clientId).trim());
+              if (existingPeer && (existingPeer.source === 'ios-pad' || existingPeer.source === 'pad')) {
+                lanPeers.delete(String(input.clientId).trim());
+                broadcastLanPresence();
+              }
             }
-            if (serverPerformDesk.active.size > 0 && !liveControl.state.blackout) {
+            if ((serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0) && !liveControl.state.blackout) {
               activateShowOutput({ forceWake: true, broadcast: true });
+              if (input.action === 'touch_down' || input.action === 'touch_up' || padResult === 'snapped' || padResult === 'strobe') {
+                lastAcceptedFrame = -Infinity;
+              }
+              const perfCtx = getServerPerfContext();
+              const hasFreshBase = lastBaseBars && (performance.now() - lastBaseBarsAt < 450);
+              const baseFrame = hasFreshBase
+                ? { bars: lastBaseBars }
+                : { bars: Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])])) };
+              const rendered = serverPerformDesk.render(baseFrame, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime);
+              const scale = clampVal((latestLiveState?.master ?? liveControl.state.master ?? 70) / 100, 0, 1);
+              hadServerPadsActive = true;
+              sendBarsToWled(rendered.bars, scale, 'companion_pads_instant').catch(() => {});
+            } else if (hadServerPadsActive && serverPerformDesk.active.size === 0 && serverPerformDesk.touches.size === 0 && !liveControl.state.blackout) {
+              hadServerPadsActive = false;
+              lastAcceptedFrame = -Infinity;
+              const hasFreshBase = lastBaseBars && (performance.now() - lastBaseBarsAt < 450);
+              const clearBars = hasFreshBase
+                ? lastBaseBars
+                : Object.fromEntries(BAR_IDS.map(barId => [barId, Array.from({ length: PIXELS_PER_BAR }, () => [0, 0, 0, 0])]));
+              const scale = clampVal((latestLiveState?.master ?? liveControl.state.master ?? 70) / 100, 0, 1);
+              sendBarsToWled(clearBars, scale, 'companion_pads_clear').catch(() => {});
             }
             broadcastLive('command', input);
             return json(response, 200, {
@@ -2569,10 +3880,16 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           return json(response, 200, state());
         }
         if (pathname === '/api/logs/event') {
+          const rawDetails = (typeof input.details === 'object' && input.details) || (typeof input.data === 'object' && input.data) || {};
+          const details = { ...rawDetails };
+          if (typeof input.message === 'string' && !details.message) details.message = input.message.slice(0, 500);
+          if (typeof input.stack === 'string' && !details.stack) details.stack = input.stack.slice(0, 1000);
+          if (typeof input.trackId === 'string' && !details.trackId) details.trackId = input.trackId;
+          if (typeof input.level === 'string' && !details.level) details.level = input.level;
           logEvent(
-            String(input.category || 'CLIENT').slice(0, 24).toUpperCase(),
-            String(input.action || 'EVENT').slice(0, 48),
-            typeof input.details === 'object' && input.details ? input.details : {}
+            String(input.category || 'CLIENT').slice(0, 32).toUpperCase(),
+            String(input.action || input.event || 'EVENT').slice(0, 64),
+            details
           );
           return json(response, 200, { ok: true });
         }
@@ -2580,10 +3897,15 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           const result = await autoConnect({ allowDiscovery: input.allowDiscovery !== false, forceTakeover: Boolean(input.forceTakeover) });
           return json(response, 200, result);
         }
+        if (pathname === '/api/ambient-light') {
+          const result = await applyAmbientLightState(input);
+          return json(response, 200, result);
+        }
         if (pathname === '/api/mode') {
           const targetMode = input.mode === 'ambient' ? 'ambient' : 'show';
           const reqSource = String(input.source || 'api_mode').slice(0, 32);
           if (targetMode === 'ambient') {
+            syncSavedAmbientFields(input);
             activateAmbientOutput({ restorePresetOnE8: input.restorePreset !== false, broadcast: true, source: reqSource });
           } else {
             if (input.clientId) {
@@ -2622,7 +3944,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               let actual;
               try { actual = await probe(node.host, { includeBuses: false }); }
               catch { return json(response, 409, { error: `${node.id} nije dostupan. Pokrenite ponovno traženje WLED-a.` }); }
-              if (actual.mac !== node.mac) return json(response, 409, { error: `${node.id} na spremljenoj IP adresi više nije isti WLED uređaj. Pokrenite ponovno traženje.` });
+              if (actual.mac && actual.mac !== node.mac) return json(response, 409, { error: `${node.id} na spremljenoj IP adresi više nije isti WLED uređaj. Pokrenite ponovno traženje.` });
               wakeWled(node.host);
             }
             for (const node of activeNodes.filter(item => !item.mac)) {
@@ -2659,7 +3981,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             let actual;
             try { actual = await probe(node.host, { includeBuses: false }); }
             catch { return json(response, 409, { error: `${node.id} ne odgovara na spremljenoj IP adresi.` }); }
-            if (actual.mac !== node.mac) return json(response, 409, { error: `${node.id} na spremljenoj IP adresi više nije isti WLED uređaj.` });
+            if (actual.mac && actual.mac !== node.mac) return json(response, 409, { error: `${node.id} na spremljenoj IP adresi više nije isti WLED uređaj.` });
           }
           const routes = cachedNodeRoutes.get(node.id) || routesForNode(config, node.id);
           const channels = config.transport === 'rgbw' ? 4 : 3;
@@ -2689,7 +4011,27 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (input.clientId) {
             touchLanPeer(input.clientId, { name: input.clientName }, request);
           }
+          const perfCtx = getServerPerfContext();
+          serverPerformDesk.tick(perfCtx);
+          const effectiveMaster = latestLiveState?.master ?? liveControl.state.master ?? 35;
+          const hasValidBars = Boolean(input.bars && Object.keys(input.bars).length === 9);
+          const unscaledBaseBars = hasValidBars
+            ? ((input.previewBars && Object.keys(input.previewBars).length === 9)
+                ? input.previewBars
+                : unscaleBarsForPreview(input.bars, effectiveMaster))
+            : null;
+          if (unscaledBaseBars && canClientDriveStage(input.clientId)) {
+            lastBaseBars = unscaledBaseBars;
+            lastBaseBarsAt = performance.now();
+          }
           if (outputMode === 'ambient') {
+            if (unscaledBaseBars && canClientDriveStage(input.clientId)) {
+              let companionBars = unscaledBaseBars;
+              if (serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0) {
+                companionBars = serverPerformDesk.render({ bars: unscaledBaseBars }, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime).bars;
+              }
+              pushFrameToCompanionClients(companionBars, performance.now(), { isPreScaled: false });
+            }
             return json(response, 200, {
               ok: true,
               skipped: 'ambient_mode',
@@ -2710,15 +4052,36 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               stageState: lanStat.stageState
             });
           }
-          if (!armed) return json(response, 409, { error: 'Izlaz je ugašen.' });
-          if (!input.bars || Object.keys(input.bars).length !== 9) throw new Error('Kadar mora sadržavati svih 9 traka.');
+          if (!armed) {
+            if (unscaledBaseBars) {
+              let companionBars = unscaledBaseBars;
+              if (serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0) {
+                companionBars = serverPerformDesk.render({ bars: unscaledBaseBars }, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime).bars;
+              }
+              pushFrameToCompanionClients(companionBars, performance.now(), { isPreScaled: false });
+            }
+            return json(response, 409, { error: 'Izlaz je ugašen.' });
+          }
+          if (!hasValidBars) throw new Error('Kadar mora sadržavati svih 9 traka.');
+          let effectiveBars = input.bars;
+          let companionBars = unscaledBaseBars || input.bars;
+          if (serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0) {
+            const browserActiveSet = new Set(Array.isArray(latestLiveState?.activePads) ? latestLiveState.activePads : []);
+            const needsServerOverlay =
+              serverPerformDesk.touches.size > 0 ||
+              [...serverPerformDesk.active.keys()].some(k => !browserActiveSet.has(k));
+            if (needsServerOverlay) {
+              effectiveBars = serverPerformDesk.render({ bars: input.bars }, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime).bars;
+              companionBars = serverPerformDesk.render({ bars: companionBars }, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime).bars;
+            }
+          }
           const values = new Map(config.nodes.map(node => [node.id, []]));
           let hasNonZeroChannel = false;
           for (const node of config.nodes) {
             const routes = cachedNodeRoutes.get(node.id) || routesForNode(config, node.id);
             const nodeValues = values.get(node.id);
             for (const route of routes) {
-              const rawPixels = input.bars[route.bar];
+              const rawPixels = effectiveBars[route.bar];
               if (!Array.isArray(rawPixels) || rawPixels.length !== 12) throw new Error(`Kadar trake ${route.bar} mora imati 12 uzoraka.`);
               const pixels = (config.profile === 'e8-columns' && route.bar === 'C1')
                 ? Array.from({ length: 12 }, () => [0, 0, 0, 0])
@@ -2735,14 +4098,21 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               }
             }
           }
+          const cid = input.clientId ? String(input.clientId).trim() : '';
+          const peer = cid ? lanPeers.get(cid) : null;
+          const peerIdle = (peer ? (!peer.isPlaying && !peer.hasActivePads) : (!latestLiveState?.isPlaying && !(latestLiveState?.activePads?.length))) && serverPerformDesk.active.size === 0 && serverPerformDesk.touches.size === 0;
           if (!hasNonZeroChannel && config.profile === 'e8-columns' && !liveControl.state.blackout) {
-            const cid = input.clientId ? String(input.clientId).trim() : '';
-            const peer = cid ? lanPeers.get(cid) : null;
-            const peerIdle = peer ? (!peer.isPlaying && !peer.hasActivePads) : (!latestLiveState?.isPlaying && !(latestLiveState?.activePads?.length));
             if (peerIdle && cid) {
               lastFrame = performance.now();
+              pushFrameToCompanionClients(companionBars, lastFrame, { isPreScaled: false });
+              if (wledShowCarrierAwake && framesSentSinceArm > 0) {
+                restoreWledAfterShowStop('idle_black_frame');
+              }
               return json(response, 200, { ok: true, skipped: 'idle_black_frame', isStageOwner: true, stageOwnerId });
             }
+          }
+          if (!wledShowCarrierAwake && !liveControl.state.blackout && (hasNonZeroChannel || !peerIdle)) {
+            for (const node of config.nodes.filter(n => n.host)) wakeWled(node.host);
           }
           const now = performance.now();
           if (now - lastAcceptedFrame < minFrameMs) return json(response, 429, { error: 'Najviše 120 kadrova u sekundi.' });
@@ -2753,6 +4123,9 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           lastFrame = now;
           lastClientFrame = now;
           lastAcceptedFrame = now;
+          lastDispatchedBars = effectiveBars;
+          lastDispatchedAt = now;
+          pushFrameToCompanionClients(companionBars, now, { isPreScaled: false });
           await Promise.all(config.nodes.filter(node => node.host).map(node => send(node.host, values.get(node.id))));
           return json(response, 200, { ok: true, isStageOwner: true, stageOwnerId });
         }
@@ -2763,7 +4136,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
         response.writeHead(204, { 'Cache-Control': 'public, max-age=86400' });
         return response.end();
       }
-      const allowed = new Set(['/', '/index.html', '/classic.html', '/pad', '/pad.html', '/pad.css', '/pad.mjs', '/manifest.webmanifest', '/assets/pad-icon.svg', '/daw.css', '/hardware-settings.css', '/hardware-topology.mjs', '/daw.mjs', '/daw-state.mjs', '/daw-remote.mjs', '/daw-ui.mjs', '/daw-playlist.mjs', '/daw-editor.mjs', '/daw-mixer.mjs', '/daw-stems.mjs', '/daw-live.mjs', '/daw-performance.mjs', '/live-performance-state.mjs', '/live-session-recorder.mjs', '/daw-output.mjs', '/daw-browser.mjs', '/daw-driver.mjs', '/show-bundle.mjs', '/audio-spectrum.mjs', '/audio-sections.mjs', '/gemini-director.mjs', '/ui.mjs', '/engine.mjs', '/timeline.mjs', '/show-engine.mjs', '/timeline-viewport.mjs', '/mapping.mjs', '/led-preview.mjs', '/tooltips.mjs', '/project-ui.mjs', '/style.css', '/studio.css', '/assets/stage-background.png']);
+      const allowed = new Set(['/', '/index.html', '/classic.html', '/pad', '/pad.html', '/pad.css', '/pad.mjs', '/manifest.webmanifest', '/assets/pad-icon.svg', '/daw.css', '/hardware-settings.css', '/hardware-topology.mjs', '/daw.mjs', '/daw-autoshow.mjs', '/daw-state.mjs', '/daw-remote.mjs', '/daw-ui.mjs', '/daw-playlist.mjs', '/daw-editor.mjs', '/daw-mixer.mjs', '/daw-stems.mjs', '/daw-live.mjs', '/daw-performance.mjs', '/live-performance-state.mjs', '/live-session-recorder.mjs', '/daw-output.mjs', '/daw-browser.mjs', '/daw-driver.mjs', '/show-bundle.mjs', '/show-generators.mjs', '/timeline-contrast.mjs', '/audio-spectrum.mjs', '/audio-sections.mjs', '/gemini-director.mjs', '/ui.mjs', '/engine.mjs', '/timeline.mjs', '/show-engine.mjs', '/timeline-viewport.mjs', '/mapping.mjs', '/led-preview.mjs', '/tooltips.mjs', '/project-ui.mjs', '/style.css', '/studio.css', '/assets/stage-background.png']);
       if (!allowed.has(pathname)) return json(response, 404, { error: 'Datoteka ne postoji.' });
       const filename = pathname === '/' ? 'index.html' : (pathname === '/pad' ? 'pad.html' : pathname.slice(1));
       const data = await readFile(resolve(ROOT, filename));
@@ -2772,9 +4145,33 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
       response.end(data);
     } catch (error) {
       if (pathname === '/api/frame' && error.code) await disarm('Greška izlaza').catch(() => {});
-      json(response, 400, { error: error.message });
+      const status = error.statusCode || 400;
+      logEvent('API_ERROR', `${request.method} ${pathname}`, {
+        status,
+        error: error.message,
+        ...(error.stack ? { stack: String(error.stack).split('\n').slice(0, 4).join(' | ') } : {})
+      });
+      json(response, status, { error: error.message });
     }
   });
+  let devWatcher = null;
+  let devReloadDebounce = null;
+  try {
+    devWatcher = fsWatch(ROOT, { persistent: false }, (_eventType, filename) => {
+      if (!filename) return;
+      if (/^(pad\.(html|css|mjs)|manifest\.webmanifest|live-performance-state\.mjs)$/.test(filename)) {
+        clearTimeout(devReloadDebounce);
+        devReloadDebounce = setTimeout(() => {
+          broadcastLive('command', {
+            type: 'dev_reload',
+            file: filename,
+            ts: Date.now()
+          });
+        }, 80);
+      }
+    });
+  } catch {}
+
   return {
     server,
     state,
@@ -2791,8 +4188,11 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     async close() {
       if (closing) return;
       closing = true;
+      clearTimeout(devReloadDebounce);
+      try { devWatcher?.close?.(); } catch {}
       clearInterval(renderTimer);
       clearInterval(timer);
+      cloudSync.stopPolling();
       await lanCoordinator?.close?.().catch(() => {});
       for (const client of liveClients) {
         try { client.end(); } catch {}
@@ -2809,8 +4209,20 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.on('uncaughtException', err => console.error('Uncaught exception:', err));
-  process.on('unhandledRejection', err => console.error('Unhandled rejection:', err));
+  const formatCrash = (kind, err) => {
+    const nowIso = new Date().toISOString();
+    const message = err?.message || String(err);
+    const stack = err?.stack ? String(err.stack).split('\n').slice(0, 8).join(' | ') : '';
+    return `${nowIso} [CRASH] ${kind} ${JSON.stringify({ message, stack })}`;
+  };
+  process.on('uncaughtException', err => {
+    console.error('Uncaught exception:', err);
+    writeDiskLogLineSync(formatCrash('UNCAUGHT_EXCEPTION', err), LOG_FILE_PATH);
+  });
+  process.on('unhandledRejection', err => {
+    console.error('Unhandled rejection:', err);
+    writeDiskLogLineSync(formatCrash('UNHANDLED_REJECTION', err), LOG_FILE_PATH);
+  });
   const listenPort = Number(process.env.PORT) || 8787;
   const listenHost = process.env.HOST || (process.argv.includes('--local-only') ? '127.0.0.1' : '0.0.0.0');
   const lanBusPort = process.argv.includes('--local-only') ? 0 : (Number(process.env.LAN_BUS_PORT) || DEFAULT_LAN_BUS_PORT);

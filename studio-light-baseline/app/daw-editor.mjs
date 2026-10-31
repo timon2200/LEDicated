@@ -5,7 +5,7 @@
 import { TIMELINE_PRESETS } from './timeline.mjs';
 import { BAR_IDS } from './engine.mjs';
 import {
-  MIN_CLIP_SEC, addKeyframe, beatPosition, clamp, clipEnd, deleteClips, duplicateClips, findClip, moveKeyframe, moveKeyframes, patchClips, removeKeyframe, removeKeyframes, snapTime, splitClip, timeAtBeat,
+  MIN_CLIP_SEC, addKeyframe, beatPosition, clamp, clipEnd, deleteClips, duplicateClips, findClip, moveKeyframe, moveKeyframes, patchClips, removeKeyframe, removeKeyframes, resizeClip, snapTime, splitClip, timeAtBeat,
   toggleTarget
 } from './daw-state.mjs';
 import { clipUiColor, createZoneGridIcon, h, hexToRgb, rgbToHex, segmentIntersectsRect } from './daw-ui.mjs';
@@ -55,6 +55,15 @@ export const DEVICE_INFO = {
           ['razor', '✦ Žilet', 'Oštar laserski rez srednje širine'],
           ['beam', '━ Zraka', 'Standardni snop s prirodnim padom intenziteta'],
           ['comet', '☄ Komet', 'Dugački kometasti rep s postepenim gašenjem']
+        ]
+      },
+      {
+        key: 'dir',
+        title: 'Smjer kretanja',
+        default: 'normal',
+        options: [
+          ['normal', '▶ Naprijed (→ / ↓)', 'Standardni smjer: slijeva nadesno ili odozgo prema dolje'],
+          ['reverse', '◀ Obrnuto (← / ↑)', 'Obrnuti smjer: zdesna nalijevo ili odozdo prema gore']
         ]
       },
       {
@@ -163,6 +172,17 @@ export const DEVICE_INFO = {
           ['double', '▌▌ Par (dvostruki)', 'Dva susjedna stupca/reda putuju zajedno'],
           ['invert', '░ Inverzno', 'Svi gore osim trenutno odabranog stupca/reda']
         ]
+      },
+      {
+        key: 'dir',
+        title: 'Smjer skeniranja',
+        default: 'ltr',
+        options: [
+          ['ltr', '→ Desno (L→R)', 'Skeniranje stupaca slijeva nadesno'],
+          ['rtl', '← Lijevo (R→L)', 'Skeniranje stupaca zdesna nalijevo'],
+          ['ttb', '↓ Dolje (1→3)', 'Skeniranje redova odozgo prema dolje'],
+          ['btt', '↑ Gore (3→1)', 'Skeniranje redova odozdo prema gore']
+        ]
       }
     ]
   },
@@ -190,6 +210,15 @@ export const DEVICE_INFO = {
           ['diag', '⤡ Dijagonala', 'Val putuje dijagonalno kroz matricu'],
           ['horiz', '⇄ Vodoravno', 'Lijevo-desno horizontalno valovanje'],
           ['vert', '⇅ Okomito', 'Gore-dolje vertikalni val']
+        ]
+      },
+      {
+        key: 'dir',
+        title: 'Smjer vala',
+        default: 'normal',
+        options: [
+          ['normal', '▶ Naprijed (↓ / →)', 'Val putuje odozgo prema dolje ili slijeva nadesno'],
+          ['reverse', '◀ Obrnuto (↑ / ←)', 'Obrnuti smjer: val putuje odozdo prema gore ili zdesna nalijevo']
         ]
       },
       {
@@ -272,7 +301,7 @@ export const DEVICE_INFO = {
     name: 'Rain Cascade',
     tag: 'GRAVITY DROPLET',
     glyph: '⤓',
-    desc: 'Kaskadni pad svjetlosnih kapljica duž vertikalnih barova s prilagodbom oblika i raspodjele.',
+    desc: 'Kaskadni pad svjetlosnih kapljica duž vertikalnih barova s prilagodbom oblika, smjera i raspodjele.',
     params: [
       {
         key: 'style',
@@ -282,6 +311,15 @@ export const DEVICE_INFO = {
           ['drops', '• Kapi', 'Kratke točkaste kapi s brzim padom'],
           ['streak', '│ Trag', 'Prirodne kišne kapi s rasutim repom'],
           ['beam', '║ Laserski stup', 'Puniji padajući svjetlosni segmenti']
+        ]
+      },
+      {
+        key: 'dir',
+        title: 'Smjer kretanja',
+        default: 'down',
+        options: [
+          ['down', '↓ Padanje (Dolje)', 'Standardni kaskadni pad kapljica odozgo prema dolje'],
+          ['up', '↑ Uzgon (Gore)', 'Obrnuti anti-gravitacijski tok kapljica odozdo prema gore']
         ]
       },
       {
@@ -472,7 +510,7 @@ export const DEVICE_INFO = {
     name: 'Radar Sweep',
     tag: 'OPTICAL SCAN',
     glyph: '◫',
-    desc: 'Optički snop koji pretražuje prostor poput radara ili reflektora.',
+    desc: 'Optički snop koji pretražuje prostor poput radara ili reflektora u odabranom smjeru.',
     params: [
       {
         key: 'style',
@@ -480,8 +518,18 @@ export const DEVICE_INFO = {
         default: 'radar',
         options: [
           ['radar', '🧭 Radar', 'Rotirajući radarski snop oko centra C2'],
-          ['horiz', '⇄ Vodoravni snop', 'Linearni prelet s lijeva nadesno'],
-          ['vert', '⇅ Vertikalni snop', 'Linearni prelet odozgo prema dolje']
+          ['horiz', '⇄ Vodoravni snop', 'Linearni prelet po horizontali (lijevo ↔ desno)'],
+          ['vert', '⇅ Vertikalni snop', 'Linearni prelet po vertikali (gore ↔ dolje)']
+        ]
+      },
+      {
+        key: 'dir',
+        title: 'Smjer zamaha',
+        default: 'normal',
+        options: [
+          ['normal', '▶ Naprijed (↓ / →)', 'Odozgo prema dolje, slijeva nadesno ili u smjeru kazaljke (↻)'],
+          ['reverse', '◀ Obrnuto (↑ / ←)', 'Odozdo prema gore, zdesna nalijevo ili suprotno od kazaljke (↺)'],
+          ['pingpong', '⇄ Naprijed-natrag', 'Naizmjenični zamah u oba smjera (gore-dolje / lijevo-desno)']
         ]
       },
       {
@@ -611,8 +659,8 @@ export function createClipEditor(host, ctx) {
     const multi = list.length > 1;
     updateHeader();
 
-    // 1. Top bar: Effect Chips (left) + Dedicated Device Rack (right)
-    const effectSelector = h('div', { class: 'ce-fx-selector' },
+    // 1. Left column: Effect selector (top) + Speed card (bottom)
+    const effectSelector = h('div', { class: 'ce-card ce-fx-selector' },
       h('label', {}, 'Efekt'),
       h('div', { class: 'chips' }, TIMELINE_PRESETS.map(p =>
         h('button', {
@@ -627,14 +675,23 @@ export function createClipEditor(host, ctx) {
         }, h('span', {}, GLYPH[p] || '•'), PRESET_LABELS[p] || p)
       ))
     );
-    const topBar = h('div', { class: 'ce-top-bar' }, effectSelector, effectDeviceRack(clip));
-
-    // 2. Bottom Row: 4 modular cards
     const speedCard = h('div', { class: 'ce-card ce-speed-card' }, speedSection(clip, list, multi));
+    const leftCol = h('div', { class: 'ce-left-col' }, effectSelector, speedCard);
+
+    // 2. Middle column: Bars, Motion & Timing + Effect Device Rack below Tajmiranje
     const barsCard = h('div', { class: 'ce-card ce-bars-card' }, barPicker(clip));
 
+    // 3. Right column: Color & Audio Driver
     const color = h('input', { type: 'color', value: rgbToHex(clip.color), 'aria-label': 'Boja clipa' });
-    color.addEventListener('input', () => { store.begin(); store.update(t => patchClips(t, refs(), { color: [...hexToRgb(color.value), clip.color[3]] })); store.end('Boja'); });
+    let colorGesture = false;
+    color.addEventListener('input', () => {
+      if (!colorGesture) { store.begin(); colorGesture = true; }
+      store.update(t => patchClips(t, refs(), { color: [...hexToRgb(color.value), clip.color[3]] }));
+    });
+    color.addEventListener('change', () => {
+      if (colorGesture) { colorGesture = false; store.end('Boja'); }
+      else apply('Boja', { color: [...hexToRgb(color.value), clip.color[3]] });
+    });
     const white = h('input', { type: 'range', min: 0, max: 100, value: Math.round(clip.color[3] * 100), 'aria-label': 'Bijeli kanal', title: 'Neovisna jačina toplog bijelog emitera' });
     white.addEventListener('pointerdown', () => store.begin());
     white.addEventListener('input', () => store.update(t => patchClips(t, refs(), { color: [...clip.color.slice(0, 3), Number(white.value) / 100] })));
@@ -648,19 +705,9 @@ export function createClipEditor(host, ctx) {
       driverSummary(clip)
     );
 
-    const actionsRow = h('div', { class: 'ce-actions' },
-      h('button', { type: 'button', onClick: () => { let created; store.commit('Dupliciraj', t => { const end = Math.max(...list.map(r => clipEnd(findClip(t, r).clip))), start = Math.min(...list.map(r => findClip(t, r).clip.startSec)); created = duplicateClips(t, list, end - start, 0); }); ctx.select(created); } }, 'Dupliciraj ⌘D'),
-      h('button', { type: 'button', onClick: () => { let parts; store.commit('Podijeli', t => { parts = splitClip(t, list[0], ctx.getTime()); }); if (parts) ctx.select(parts); else ctx.status('Postavi playhead unutar clipa za podjelu.'); } }, 'Podijeli'),
-      h('button', { type: 'button', class: 'danger', onClick: () => { store.commit('Obriši', t => deleteClips(t, list)); ctx.select([]); } }, 'Obriši ⌫')
-    );
-    const timingCard = h('div', { class: 'ce-card ce-timing-card' },
-      timingSection(clip, list, multi),
-      actionsRow
-    );
+    const mainGrid = h('div', { class: 'ce-bottom-row' }, leftCol, barsCard, colorCard);
 
-    const bottomRow = h('div', { class: 'ce-bottom-row' }, speedCard, barsCard, colorCard, timingCard);
-
-    propsBox.append(topBar, bottomRow);
+    propsBox.append(mainGrid);
 
     for (const [key, shape] of Object.entries(SHAPES)) shapeBar.append(h('button', { type: 'button', class: 'mini-btn', title: `Oblik envelopea: ${shape.label}`, onClick: () => applyShape(shape.make(clip.durationSec)) }, shape.label));
     shapeBar.append(h('button', { type: 'button', class: 'mini-btn', title: 'Pad svjetla na svakom beatu unutar clipa', onClick: () => applyShape(beatPulse(clip)) }, 'Beat puls'));
@@ -694,7 +741,19 @@ export function createClipEditor(host, ctx) {
     );
 
     const groups = (info.params || []).map(group => {
-      const activeVal = curParams[group.key] !== undefined ? curParams[group.key] : group.default;
+      let activeVal = curParams[group.key] !== undefined ? curParams[group.key] : group.default;
+      if (curParams[group.key] === undefined && group.key === 'dir') {
+        if (clip.preset === 'columns' && clip.direction) {
+          activeVal = clip.direction;
+        } else if (clip.preset === 'rain' && clip.direction === 'btt') {
+          activeVal = 'up';
+        } else if ((clip.preset === 'sweep' || clip.preset === 'wave' || clip.preset === 'chase') && (clip.direction === 'btt' || clip.direction === 'rtl')) {
+          activeVal = 'reverse';
+        }
+      }
+      if (curParams[group.key] === undefined && clip.preset === 'sweep' && group.key === 'style') {
+        if (clip.direction === 'ttb' || clip.direction === 'btt') activeVal = 'vert';
+      }
       const btnRow = h('div', { class: 'dev-btn-row', role: 'group', 'aria-label': group.title },
         group.options.map(([optVal, optLabel, optTip]) => {
           const isSelected = activeVal === optVal;
@@ -704,7 +763,26 @@ export function createClipEditor(host, ctx) {
             'aria-pressed': String(isSelected),
             title: optTip,
             onClick: () => {
-              apply(`Postavka: ${group.title}`, { params: { [group.key]: optVal } });
+              const patch = { params: { [group.key]: optVal } };
+              if (group.key === 'dir') {
+                if (optVal === 'ltr' || optVal === 'rtl' || optVal === 'ttb' || optVal === 'btt') {
+                  patch.direction = optVal;
+                } else if (optVal === 'up') {
+                  patch.direction = 'btt';
+                } else if (optVal === 'down') {
+                  patch.direction = 'ttb';
+                } else if (optVal === 'reverse' || optVal === 'normal') {
+                  const isVert = (clip.preset === 'sweep' && (curParams.style === 'vert' || (!curParams.style && (clip.direction === 'ttb' || clip.direction === 'btt')))) ||
+                    (clip.preset === 'wave' && curParams.angle === 'vert') ||
+                    (clip.preset === 'chase' && (clip.direction === 'ttb' || clip.direction === 'btt' || clip.chaseMode === 'col'));
+                  patch.direction = optVal === 'reverse' ? (isVert ? 'btt' : 'rtl') : (isVert ? 'ttb' : 'ltr');
+                }
+              } else if (clip.preset === 'sweep' && group.key === 'style') {
+                const isRev = curParams.dir === 'reverse' || (!curParams.dir && (clip.direction === 'btt' || clip.direction === 'rtl'));
+                if (optVal === 'vert') patch.direction = isRev ? 'btt' : 'ttb';
+                else if (optVal === 'horiz') patch.direction = isRev ? 'rtl' : 'ltr';
+              }
+              apply(`Postavka: ${group.title}`, patch);
               ensurePlayheadInClip(clip);
             }
           }, optLabel);
@@ -766,14 +844,14 @@ export function createClipEditor(host, ctx) {
     }));
 
     const curMode = (clip.motionMode === 'sync' || clip.chaseMode === 'syncRow') ? 'syncRow' :
-                    (clip.direction === 'ttb' || clip.chaseMode === 'col') ? 'col' : 'row';
+                    (clip.direction === 'ttb' || clip.direction === 'btt' || clip.chaseMode === 'col') ? 'col' : 'row';
 
     const chaseWrap = h('div', { class: 'chase-mode-wrap' });
     if (isChase) {
       const CHASE_MODES = [
-        ['row', 'Kroz red (L→R)', 'Trkač prolazi vodoravno kroz cijeli red: L → C → R bez praznog hoda'],
-        ['syncRow', 'Sinkro redovi', 'Laserski zid: svi odabrani redovi prolaze istovremeno s lijeva nadesno'],
-        ['col', 'Kroz stupce', 'Klasični trkač kroz stupce od vrha prema dnu']
+        ['row', '→ Kroz red (L→R)', 'Trkač prolazi vodoravno kroz cijeli red: L → C → R bez praznog hoda'],
+        ['syncRow', '⇉ Sinkro redovi', 'Laserski zid: svi odabrani redovi prolaze istovremeno s lijeva nadesno'],
+        ['col', '↓ Kroz stupce', 'Klasični trkač kroz stupce od vrha prema dnu']
       ];
       chaseWrap.append(
         h('span', { class: 'sub-label' }, 'Trasa / Smjer trkača'),
@@ -919,7 +997,27 @@ export function createClipEditor(host, ctx) {
       'aria-pressed': String(curDir === dir),
       'aria-label': `Smjer ${title}`,
       title: `Smjer kretanja: ${title}`,
-      onClick: () => apply('Smjer animacije', { direction: dir })
+      onClick: () => {
+        const patch = { direction: dir };
+        const isRev = dir === 'btt' || dir === 'rtl';
+        const isVert = dir === 'btt' || dir === 'ttb';
+        if (clip.preset === 'sweep') {
+          const nextStyle = clip.params?.style === 'radar' ? 'radar' : (isVert ? 'vert' : 'horiz');
+          patch.params = { style: nextStyle, dir: isRev ? 'reverse' : 'normal' };
+        } else if (clip.preset === 'rain') {
+          patch.params = { dir: dir === 'btt' ? 'up' : 'down' };
+        } else if (clip.preset === 'wave') {
+          const nextAngle = clip.params?.angle === 'diag' ? 'diag' : (isVert ? 'vert' : 'horiz');
+          patch.params = { angle: nextAngle, dir: isRev ? 'reverse' : 'normal' };
+        } else if (clip.preset === 'chase') {
+          patch.params = { dir: isRev ? 'reverse' : 'normal' };
+        } else if (clip.preset === 'columns') {
+          patch.params = { dir };
+        } else if (clip.preset === 'spiral') {
+          patch.params = { dir: isRev ? 'ccw' : 'cw' };
+        }
+        apply('Smjer animacije', patch);
+      }
     }, glyph);
 
     const compassBox = h('div', { class: 'bp-compass-box' },
@@ -945,20 +1043,7 @@ export function createClipEditor(host, ctx) {
       ))
     );
 
-    const motionGroup = h('div', { class: 'anim-ctl-group' },
-      h('span', { class: 'anim-ctl-label' }, 'Izvođenje animacije'),
-      h('div', { class: 'anim-toggle-row motion', role: 'group', 'aria-label': 'Način izvođenja animacije' }, MOTION_MODES.map(([mKey, mLbl, mTip]) =>
-        h('button', {
-          type: 'button',
-          class: `anim-toggle${curMotion === mKey ? ' on' : ''}`,
-          'aria-pressed': String(curMotion === mKey),
-          title: mTip,
-          onClick: () => apply('Način izvođenja', { motionMode: mKey })
-        }, mLbl)
-      ))
-    );
-
-    const sideControls = h('div', { class: 'bp-side-controls' }, timingGroup, motionGroup);
+    const sideControls = h('div', { class: 'bp-side-controls' }, timingGroup, effectDeviceRack(clip));
 
     return h('div', { class: 'ce-section wide' },
       h('label', {}, 'Barovi i kretanje ', counter),
@@ -986,7 +1071,12 @@ export function createClipEditor(host, ctx) {
 
   /* ---------------------------------------------------------------- timing */
   function setDuration(list, d, total) {
-    store.commit('Trajanje', t => { const c = findClip(t, list[0]).clip; d = clamp(d, MIN_CLIP_SEC, Math.max(MIN_CLIP_SEC, total - c.startSec)); const last = c.keyframes.at(-1).value; c.keyframes = c.keyframes.filter(k => k.timeSec < d - .005); c.keyframes.push({ timeSec: d, value: last }); c.durationSec = d; });
+    store.commit('Trajanje', t => {
+      const hit = findClip(t, list[0]);
+      if (!hit) return;
+      const targetEnd = hit.clip.startSec + clamp(d, MIN_CLIP_SEC, Math.max(MIN_CLIP_SEC, total - hit.clip.startSec));
+      resizeClip(t, list[0], 'end', targetEnd, total);
+    });
   }
   function timingSection(clip, list, multi) {
     const total = ctx.duration(), t = tl(), a = ctx.getAnalysis();

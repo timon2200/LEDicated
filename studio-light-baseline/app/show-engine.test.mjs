@@ -279,4 +279,57 @@ test('live board rapid multi-triggering of chase stacks multiple runners additiv
   assert.ok(maxL3 > 120, `Expected 1st runner on L3 to still be bright (not reset!), got ${maxL3}`);
 });
 
+test('showEngine.renderFrame preserves full-brightness unscaledBars regardless of low masterBrightness', () => {
+  const tl = {
+    version: 1,
+    durationSec: 4,
+    bpm: 120,
+    beatOffsetSec: 0,
+    blackout: false,
+    layers: [{
+      id: 'l1',
+      enabled: true,
+      blend: 'replace',
+      opacity: 1,
+      clips: [{
+        id: 'c1',
+        preset: 'wash',
+        startSec: 0,
+        durationSec: 4,
+        targets: ['L1', 'C2', 'R3'],
+        color: [1, 0.5, 0.25, 0],
+        driver: 'none',
+        speed: 1,
+        params: { mood: 'still' },
+        keyframes: [{ timeSec: 0, value: 1 }, { timeSec: 4, value: 1 }]
+      }]
+    }]
+  };
+
+  const engine = createShowEngine({ frameRate: 30 });
+  engine.bakeAll(tl, null);
+
+  const frameAt100Pct = engine.renderFrame({
+    timeline: tl,
+    analysis: null,
+    songTimeSec: 1.0,
+    clockTimeSec: 1.0,
+    masterBrightness: 100
+  });
+
+  const frameAt8Pct = engine.renderFrame({
+    timeline: tl,
+    analysis: null,
+    songTimeSec: 1.0,
+    clockTimeSec: 1.0,
+    masterBrightness: 8
+  });
+
+  // Physical wall output (`bars`) is scaled down to 8%
+  assert.ok(frameAt8Pct.bars.L1[0][0] <= 20, `Expected physical L1 red <= 20 at 8% master, got ${frameAt8Pct.bars.L1[0][0]}`);
+  // Companion preview output (`unscaledBars`) matches 100% full brightness exactly
+  assert.deepEqual(frameAt8Pct.unscaledBars, frameAt100Pct.bars, 'Companion preview unscaledBars must equal 100% brightness bars regardless of masterBrightness');
+});
+
+
 

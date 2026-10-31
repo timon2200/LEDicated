@@ -59,10 +59,19 @@ export function createSessionRecorder({
     return armed;
   }
 
+  function resolveActiveClip(timeline, active) {
+    if (!timeline || !active) return active?.clip;
+    const layer = timeline.layers.find(l => l.id === active.layerId);
+    const found = layer?.clips.find(c => c.id === active.clipId);
+    if (found && found !== active.clip) active.clip = found;
+    return active.clip;
+  }
+
   function startRecording() {
     if (!armed || !hasTrack() || recording) return;
     recording = true;
-    store.begin();
+    if (store.beginRecording) store.beginRecording();
+    else store.begin();
     activePills.clear();
     queuedCues.clear();
     recordedClipsCount = 0;
@@ -202,19 +211,21 @@ export function createSessionRecorder({
       startPill(index, newPad, time);
     } else {
       // Small adjustment within short window: update active clip in place
-      store.update(() => {
-        active.clip.preset = newPad.preset;
-        active.clip.color = [...newPad.color];
-        active.clip.speed = newPad.speed ?? 1;
-        active.clip.targets = newPad.targets === 'all' ? 'all' : [...newPad.targets];
-        active.clip.direction = newPad.direction ?? 'ltr';
-        active.clip.timing = newPad.timing ?? 'beat';
-        active.clip.motionMode = newPad.motionMode ?? 'serial';
-        active.clip.params = newPad.params ? { ...newPad.params } : {};
-        active.clip.driver = newPad.mode === 'loop' ? (newPad.driver ?? 'none') : 'none';
-        active.clip.driverGain = newPad.driverGain ?? 1;
-        if (newPad.driver === 'band' && newPad.band) active.clip.band = { ...newPad.band };
-        active.clip.keyframes.forEach(k => { k.value = newPad.intensity ?? 0.8; });
+      store.update(timeline => {
+        const clip = resolveActiveClip(timeline, active);
+        if (!clip) return;
+        clip.preset = newPad.preset;
+        clip.color = [...newPad.color];
+        clip.speed = newPad.speed ?? 1;
+        clip.targets = newPad.targets === 'all' ? 'all' : [...newPad.targets];
+        clip.direction = newPad.direction ?? 'ltr';
+        clip.timing = newPad.timing ?? 'beat';
+        clip.motionMode = newPad.motionMode ?? 'serial';
+        clip.params = newPad.params ? { ...newPad.params } : {};
+        clip.driver = newPad.mode === 'loop' ? (newPad.driver ?? 'none') : 'none';
+        clip.driverGain = newPad.driverGain ?? 1;
+        if (newPad.driver === 'band' && newPad.band) clip.band = { ...newPad.band };
+        clip.keyframes.forEach(k => { k.value = newPad.intensity ?? 0.8; });
         active.padSnapshot = structuredClone(newPad);
       });
     }
@@ -225,15 +236,17 @@ export function createSessionRecorder({
     if (!active) return;
     activePills.delete(index);
 
-    store.update(() => {
+    store.update(timeline => {
+      const clip = resolveActiveClip(timeline, active);
+      if (!clip) return;
       const dur = Math.max(MIN_CLIP_SEC, timeSec - active.startSec);
-      active.clip.durationSec = dur;
+      clip.durationSec = dur;
       const intensity = Number.isFinite(active.padSnapshot.intensity) ? active.padSnapshot.intensity : 0.8;
-      active.clip.keyframes = [
+      clip.keyframes = [
         { timeSec: 0, value: intensity },
         { timeSec: dur, value: intensity }
       ];
-      delete active.clip.recording;
+      delete clip.recording;
     });
   }
 
@@ -252,25 +265,30 @@ export function createSessionRecorder({
 
     if (!activePills.size) return;
 
-    store.update(() => {
+    store.update(timeline => {
       for (const [index, active] of activePills) {
+        const clip = resolveActiveClip(timeline, active);
+        if (!clip) {
+          activePills.delete(index);
+          continue;
+        }
         if (active.mode === 'hit') {
           const cycle = hitDuration(active.padSnapshot, bpm);
           const elapsed = time - active.startSec;
           if (elapsed >= cycle) {
             // One hit cycle complete: finalize it!
-            active.clip.durationSec = cycle;
+            clip.durationSec = cycle;
             const intensity = Number.isFinite(active.padSnapshot.intensity) ? active.padSnapshot.intensity : 0.8;
-            active.clip.keyframes = [
+            clip.keyframes = [
               { timeSec: 0, value: intensity },
               { timeSec: cycle, value: intensity }
             ];
-            delete active.clip.recording;
+            delete clip.recording;
 
             // If still held, start the next cycle
             if (desk?.held?.has(index)) {
               const nextStart = active.startSec + cycle;
-              const layer = store.timeline.layers.find(l => l.id === active.layerId) || findOrCreateLayer(store.timeline, index, active.padSnapshot, nextStart, cycle);
+              const layer = timeline.layers.find(l => l.id === active.layerId) || findOrCreateLayer(timeline, index, active.padSnapshot, nextStart, cycle);
               const nextClip = createPillClip(active.padSnapshot, nextStart, cycle);
               layer.clips.push(nextClip);
               recordedClipsCount++;
@@ -287,16 +305,16 @@ export function createSessionRecorder({
               activePills.delete(index);
             }
           } else {
-            active.clip.durationSec = Math.max(MIN_CLIP_SEC, elapsed);
+            clip.durationSec = Math.max(MIN_CLIP_SEC, elapsed);
             const intensity = Number.isFinite(active.padSnapshot.intensity) ? active.padSnapshot.intensity : 0.8;
-            active.clip.keyframes[1] = { timeSec: active.clip.durationSec, value: intensity };
+            clip.keyframes[1] = { timeSec: clip.durationSec, value: intensity };
           }
         } else {
           // Loop mode: extends continuously while active
           const elapsed = Math.max(MIN_CLIP_SEC, time - active.startSec);
-          active.clip.durationSec = elapsed;
+          clip.durationSec = elapsed;
           const intensity = Number.isFinite(active.padSnapshot.intensity) ? active.padSnapshot.intensity : 0.8;
-          active.clip.keyframes[1] = { timeSec: elapsed, value: intensity };
+          clip.keyframes[1] = { timeSec: elapsed, value: intensity };
         }
       }
     });
@@ -337,14 +355,15 @@ export function createSessionRecorder({
           for (const clip of layer.clips) delete clip.recording;
         }
       });
-      const committed = store.end('Snimi izvedbu');
+      const committed = store.endRecording ? store.endRecording('Snimi izvedbu') : store.end('Snimi izvedbu');
       if (committed) {
         status(`Snimka spremljena: ${recordedClipsCount} ${recordedClipsCount === 1 ? 'clip' : 'clipova'}. Poništi s ⌘Z.`);
       } else {
         status('Greška pri spremanju snimke.');
       }
     } else {
-      store.cancel();
+      if (store.cancelRecording) store.cancelRecording();
+      else store.cancel();
       status('Snimanje završeno (nema novih clipova).');
     }
     onStateChange({ armed, recording });

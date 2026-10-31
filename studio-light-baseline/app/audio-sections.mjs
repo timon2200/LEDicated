@@ -49,11 +49,46 @@ function avgRange(arr, stepSec, t0, t1, offsetSec = 0) {
   return count ? sum / count : 0;
 }
 
+export const DEFAULT_SECTION_DETECTION_OPTIONS = Object.freeze({
+  phraseBars: 'auto',
+  dropRmsThreshold: 0.76,
+  dropBassThreshold: 0.55,
+  buildRampThreshold: 1.12,
+  breakdownThreshold: 0.45,
+  snapDropToBeat: true,
+  maxDropSnapBeats: 8
+});
+
 /** Detect structural sections in an analyzed audio track. */
-export function detectSections(analysis) {
+export function detectSections(analysis, options = {}) {
   if (!analysis) return [];
   const durationSec = Number(analysis.durationSec || analysis.duration || 0);
   if (!Number.isFinite(durationSec) || durationSec <= 0) return [];
+
+  const dropRmsThr = Number.isFinite(Number(options?.dropRmsThreshold))
+    ? Math.max(0.30, Math.min(0.98, Number(options.dropRmsThreshold)))
+    : 0.76;
+  const dropBassThr = Number.isFinite(Number(options?.dropBassThreshold))
+    ? Math.max(0.20, Math.min(0.95, Number(options.dropBassThreshold)))
+    : 0.55;
+  const buildRampThr = Number.isFinite(Number(options?.buildRampThreshold))
+    ? Math.max(1.01, Math.min(1.60, Number(options.buildRampThreshold)))
+    : 1.12;
+  const breakdownThr = Number.isFinite(Number(options?.breakdownThreshold))
+    ? Math.max(0.15, Math.min(0.80, Number(options.breakdownThreshold)))
+    : 0.45;
+  const snapDropToBeat = options?.snapDropToBeat !== false;
+  const maxDropSnapBeats = Number.isFinite(Number(options?.maxDropSnapBeats))
+    ? Math.max(0, Math.min(16, Math.round(Number(options.maxDropSnapBeats))))
+    : 8;
+  const rawPhraseBars = Number(options?.phraseBars);
+  const customPhraseBars = (options?.phraseBars !== 'auto' && Number.isFinite(rawPhraseBars) && rawPhraseBars >= 1 && rawPhraseBars <= 16)
+    ? Math.round(rawPhraseBars)
+    : null;
+  const dropCombinedThr = dropRmsThr === 0.76 ? 0.74 : Math.max(0.30, dropRmsThr - 0.02);
+  const surgeRmsThr = dropRmsThr === 0.76 ? 0.72 : Math.max(0.30, dropRmsThr - 0.04);
+  const buildDrumThr = buildRampThr === 1.12 ? 1.14 : buildRampThr + 0.02;
+  const buildOtherThr = buildRampThr === 1.12 ? 1.16 : buildRampThr + 0.04;
 
   const bpm = Math.max(40, Math.min(240, Number(analysis.bpm || 120)));
   const beatSec = 60 / bpm;
@@ -105,7 +140,7 @@ export function detectSections(analysis) {
 
   // Group bars into 4-bar phrases (or 2-bar for short tracks < 90s),
   // snapping to 1-bar boundaries when a sharp step discontinuity occurs inside a block.
-  const unitBars = durationSec < 90 ? 2 : 4;
+  const unitBars = customPhraseBars || (durationSec < 90 ? 2 : 4);
   const phraseGroups = [];
   let curGroup = [];
   for (let i = 0; i < bars.length; i++) {
@@ -238,24 +273,24 @@ export function detectSections(analysis) {
         (phrases.at(-1).relCombined < 0.75 || phrases.at(-1).bRel < 0.60));
 
     const hasRisingTension =
-      p.rEnd > p.rStart * 1.12 ||
-      p.dEnd > p.dStart * 1.14 ||
-      (p.oEnd > p.oStart * 1.16 && p.dRel >= 0.28) ||
+      p.rEnd > p.rStart * buildRampThr ||
+      p.dEnd > p.dStart * buildDrumThr ||
+      (p.oEnd > p.oStart * buildOtherThr && p.dRel >= 0.28) ||
       (p.preDip && (p.rEnd > p.rStart * 1.04 || p.dEnd > p.dStart * 1.04));
 
     const isHighDrop =
-      p.relRms >= 0.76 &&
-      p.bRel >= 0.55 &&
+      p.relRms >= dropRmsThr &&
+      p.bRel >= dropBassThr &&
       p.dRel >= 0.50 &&
-      p.relCombined >= 0.74 &&
+      p.relCombined >= dropCombinedThr &&
       p.dynCombined >= 0.62;
 
     const isSurgeDrop = prev &&
       (p.rAvg >= prev.rAvg * 1.25 || p.relCombined >= prev.relCombined * 1.25) &&
       (p.bAvg >= prev.bAvg * 1.35 || p.dAvg >= prev.dAvg * 1.35) &&
-      p.bRel >= 0.55 &&
+      p.bRel >= dropBassThr &&
       p.dRel >= 0.50 &&
-      p.relRms >= 0.72;
+      p.relRms >= surgeRmsThr;
 
     const targetAfterBuild = (next && (next.t1 - next.t0 <= barSec * 1.5) && next2) ? next2 : next;
 
@@ -270,7 +305,7 @@ export function detectSections(analysis) {
       p.type = 'build';
     } else if (isHighDrop || isSurgeDrop) {
       p.type = 'drop';
-    } else if (p.bRel < 0.45 || p.dRel < 0.45 || (p.relRms < 0.54 && p.relCombined < 0.52)) {
+    } else if (p.bRel < breakdownThr || p.dRel < breakdownThr || (p.relRms < 0.54 && p.relCombined < 0.52)) {
       p.type = 'breakdown';
     } else {
       p.type = 'verse';
@@ -293,8 +328,8 @@ export function detectSections(analysis) {
 
     // If previous phrase was a build and this phrase surges with strong bass & drums, it's a drop
     if (prev && prev.type === 'build' && p.type !== 'drop' && p.type !== 'build' && p.type !== 'outro') {
-      if (p.bRel >= 0.55 && p.dRel >= 0.50 &&
-          (p.bRel >= prev.bRel * 1.20 || p.relCombined >= prev.relCombined * 1.10 || p.relRms >= 0.74)) {
+      if (p.bRel >= dropBassThr && p.dRel >= 0.50 &&
+          (p.bRel >= prev.bRel * 1.20 || p.relCombined >= prev.relCombined * 1.10 || p.relRms >= dropCombinedThr)) {
         p.type = 'drop';
       }
     }
@@ -507,13 +542,13 @@ export function detectSections(analysis) {
   }
 
   // Refine drop start boundaries at 1-beat resolution (e.g. after 1-2 bar fakeout/silence or sub-bar entry)
-  for (let m = 1; m < merged.length; m++) {
+  for (let m = 1; m < merged.length && snapDropToBeat && maxDropSnapBeats > 0; m++) {
     const sec = merged[m];
     const prev = merged[m - 1];
     if (sec.type !== 'drop') continue;
 
     // Check if the drop actually slammed in 1..3 beats before sec.startSec (inside the last bar of prev)
-    const maxBackBeats = Math.min(3, Math.floor((prev.endSec - prev.startSec - beatSec + 1e-6) / beatSec));
+    const maxBackBeats = Math.min(Math.min(3, maxDropSnapBeats), Math.floor((prev.endSec - prev.startSec - beatSec + 1e-6) / beatSec));
     let snappedBack = false;
     if (maxBackBeats >= 1) {
       let backSteps = 0;
@@ -536,7 +571,7 @@ export function detectSections(analysis) {
       }
     }
 
-    const maxScanBeats = Math.min(8, Math.floor((sec.endSec - sec.startSec - barSec) / beatSec));
+    const maxScanBeats = Math.min(maxDropSnapBeats, Math.floor((sec.endSec - sec.startSec - barSec) / beatSec));
     if (!snappedBack && maxScanBeats >= 1) {
       const firstBeatRms = avgRange(rms, binSec, sec.startSec, sec.startSec + beatSec, 0);
       const firstBeatBass = avgRange(bass, hop, sec.startSec, sec.startSec + beatSec, featureStartSec);

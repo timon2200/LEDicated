@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.801Z",
+  "exportedAt": "2026-10-28T23:52:14.681Z",
   "author": "Timon",
   "track": {
     "id": "29d6856b-f426-497b-8e5f-39897bcc6209",
@@ -12272,5 +12272,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "dies-irae-yitrax-ksn-remix-ffa35c60",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:14.679Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 263 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/a0a46c5b36588a5a86557be7938a31ee2448604e5fc5785862942e723cbd0b03.mp3"
 }

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "berlin-bunker-raw",
+  "name": "Berlin Bunker Raw 4/4",
+  "author": "LEDicated Community",
+  "version": "1.0.0",
+  "description": "Strogi podzemni techno profil: ekstremno niska svjetlina na breakdownima (35%), oštri 1-beat blackout i brzi stupci potaknuti dubokim kick gateom.",
+  "tags": ["techno", "bunker", "minimal", "github-shared"],
+  "createdAt": "2026-10-29T00:00:00.000Z",
+  "config": {
+    "theme": "mono",
+    "energy": 0.88,
+    "allowedPresets": ["columns", "alternate", "pulse", "chase", "strobe", "flash", "sweep"],
+    "nonDropCeiling": 0.36,
+    "wChannelMode": "drop-only",
+    "dropMinW": 0.55,
+    "dropColorBoost": 1.35,
+    "preDropBlackoutMode": "fixed",
+    "preDropBlackoutBeats": 2,
+    "dropBlinder": true,
+    "dropStrobeDurationSec": 5.5,
+    "dropStrobeRate": "1/8",
+    "dropRhythmStyle": "columns",
+    "buildSpiralAccel": true,
+    "buildMaxSpeed": 16,
+    "globalSpeedMultiplier": 1.1,
+    "driverGainScale": 1.08
+  }
+}

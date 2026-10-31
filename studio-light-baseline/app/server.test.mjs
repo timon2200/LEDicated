@@ -4,8 +4,10 @@ import dgram from 'node:dgram';
 import http from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createLightingServer, defaultConfig, validateConfig, privateIP, encodeDDP, rgbFromRgbw } from './server.mjs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createLightingServer, defaultConfig, validateConfig, privateIP, encodeDDP, rgbFromRgbw, rgbwForKelvin, kelvinFromRgbw } from './server.mjs';
+import { normalizeTimeline } from './daw-state.mjs';
 
 const pause = ms => new Promise(done => setTimeout(done, ms));
 const makeFrames = (pixel = [20, 30, 40, 0]) => ({ bars: Object.fromEntries(defaultConfig().bars.map(bar => [bar.id, Array.from({ length: 12 }, () => [...pixel])])) });
@@ -601,3 +603,229 @@ test('multi-laptop UDP LAN Coordinator arbitrates WLED ownership across two serv
   assert.equal(srvA.app.getLanStatus().isRemoteStageOwner, true);
   assert.equal(srvA.app.getLanStatus().stageOwnerName, 'Luka Mac');
 });
+
+test('cloud-sync & version history: tracks saves (v1 -> v2), summarizes clip diffs, lists versions, restores v1 -> v3, and downloads shared audio via audioUrl', async t => {
+  const dirA = await mkdtemp(join(tmpdir(), 'studio-cloud-a-'));
+  const dirB = await mkdtemp(join(tmpdir(), 'studio-cloud-b-'));
+  const sharedDir = await mkdtemp(join(tmpdir(), 'studio-shared-shows-'));
+  t.after(async () => {
+    await rm(dirA, { recursive: true, force: true });
+    await rm(dirB, { recursive: true, force: true });
+    await rm(sharedDir, { recursive: true, force: true });
+  });
+
+  // Mock audio payload (valid RIFF WAVE 1s silent mono 8kHz PCM)
+  const samples = 8000;
+  const wav = Buffer.alloc(44 + samples * 2);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + samples * 2, 4);
+  wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(8000, 24);
+  wav.writeUInt32LE(16000, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(samples * 2, 40);
+
+  const srvA = await fixture(t, { libraryRoot: dirA, sharedShowsDir: sharedDir, cloudEnabled: false });
+  const importRes = await fetch(`${srvA.base}/api/library/import?name=${encodeURIComponent('Anyma - Eternity.wav')}&author=Timon`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: wav
+  }).then(r => r.json());
+  assert.ok(importRes.track?.id);
+  const trackId = importRes.track.id;
+
+  // Save v1 timeline
+  const tlV1 = normalizeTimeline({
+    version: 1,
+    durationSec: 60,
+    bpm: 128,
+    beatOffsetSec: 0,
+    blackout: false,
+    layers: [{
+      id: 'L-1',
+      name: 'Glavni',
+      enabled: true,
+      blend: 'add',
+      opacity: 1,
+      clips: [{ id: 'c1', preset: 'pulse', driver: 'none', startSec: 0, durationSec: 8, color: [1, 0, 0, 0], targets: 'all', intensity: 1, keyframes: [{ timeSec: 0, value: 1 }, { timeSec: 8, value: 1 }] }]
+    }]
+  });
+  const save1 = await srvA.post('/api/library/timeline', {
+    id: trackId,
+    timeline: tlV1,
+    author: 'Timon',
+    note: 'Prva verzija dropa',
+    forceVersion: true
+  });
+  assert.equal(save1.status, 200, JSON.stringify(save1.data));
+  assert.ok(save1.data.version >= 1);
+  const v1Num = save1.data.version;
+  const showId = save1.data.showId;
+  assert.ok(showId);
+
+  // Save v2 timeline (add a strobe clip) by Luka
+  const tlV2 = normalizeTimeline(structuredClone(tlV1));
+  tlV2.layers[0].clips.push({
+    ...tlV1.layers[0].clips[0],
+    id: 'c2',
+    preset: 'strobe',
+    startSec: 8,
+    durationSec: 8,
+    color: [0, 1, 1, 0]
+  });
+  const save2 = await srvA.post('/api/library/timeline', {
+    id: trackId,
+    timeline: tlV2,
+    author: 'Luka',
+    note: 'Dodan strobe na 8s',
+    forceVersion: true
+  });
+  assert.equal(save2.status, 200);
+  assert.equal(save2.data.version, v1Num + 1);
+
+  // Query version history
+  const verRes = await fetch(`${srvA.base}/api/library/versions?showId=${encodeURIComponent(showId)}`).then(r => r.json());
+  assert.equal(verRes.ok, true);
+  assert.ok(verRes.versions.length >= 2);
+  assert.equal(verRes.versions[0].version, v1Num + 1);
+  assert.equal(verRes.versions[0].author, 'Luka');
+
+  // Restore v1 -> creates v3 with 1 clip
+  const restoreRes = await srvA.post('/api/library/restore-version', {
+    showId,
+    version: v1Num,
+    trackId,
+    author: 'Timon'
+  });
+  assert.equal(restoreRes.status, 200);
+  assert.equal(restoreRes.data.version, v1Num + 2);
+  assert.equal(restoreRes.data.timeline.layers[0].clips.length, 1);
+
+  // Friend B clones repo and installs shared show over HTTP audioUrl without yt-dlp
+  const srvB = await fixture(t, {
+    libraryRoot: dirB,
+    sharedShowsDir: sharedDir,
+    cloudEnabled: false,
+    peerFetcher: async url => ({
+      ok: true,
+      arrayBuffer: async () => wav.buffer.slice(wav.byteOffset, wav.byteOffset + wav.byteLength)
+    })
+  });
+  const sharedCatalog = await fetch(`${srvB.base}/api/library/shared-shows`).then(r => r.json());
+  assert.equal(sharedCatalog.ok, true);
+  assert.equal(sharedCatalog.shows.length, 1);
+  assert.equal(sharedCatalog.shows[0].version, v1Num + 2);
+
+  const installB = await srvB.post('/api/library/install-shared-show', {
+    showId
+  });
+  assert.equal(installB.status, 200);
+  assert.equal(installB.data.ok, true);
+  assert.equal(installB.data.version, v1Num + 2);
+  assert.ok(installB.data.track?.id);
+});
+
+test('server static allowlist serves every transitive ES module imported by daw.mjs, ui.mjs, and pad.mjs', async t => {
+  const srv = await fixture(t);
+  const appRoot = dirname(fileURLToPath(import.meta.url));
+  const entries = ['daw.mjs', 'ui.mjs', 'pad.mjs'];
+  const visited = new Map();
+
+  async function walk(file) {
+    if (visited.has(file)) return;
+    const content = await readFile(join(appRoot, file), 'utf8');
+    visited.set(file, content);
+    const re = /from\s+['"]\.\/([^'"]+)['"]/g;
+    let m;
+    while ((m = re.exec(content))) {
+      await walk(m[1]);
+    }
+  }
+
+  for (const entry of entries) await walk(entry);
+
+  const exportsByFile = new Map();
+  for (const [file, src] of visited.entries()) {
+    const ex = new Set();
+    for (const m of src.matchAll(/export\s+(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z0-9_$]+)/g)) ex.add(m[1]);
+    for (const m of src.matchAll(/export\s*\{([^}]+)\}/g)) {
+      for (const part of m[1].split(',')) {
+        const p = part.trim();
+        if (!p) continue;
+        const asMatch = p.match(/([A-Za-z0-9_$]+)\s+as\s+([A-Za-z0-9_$]+)/);
+        ex.add(asMatch ? asMatch[2] : p);
+      }
+    }
+    exportsByFile.set(file, ex);
+  }
+
+  for (const [file, src] of visited.entries()) {
+    const res = await fetch(`${srv.base}/${file}`);
+    assert.equal(res.status, 200, `Expected HTTP 200 for /${file}, got ${res.status}`);
+
+    for (const m of src.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]\.\/([^'"]+)['"]/g)) {
+      const target = m[2];
+      const targetExports = exportsByFile.get(target) || new Set();
+      for (const part of m[1].split(',')) {
+        const p = part.trim();
+        if (!p) continue;
+        const name = p.split(/\s+as\s+/)[0].trim();
+        assert.ok(targetExports.has(name), `Module ${file} imports "${name}" from ./${target}, which is not exported`);
+      }
+    }
+  }
+});
+
+test('ambient room light API switches WLED state, disarms DDP, and computes Kelvin RGBW curves', async t => {
+  assert.deepEqual(rgbwForKelvin(4000), [255, 207, 149, 255]);
+  assert.equal(kelvinFromRgbw([255, 207, 149, 255]), 4000);
+  const warm = rgbwForKelvin(2700);
+  assert.deepEqual(warm, [255, 115, 18, 255]);
+  assert.equal(kelvinFromRgbw(warm), 2700);
+
+  const srv = await fixture(t);
+  const getInitial = await fetch(`${srv.base}/api/ambient-light`).then(r => r.json());
+  assert.equal(getInitial.ok, true);
+  assert.equal(typeof getInitial.ambientLight.kelvin, 'number');
+
+  const toggled = await srv.post('/api/ambient-light', { on: true, brightness: 85, kelvin: 3200, savePreset: true });
+  assert.equal(toggled.status, 200);
+  assert.equal(toggled.data.on, true);
+  assert.equal(toggled.data.brightness, 85);
+  assert.equal(toggled.data.kelvin, 3200);
+  assert.equal(srv.app.state().outputMode, 'ambient');
+  assert.equal(srv.app.state().armed, false);
+
+  const viaCommand = await srv.post('/api/live/command', { type: 'ambient_light', action: 'off' });
+  assert.equal(viaCommand.status, 200);
+  assert.equal(viaCommand.data.on, false);
+  assert.equal(viaCommand.data.brightness, 85);
+
+  const menuBarSync = await srv.post('/api/mode', {
+    mode: 'ambient',
+    restorePreset: false,
+    source: 'menubar',
+    on: false,
+    brightness: 15,
+    kelvin: 4700
+  });
+  assert.equal(menuBarSync.status, 200);
+  assert.equal(menuBarSync.data.ambientLight.on, false);
+  assert.equal(menuBarSync.data.ambientLight.brightness, 15);
+  assert.equal(menuBarSync.data.ambientLight.kelvin, 4700);
+
+  const showMode = await srv.post('/api/mode', { mode: 'show', source: 'daw' });
+  assert.equal(showMode.status, 200);
+  assert.equal(showMode.data.outputMode, 'show');
+  assert.equal(showMode.data.ambientLight.on, false);
+  assert.equal(showMode.data.ambientLight.brightness, 15);
+  assert.equal(showMode.data.ambientLight.kelvin, 4700);
+});
+
+
+

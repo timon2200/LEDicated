@@ -62,6 +62,8 @@ export function h(tag, props = {}, ...children) {
   return node;
 }
 
+export const el = h;
+
 const DEFAULT_BAR_IDS = ['L1', 'C1', 'R1', 'L2', 'C2', 'R2', 'L3', 'C3', 'R3'];
 
 /** Miniature 3×3 LED bar matrix icon showing which bars a zone preset activates. */
@@ -76,17 +78,41 @@ export function createZoneGridIcon(activeIds = [], barIds = DEFAULT_BAR_IDS) {
 let toastTimer = 0;
 export function toast(message, kind = 'info') {
   let box = document.getElementById('toast');
-  if (!box) { box = h('div', { id: 'toast', role: 'status', 'aria-live': 'polite' }); document.body.append(box); }
+  if (!box) {
+    box = h('div', { id: 'toast', role: 'status', 'aria-live': 'polite', popover: 'manual' });
+    document.body.append(box);
+  }
+  try {
+    if (typeof box.hidePopover === 'function') box.hidePopover();
+    if (typeof box.showPopover === 'function') box.showPopover();
+  } catch {}
   box.textContent = message; box.dataset.kind = kind; box.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => box.classList.remove('show'), kind === 'error' ? 6000 : 2800);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    box.classList.remove('show');
+    try { if (typeof box.hidePopover === 'function') box.hidePopover(); } catch {}
+  }, kind === 'error' ? 6000 : 2800);
 }
 
 /* ----------------------------------------------------------------- menu */
 let openMenu = null;
-export function closeMenu() { openMenu?.remove(); openMenu = null; }
-export function showMenu(x, y, items) {
+let menuDismissTimer = 0;
+let menuDismissHandler = null;
+export function closeMenu() {
+  clearTimeout(menuDismissTimer);
+  menuDismissTimer = 0;
+  if (menuDismissHandler && typeof removeEventListener === 'function') {
+    removeEventListener('pointerdown', menuDismissHandler, true);
+  }
+  menuDismissHandler = null;
+  if (!openMenu) return;
+  try { if (typeof openMenu.hidePopover === 'function') openMenu.hidePopover(); } catch {}
+  openMenu.remove();
+  openMenu = null;
+}
+export function showMenu(x, y, items, anchorRect = null) {
   closeMenu();
-  const menu = h('div', { class: 'ctx-menu', role: 'menu' });
+  const menu = h('div', { class: 'ctx-menu', role: 'menu', popover: 'manual' });
   for (const item of items) {
     if (item.separator) { menu.append(h('hr')); continue; }
     if (item.input) { menu.append(h('label', { class: 'ctx-input' }, item.label, item.input)); continue; }
@@ -94,12 +120,36 @@ export function showMenu(x, y, items) {
       h('span', {}, item.label), item.shortcut ? h('kbd', {}, item.shortcut) : null);
     menu.append(button);
   }
-  document.body.append(menu); openMenu = menu;
+  document.body.append(menu);
+  openMenu = menu;
+  try {
+    if (typeof menu.showPopover === 'function') menu.showPopover();
+  } catch {}
   const rect = menu.getBoundingClientRect();
-  menu.style.left = `${clamp(x, 4, innerWidth - rect.width - 4)}px`; menu.style.top = `${clamp(y, 4, innerHeight - rect.height - 4)}px`;
+  const vw = typeof innerWidth === 'number' && innerWidth > 0 ? innerWidth : 1280;
+  const vh = typeof innerHeight === 'number' && innerHeight > 0 ? innerHeight : 800;
+  let left = x;
+  let top = y;
+  if (rect.width > 0) {
+    if (left + rect.width > vw - 8) {
+      left = anchorRect && typeof anchorRect.right === 'number' ? anchorRect.right - rect.width : vw - rect.width - 8;
+    }
+    left = clamp(left, 8, Math.max(8, vw - rect.width - 8));
+  }
+  if (rect.height > 0) {
+    if (top + rect.height > vh - 8) {
+      top = anchorRect && typeof anchorRect.top === 'number' ? anchorRect.top - rect.height - 6 : y - rect.height;
+    }
+    top = clamp(top, 8, Math.max(8, vh - rect.height - 8));
+  }
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
   menu.querySelector('button:not(:disabled)')?.focus();
-  const dismiss = event => { if (!menu.contains(event.target)) { closeMenu(); removeEventListener('pointerdown', dismiss, true); } };
-  setTimeout(() => addEventListener('pointerdown', dismiss, true));
+  const dismiss = event => { if (!menu.contains(event.target)) closeMenu(); };
+  menuDismissHandler = dismiss;
+  menuDismissTimer = setTimeout(() => {
+    if (typeof addEventListener === 'function') addEventListener('pointerdown', dismiss, true);
+  });
   menu.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeMenu(); return; }
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;

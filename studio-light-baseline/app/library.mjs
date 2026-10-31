@@ -12,6 +12,7 @@ const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}
 const SHA = /^[0-9a-f]{64}$/;
 const DEFAULT_ROOT = join(homedir(), 'Library', 'Application Support', 'LEDicated');
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
+const MAX_ANALYSIS_JSON_BYTES = 32 * 1024 * 1024;
 const DISK_RESERVE_BYTES = Number(process.env.DISK_RESERVE_BYTES) ||
   (process.execArgv.includes('--test') || process.argv.some(a => a.includes('.test.')) ? 50 * 1024 * 1024 : 1024 * 1024 * 1024);
 
@@ -36,9 +37,9 @@ function label(value, description) {
   return value.trim();
 }
 
-function jsonValue(value) {
+function jsonValue(value, maxBytes = MAX_JSON_BYTES) {
   const json = JSON.stringify(value);
-  if (json === undefined || Buffer.byteLength(json) > MAX_JSON_BYTES) throw new Error('JSON je prevelik ili neispravan.');
+  if (json === undefined || Buffer.byteLength(json) > maxBytes) throw new Error('JSON je prevelik ili neispravan.');
   return JSON.parse(json);
 }
 
@@ -60,7 +61,7 @@ async function safeDirectory(path) {
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Mapa biblioteke ne smije biti simbolička poveznica.');
 }
 
-export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBytes = 512 * 1024 ** 2 } = {}) {
+export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBytes = 512 * 1024 ** 2, maxJsonBytes = MAX_JSON_BYTES, maxAnalysisJsonBytes = MAX_ANALYSIS_JSON_BYTES } = {}) {
   if (!Number.isSafeInteger(maxTracks) || maxTracks < 1 || !Number.isSafeInteger(maxAudioBytes) || maxAudioBytes < 1) {
     throw new Error('Neispravna ograničenja biblioteke.');
   }
@@ -68,33 +69,40 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
   const audioDir = join(base, 'audio');
   const timelineDir = join(base, 'timelines');
   const analysisDir = join(base, 'analyses');
+  const artworkDir = join(base, 'artwork');
   const indexPath = join(base, 'library.json');
   let index;
   let initializing;
   let tail = Promise.resolve();
 
   const fileFor = track => join(audioDir, `${track.sha256}${track.extension}`);
+  const artworkFor = track => join(artworkDir, `${track.sha256}.jpg`);
   const timelineFor = id => join(timelineDir, `${requireId(id)}.json`);
   const analysisFor = id => join(analysisDir, `${requireId(id)}.json`);
 
   async function init() {
     if (!initializing) initializing = (async () => {
-      for (const path of [base, audioDir, timelineDir, analysisDir]) await safeDirectory(path);
       try {
-        index = JSON.parse(await readFile(indexPath, 'utf8'));
-        if (index.version !== 1 || !Array.isArray(index.tracks) || !Array.isArray(index.sets)) throw new Error('Oštećena biblioteka.');
-        for (const track of index.tracks) {
-          requireId(track.id);
-          if (!SHA.test(track.sha256) || !EXTENSIONS.has(track.extension)) throw new Error('Oštećen zapis pjesme.');
+        for (const path of [base, audioDir, timelineDir, analysisDir, artworkDir]) await safeDirectory(path);
+        try {
+          index = JSON.parse(await readFile(indexPath, 'utf8'));
+          if (index.version !== 1 || !Array.isArray(index.tracks) || !Array.isArray(index.sets)) throw new Error('Oštećena biblioteka.');
+          for (const track of index.tracks) {
+            requireId(track.id);
+            if (!SHA.test(track.sha256) || !EXTENSIONS.has(track.extension)) throw new Error('Oštećen zapis pjesme.');
+          }
+          for (const set of index.sets) {
+            requireId(set.id);
+            if (!Array.isArray(set.trackIds) || set.trackIds.some(id => !ID.test(id))) throw new Error('Oštećen zapis seta.');
+          }
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+          index = { version: 1, tracks: [], sets: [] };
+          await atomicJson(indexPath, index);
         }
-        for (const set of index.sets) {
-          requireId(set.id);
-          if (!Array.isArray(set.trackIds) || set.trackIds.some(id => !ID.test(id))) throw new Error('Oštećen zapis seta.');
-        }
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-        index = { version: 1, tracks: [], sets: [] };
-        await atomicJson(indexPath, index);
+      } catch (err) {
+        initializing = null;
+        throw err;
       }
     })();
     return initializing;
@@ -132,6 +140,10 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
       if (typeof meta.sourceUrl === 'string' && meta.sourceUrl.trim()) out.sourceUrl = meta.sourceUrl.trim();
       if (typeof meta.theme === 'string' && meta.theme.trim()) out.theme = meta.theme.trim();
       if (typeof meta.author === 'string' && meta.author.trim()) out.author = meta.author.trim().slice(0, 80);
+      if (typeof meta.updatedBy === 'string' && meta.updatedBy.trim()) out.updatedBy = meta.updatedBy.trim().slice(0, 80);
+      if (typeof meta.showId === 'string' && meta.showId.trim()) out.showId = meta.showId.trim().slice(0, 120);
+      if (typeof meta.lastSummary === 'string' && meta.lastSummary.trim()) out.lastSummary = meta.lastSummary.trim().slice(0, 300);
+      if (Number.isInteger(meta.version) && meta.version >= 1) out.version = meta.version;
     }
     return out;
   }
@@ -275,11 +287,12 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
   async function list() { await init(); await tail; return copy(index.tracks); }
   async function getTrack(id) { await init(); await tail; return copy(trackById(id)); }
   async function getAudioPath(id) { await init(); await tail; return fileFor(trackById(id)); }
+  async function getArtworkPath(id) { await init(); await tail; return artworkFor(trackById(id)); }
 
   function updateTrack(id, patch) {
     return serialized(async () => {
       const track = trackById(id);
-      if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).some(key => !['title', 'author', 'videoId', 'sourceUrl'].includes(key))) throw new Error('Dopušteno je mijenjati samo naslov pjesme.');
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).some(key => !['title', 'author', 'updatedBy', 'videoId', 'sourceUrl', 'version', 'showId', 'lastSummary'].includes(key))) throw new Error('Dopušteno je mijenjati samo naslov pjesme.');
       const nextTitle = patch.title !== undefined ? label(patch.title, 'naziv pjesme') : undefined;
       const nextOriginalName = nextTitle !== undefined
         ? `${nextTitle.replace(/[\\/\x00-\x1f\x7f]+/g, ' ').trim()}${track.extension || '.mp3'}`
@@ -288,8 +301,12 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
         ...track,
         ...(nextTitle !== undefined ? { title: nextTitle, originalName: nextOriginalName } : {}),
         ...(typeof patch.author === 'string' ? { author: patch.author.trim().slice(0, 80) } : {}),
+        ...(typeof patch.updatedBy === 'string' ? { updatedBy: patch.updatedBy.trim().slice(0, 80) } : {}),
         ...(typeof patch.videoId === 'string' && patch.videoId.trim() ? { videoId: patch.videoId.trim() } : {}),
         ...(typeof patch.sourceUrl === 'string' && patch.sourceUrl.trim() ? { sourceUrl: patch.sourceUrl.trim() } : {}),
+        ...(typeof patch.showId === 'string' && patch.showId.trim() ? { showId: patch.showId.trim().slice(0, 120) } : {}),
+        ...(typeof patch.lastSummary === 'string' ? { lastSummary: patch.lastSummary.trim().slice(0, 300) } : {}),
+        ...(Number.isInteger(patch.version) && patch.version >= 1 ? { version: patch.version } : {}),
         updatedAt: new Date().toISOString()
       };
       await commit({ ...index, tracks: index.tracks.map(item => item.id === id ? nextTrack : item) });
@@ -297,10 +314,11 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
     });
   }
 
-  function saveSidecar(id, value, kind) {
+  function saveSidecar(id, value, kind, meta = {}) {
     return serialized(async () => {
       const track = trackById(id);
-      const data = jsonValue(value);
+      const maxBytes = kind === 'analysis' ? maxAnalysisJsonBytes : maxJsonBytes;
+      const data = jsonValue(value, maxBytes);
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Potreban je JSON objekt.');
       const path = kind === 'timeline' ? timelineFor(id) : analysisFor(id);
       await atomicJson(path, data);
@@ -308,11 +326,16 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
         status: 'ready',
         ...(Number.isFinite(data.durationSec) ? { durationSec: data.durationSec } : (Number.isFinite(data.duration) ? { durationSec: data.duration } : {})),
         ...(Number.isFinite(data.bpm) ? { bpm: data.bpm } : {})
-      } : {};
+      } : {
+        ...(Number.isFinite(data.durationSec) && !Number.isFinite(track.durationSec) ? { durationSec: data.durationSec } : {}),
+        ...(Number.isFinite(data.bpm) && !Number.isFinite(track.bpm) ? { bpm: data.bpm } : {})
+      };
+      const metaPatch = extractMeta(meta);
       const nextTrack = {
         ...track,
         [kind === 'timeline' ? 'hasTimeline' : 'hasAnalysis']: true,
         ...analysisPatch,
+        ...metaPatch,
         updatedAt: new Date().toISOString()
       };
       await commit({ ...index, tracks: index.tracks.map(item => item.id === id ? nextTrack : item) });
@@ -335,9 +358,15 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
   async function readSidecar(id, kind) {
     await init(); await tail;
     const track = trackById(id);
-    if (!track[kind === 'timeline' ? 'hasTimeline' : 'hasAnalysis']) return null;
+    const flagKey = kind === 'timeline' ? 'hasTimeline' : 'hasAnalysis';
+    if (!track[flagKey]) return null;
     const path = kind === 'timeline' ? timelineFor(id) : analysisFor(id);
-    return JSON.parse(await readFile(path, 'utf8'));
+    try {
+      return JSON.parse(await readFile(path, 'utf8'));
+    } catch (error) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
   }
 
   function deleteTrack(id) {
@@ -346,7 +375,7 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
       const tracks = index.tracks.filter(item => item.id !== id);
       const sets = index.sets.map(set => ({ ...set, trackIds: set.trackIds.filter(trackId => trackId !== id) }));
       await commit({ ...index, tracks, sets });
-      for (const path of [fileFor(track), timelineFor(id), analysisFor(id)]) {
+      for (const path of [fileFor(track), artworkFor(track), timelineFor(id), analysisFor(id)]) {
         await unlink(path).catch(error => { if (error.code !== 'ENOENT') throw error; });
       }
     });
@@ -391,8 +420,8 @@ export function createLibrary({ root = DEFAULT_ROOT, maxTracks = 100, maxAudioBy
 
   return {
     init, importFile, importTrack, importBuffer, importStream, findTrackByVideo, analyzeTrack,
-    list, getTrack, getAudioPath, updateTrack, deleteTrack,
-    saveTimeline: (id, timeline) => saveSidecar(id, timeline, 'timeline'),
+    list, getTrack, getAudioPath, getArtworkPath, updateTrack, deleteTrack,
+    saveTimeline: (id, timeline, meta) => saveSidecar(id, timeline, 'timeline', meta),
     getTimeline: id => readSidecar(id, 'timeline'),
     setAnalysis: saveAnalysis,
     saveAnalysis,

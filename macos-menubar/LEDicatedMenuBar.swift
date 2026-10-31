@@ -59,6 +59,73 @@ struct StudioLiveStatusResponse: Decodable {
 struct StudioServerState: Decodable {
     let armed: Bool?
     let outputMode: String?
+    let ambientOverride: Bool?
+    let ambientLight: StudioAmbientLightState?
+    let liveTelemetry: StudioLiveTelemetry?
+}
+
+struct StudioAmbientLightState: Decodable {
+    let on: Bool?
+    let brightness: Double?
+    let kelvin: Double?
+    let watts: Double?
+    let connected: Bool?
+    let isLive: Bool?
+    let updatedAt: Double?
+}
+
+struct StudioLiveTelemetry: Decodable {
+    let active: Bool?
+    let watts: Double?
+    let fps: Int?
+}
+
+/// Fast parser for WLED's compact `/win` XML response (~294 bytes, single TCP packet, zero JSON lock contention).
+struct WledWinStatus {
+    let isOn: Bool
+    let bri: Int
+    let col: [Int]
+    let deviceName: String
+    let isLive: Bool
+
+    static func parse(from data: Data) -> WledWinStatus? {
+        guard let xml = String(data: data, encoding: .utf8), xml.contains("<vs>") else { return nil }
+        func extractTag(_ tag: String) -> String? {
+            guard let r1 = xml.range(of: "<\(tag)>"),
+                  let r2 = xml.range(of: "</\(tag)>", range: r1.upperBound..<xml.endIndex) else { return nil }
+            return String(xml[r1.upperBound..<r2.lowerBound])
+        }
+        func extractAllInts(_ tag: String) -> [Int] {
+            var results: [Int] = []
+            var searchStart = xml.startIndex
+            while let r1 = xml.range(of: "<\(tag)>", range: searchStart..<xml.endIndex),
+                  let r2 = xml.range(of: "</\(tag)>", range: r1.upperBound..<xml.endIndex) {
+                if let v = Int(xml[r1.upperBound..<r2.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    results.append(v)
+                }
+                searchStart = r2.upperBound
+            }
+            return results
+        }
+        guard let acStr = extractTag("ac"), let ac = Int(acStr.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return nil
+        }
+        let cls = extractAllInts("cl")
+        let wv = Int(extractTag("wv")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "0") ?? 0
+        let r = cls.count > 0 ? cls[0] : 0
+        let g = cls.count > 1 ? cls[1] : 0
+        let b = cls.count > 2 ? cls[2] : 0
+        let rawDs = extractTag("ds") ?? "E8-WiFi Plus"
+        let isLive = rawDs.hasSuffix(" (live)")
+        let cleanName = isLive ? String(rawDs.dropLast(7)) : rawDs
+        return WledWinStatus(
+            isOn: ac > 0,
+            bri: max(0, min(255, ac)),
+            col: [r, g, b, wv],
+            deviceName: cleanName.isEmpty ? "E8-WiFi Plus" : cleanName,
+            isLive: isLive
+        )
+    }
 }
 
 struct StudioClientState: Decodable {
@@ -212,6 +279,7 @@ final class E8LightController: ObservableObject {
     private let projectRoot = "/Users/timonterzic/Documents/Projekti/LEDicated"
     private var appDir: String { "\(projectRoot)/studio-light-baseline/app" }
     private var configPath: String { "\(appDir)/config.json" }
+    private var ambientStatePath: String { "\(appDir)/ambient-light.json" }
     private var logFilePath: String { "\(projectRoot)/logs/ledicated.log" }
     private let targetMac = "d0ef767a14f8"
     private let mdnsFallbackHost = "wled-7a14f8.local"
@@ -229,23 +297,31 @@ final class E8LightController: ObservableObject {
     private var lastPollTimestamp: TimeInterval = 0
     private var lastE8Uptime: Int? = nil
     private var lastFlashWhSyncTime: TimeInterval = 0
+    private var lastSyncedAmbientUpdatedAt: Double = 0
     private var unlockedFullPowerOnE8: Bool = false
     private var lastObservedLive: Bool? = nil
     private var lastObservedLor: Int? = nil
     private var lastObservedOn: Bool? = nil
     private var probeCounter: Int = 0
     private var probeInFlight: Bool = false
+    private var consecutiveE8Failures: Int = 0
+    private var localStudioReachable: Bool = false
+    private var studioLiveWatts: Double? = nil
+    private var studioLiveFps: Int? = nil
 
     private lazy var urlSession: URLSession = {
         let cfg = URLSessionConfiguration.ephemeral
-        cfg.timeoutIntervalForRequest = 1.4
-        cfg.timeoutIntervalForResource = 2.2
+        cfg.timeoutIntervalForRequest = 1.8
+        cfg.timeoutIntervalForResource = 2.6
         cfg.waitsForConnectivity = false
         return URLSession(configuration: cfg)
     }()
 
     init() {
         let defaults = UserDefaults.standard
+        if defaults.object(forKey: "ledicated.isOn") != nil {
+            isOn = defaults.bool(forKey: "ledicated.isOn")
+        }
         if defaults.object(forKey: "ledicated.kelvin") != nil {
             kelvin = max(ColorTempMath.minKelvin, min(ColorTempMath.maxKelvin, defaults.double(forKey: "ledicated.kelvin")))
         }
@@ -258,12 +334,58 @@ final class E8LightController: ObservableObject {
         if let savedHost = defaults.string(forKey: "ledicated.e8Host"), !savedHost.isEmpty {
             deviceHost = savedHost
         }
+        loadAmbientStateFromDiskIfPresent()
+        persistLocalAmbientSettings()
         loadHostFromConfigJson()
         setupSleepWakeObservers()
         setupNetworkMonitor()
-        appendLocalLog(action: "MENUBAR_START", details: ["host": deviceHost, "kelvin": Int(kelvin), "brightness": Int(brightness)])
+        appendLocalLog(action: "MENUBAR_START", details: ["host": deviceHost, "on": isOn, "kelvin": Int(kelvin), "brightness": Int(brightness)])
         rescheduleTimer()
         Task { await pollAll() }
+    }
+
+    private func loadAmbientStateFromDiskIfPresent() {
+        let path = ambientStatePath
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            let onVal = json["on"] as? Bool
+            let briVal = (json["brightness"] as? NSNumber)?.doubleValue
+            let kelVal = (json["kelvin"] as? NSNumber)?.doubleValue
+            let upVal = (json["updatedAt"] as? NSNumber)?.doubleValue
+            Task { @MainActor in
+                guard let self, !self.isInteracting else { return }
+                if let upVal, upVal <= self.lastSyncedAmbientUpdatedAt { return }
+                if let onVal { self.isOn = onVal }
+                if let briVal { self.brightness = max(1.0, min(100.0, briVal.rounded())) }
+                if let kelVal {
+                    self.kelvin = max(ColorTempMath.minKelvin, min(ColorTempMath.maxKelvin, (kelVal / 50.0).rounded() * 50.0))
+                }
+                if let upVal { self.lastSyncedAmbientUpdatedAt = upVal }
+                self.onStatusBarUpdate?()
+            }
+        }
+    }
+
+    private func persistLocalAmbientSettings() {
+        let defaults = UserDefaults.standard
+        defaults.set(isOn, forKey: "ledicated.isOn")
+        defaults.set(brightness, forKey: "ledicated.brightness")
+        defaults.set(kelvin, forKey: "ledicated.kelvin")
+        let nowMs = floor(Date().timeIntervalSince1970 * 1000.0)
+        lastSyncedAmbientUpdatedAt = nowMs
+        let payload: [String: Any] = [
+            "on": isOn,
+            "brightness": Int(brightness.rounded()),
+            "kelvin": Int(kelvin.rounded()),
+            "updatedAt": nowMs
+        ]
+        let path = ambientStatePath
+        DispatchQueue.global(qos: .utility).async {
+            if let out = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
+                try? out.write(to: URL(fileURLWithPath: path), options: .atomic)
+            }
+        }
     }
 
     private func appendLocalLog(action: String, details: [String: Any] = [:]) {
@@ -296,34 +418,45 @@ final class E8LightController: ObservableObject {
     }
 
     private func loadHostFromConfigJson() {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let nodes = json["nodes"] as? [[String: Any]] else { return }
-        if let e8 = nodes.first(where: { ($0["id"] as? String) == "E8-1" }) ?? nodes.first,
-           let host = e8["host"] as? String, !host.isEmpty {
-            deviceHost = host
-            UserDefaults.standard.set(host, forKey: "ledicated.e8Host")
+        let path = configPath
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let nodes = json["nodes"] as? [[String: Any]] else { return }
+            if let e8 = nodes.first(where: { ($0["id"] as? String) == "E8-1" }) ?? nodes.first,
+               let host = e8["host"] as? String, !host.isEmpty {
+                Task { @MainActor in
+                    guard let self else { return }
+                    if self.deviceHost != host {
+                        self.deviceHost = host
+                        UserDefaults.standard.set(host, forKey: "ledicated.e8Host")
+                    }
+                }
+            }
         }
     }
 
     private func saveHostToConfigJson(_ newHost: String) {
         UserDefaults.standard.set(newHost, forKey: "ledicated.e8Host")
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
-              var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var nodes = json["nodes"] as? [[String: Any]] else { return }
-        var changed = false
-        for i in nodes.indices {
-            if (nodes[i]["id"] as? String) == "E8-1" || i == 0 {
-                if (nodes[i]["host"] as? String) != newHost {
-                    nodes[i]["host"] = newHost
-                    changed = true
+        let path = configPath
+        DispatchQueue.global(qos: .utility).async {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                  var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  var nodes = json["nodes"] as? [[String: Any]] else { return }
+            var changed = false
+            for i in nodes.indices {
+                if (nodes[i]["id"] as? String) == "E8-1" || i == 0 {
+                    if (nodes[i]["host"] as? String) != newHost {
+                        nodes[i]["host"] = newHost
+                        changed = true
+                    }
                 }
             }
-        }
-        if changed {
-            json["nodes"] = nodes
-            if let out = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
-                try? out.write(to: URL(fileURLWithPath: configPath), options: .atomic)
+            if changed {
+                json["nodes"] = nodes
+                if let out = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
+                    try? out.write(to: URL(fileURLWithPath: path), options: .atomic)
+                }
             }
         }
     }
@@ -469,9 +602,8 @@ final class E8LightController: ObservableObject {
         probeInFlight = true
         defer { probeInFlight = false }
 
-        async let studioTask: Void = pollLocalStudioStatus()
-        async let e8Task: Void = pollE8()
-        _ = await (studioTask, e8Task)
+        await pollLocalStudioStatus()
+        await pollE8()
     }
 
     private func pollLocalStudioStatus() async {
@@ -483,15 +615,42 @@ final class E8LightController: ObservableObject {
         do {
             let (data, response) = try await urlSession.data(for: req)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                localStudioReachable = false
+                studioLiveWatts = nil
+                studioLiveFps = nil
                 updateFallbackShowStatus()
                 return
             }
+            localStudioReachable = true
             let status = try JSONDecoder().decode(StudioLiveStatusResponse.self, from: data)
             if let mode = status.serverState?.outputMode ?? status.lan?.outputMode {
                 studioOutputMode = mode
             }
             if let armedVal = status.serverState?.armed ?? status.lan?.armed {
                 studioArmed = armedVal
+            }
+            if let tele = status.serverState?.liveTelemetry {
+                studioLiveWatts = tele.watts
+                studioLiveFps = tele.fps
+            }
+            if !isInteracting,
+               let amb = status.serverState?.ambientLight,
+               let remoteTs = amb.updatedAt,
+               remoteTs > lastSyncedAmbientUpdatedAt + 50,
+               Date().timeIntervalSince1970 - lastLiveSendTime > 1.5 {
+                lastSyncedAmbientUpdatedAt = remoteTs
+                if let onVal = amb.on {
+                    isOn = onVal
+                    UserDefaults.standard.set(onVal, forKey: "ledicated.isOn")
+                }
+                if let briVal = amb.brightness {
+                    brightness = max(1.0, min(100.0, briVal.rounded()))
+                    UserDefaults.standard.set(brightness, forKey: "ledicated.brightness")
+                }
+                if let kelVal = amb.kelvin {
+                    kelvin = max(ColorTempMath.minKelvin, min(ColorTempMath.maxKelvin, (kelVal / 50.0).rounded() * 50.0))
+                    UserDefaults.standard.set(kelvin, forKey: "ledicated.kelvin")
+                }
             }
             if let np = status.lan?.nowPlaying, let title = np.trackTitle, !title.isEmpty {
                 showTitle = title
@@ -512,6 +671,9 @@ final class E8LightController: ObservableObject {
             showIsPlaying = false
             showBpm = nil
         } catch {
+            localStudioReachable = false
+            studioLiveWatts = nil
+            studioLiveFps = nil
             updateFallbackShowStatus()
         }
     }
@@ -537,13 +699,40 @@ final class E8LightController: ObservableObject {
             return
         }
 
-        if isPopoverOpen || probeCounter % 2 == 0 {
+        // Only probe mDNS hostname after 2 consecutive IP failures so we don't double TCP SYN pressure on ESP32
+        if consecutiveE8Failures >= 2 && probeCounter % 3 == 0 {
             if await fetchFromHost(mdnsFallbackHost) {
                 return
             }
         }
 
-        if isConnected {
+        consecutiveE8Failures += 1
+
+        // If the local LEDicated Studio server on this Mac is running and armed (or in ambient mode),
+        // keep the Menu Bar UI connected and responsive even if a single 2.4 GHz Wi-Fi HTTP packet dropped.
+        if localStudioReachable && (studioArmed || studioOutputMode == "ambient") {
+            let wasConnected = isConnected
+            isConnected = true
+            if studioOutputMode == "show" && studioArmed {
+                isLiveDdpActive = true
+                if let sw = studioLiveWatts, sw > 0 {
+                    currentWatts = sw
+                } else if currentWatts < 5.5 {
+                    currentWatts = 5.5
+                }
+                refreshRateHz = studioLiveFps ?? (showIsPlaying ? 60 : 4)
+            } else {
+                isLiveDdpActive = false
+                refreshRateHz = isOn ? 2 : 0
+            }
+            onStatusBarUpdate?()
+            if !wasConnected {
+                rescheduleTimer()
+            }
+            return
+        }
+
+        if consecutiveE8Failures >= 3 && isConnected {
             isConnected = false
             wifiSignal = nil
             currentWatts = 0
@@ -555,88 +744,65 @@ final class E8LightController: ObservableObject {
     }
 
     private func fetchFromHost(_ host: String) async -> Bool {
-        guard let url = URL(string: "http://\(host)/json/si") else { return false }
+        guard let url = URL(string: "http://\(host)/win") else { return false }
         var req = URLRequest(url: url)
-        req.timeoutInterval = 1.3
+        req.timeoutInterval = 1.8
+        req.setValue("close", forHTTPHeaderField: "Connection")
         req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
 
         do {
             let (data, response) = try await urlSession.data(for: req)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return false }
-            let decoded = try JSONDecoder().decode(WledCombinedResponse.self, from: data)
-
-            if let mac = decoded.info.mac?.lowercased(), !mac.isEmpty, mac != targetMac {
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let win = WledWinStatus.parse(from: data) else {
                 return false
             }
 
+            consecutiveE8Failures = 0
             let wasConnected = isConnected
             isConnected = true
-            if let name = decoded.info.name, !name.isEmpty {
-                deviceName = name
-            }
-            wifiSignal = decoded.info.wifi?.signal
+            deviceName = win.deviceName
 
-            if let reportedIp = decoded.info.ip, !reportedIp.isEmpty, reportedIp != "0.0.0.0", reportedIp != deviceHost {
-                deviceHost = reportedIp
-                saveHostToConfigJson(reportedIp)
-            }
-
-            let lorVal = decoded.state.lor ?? 0
-            let rawLive = decoded.info.live ?? false
-            let isLive = rawLive && lorVal != 2
+            let isLive = win.isLive
             isLiveDdpActive = isLive
-            let rawFps = decoded.info.leds?.fps ?? 0
-            refreshRateHz = isLive ? max(rawFps, 1) : (decoded.state.on ? max(rawFps, 2) : 0)
-
-            let firstSeg = decoded.state.seg?.first
-            let firstCol = firstSeg?.col?.first
+            let effectiveFps = isLive
+                ? (studioLiveFps ?? (showIsPlaying ? 60 : 4))
+                : (win.isOn ? 2 : 0)
+            refreshRateHz = effectiveFps
 
             // Calculate real-time 24V Watts
-            let watts = computeRealWatts(
-                isOn: decoded.state.on,
-                wledPwrMa: decoded.info.leds?.pwr,
-                isLive: isLive,
-                bri: decoded.state.bri,
-                col: firstCol
-            )
+            let watts: Double
+            if isLive, let sw = studioLiveWatts, sw > 0 {
+                watts = sw
+            } else {
+                watts = computeRealWatts(
+                    isOn: win.isOn,
+                    wledPwrMa: nil,
+                    isLive: false,
+                    bri: win.bri,
+                    col: win.col
+                )
+            }
             currentWatts = watts
 
-            if lastObservedLive != rawLive || lastObservedLor != lorVal || lastObservedOn != decoded.state.on {
+            if lastObservedLive != isLive || lastObservedOn != win.isOn {
                 appendLocalLog(action: "E8_STATE_CHANGE", details: [
-                    "on": decoded.state.on,
-                    "bri": decoded.state.bri,
-                    "lor": lorVal,
-                    "live": rawLive,
-                    "fps": rawFps,
+                    "on": win.isOn,
+                    "bri": win.bri,
+                    "live": isLive,
+                    "fps": effectiveFps,
                     "watts": Int(watts.rounded()),
                     "studioMode": studioOutputMode
                 ])
-                lastObservedLive = rawLive
-                lastObservedLor = lorVal
-                lastObservedOn = decoded.state.on
+                lastObservedLive = isLive
+                lastObservedOn = win.isOn
             }
 
-            // If we are in ambient mode (no show active) and E8 has lor != 2, lock lor: 2 on E8 so stray UDP packets cannot cause a 0.5s blink
-            if !isInteracting && studioOutputMode == "ambient" && !showIsPlaying && lorVal != 2 {
+            // If we are in ambient mode (no show active) and E8 reports (live), lock LO=2 on E8
+            if !isInteracting && studioOutputMode == "ambient" && !showIsPlaying && isLive {
                 Task { await lockAmbientLorOnE8(host: deviceHost) }
             }
 
-            // Reconcile & integrate lifetime Wh with E8's onboard segment variable
             let nowTs = Date().timeIntervalSince1970
-            let e8Uptime = decoded.info.uptime ?? 0
-            if let e8Saved = parseEnergySegmentName(firstSeg?.n) {
-                if e8Saved.wh > totalWhEver {
-                    totalWhEver = e8Saved.wh
-                }
-                // If MacBook was asleep/away while E8 stayed running, catch up using E8's hardware uptime delta
-                if lastE8Uptime == nil, let savedUp = e8Saved.uptime, e8Uptime > savedUp {
-                    let awaySec = Double(e8Uptime - savedUp)
-                    if awaySec > 2.0 && awaySec < 86400.0 * 14.0 {
-                        totalWhEver += watts * (awaySec / 3600.0)
-                    }
-                }
-            }
-
             if lastPollTimestamp > 0 {
                 let dt = nowTs - lastPollTimestamp
                 if dt > 0 && dt < 120.0 {
@@ -644,45 +810,25 @@ final class E8LightController: ObservableObject {
                 }
             }
             lastPollTimestamp = nowTs
-            lastE8Uptime = e8Uptime
             UserDefaults.standard.set(totalWhEver, forKey: "ledicated.totalWhEver")
 
-            // Ensure WLED ABL & Gamma crush are disabled once per session so E8 outputs 100% power while keeping pwr telemetry active
-            if !unlockedFullPowerOnE8 && (decoded.info.leds?.maxpwr ?? 0) != 65000 {
-                unlockedFullPowerOnE8 = true
-                Task { await unlockFullPowerConfigOnE8(host: deviceHost) }
-            }
-
-            // Periodically sync totalWhEver to E8 RAM/flash (every 10 min when NOT running a live DDP show)
-            if !isLive && (nowTs - lastFlashWhSyncTime > 600.0) {
-                lastFlashWhSyncTime = nowTs
-                let segName = encodeEnergySegmentName(wh: totalWhEver, uptime: e8Uptime)
-                Task { await updateSegmentEnergyOnE8(host: deviceHost, segName: segName, saveToFlash: false) }
-            }
-
             if !isInteracting {
-                if !isLive {
-                    var hasNonZeroColor = true
-                    if let firstCol, firstCol.count >= 4 {
-                        let sum = firstCol[0] + firstCol[1] + firstCol[2] + firstCol[3]
-                        if sum > 0 {
-                            let estimatedK = ColorTempMath.kelvinFromRgbw(firstCol, fallback: kelvin)
-                            kelvin = estimatedK
-                            UserDefaults.standard.set(estimatedK, forKey: "ledicated.kelvin")
-                        } else {
-                            hasNonZeroColor = false
-                        }
-                    }
-                    isOn = decoded.state.on && hasNonZeroColor
-                    if decoded.state.bri > 0 && hasNonZeroColor {
-                        let pct = max(1.0, min(100.0, (Double(decoded.state.bri) / 255.0 * 100.0).rounded()))
-                        brightness = pct
-                        UserDefaults.standard.set(pct, forKey: "ledicated.brightness")
-                    }
-                } else {
-                    isOn = decoded.state.on
+                if isLive {
                     if showTitle == nil {
                         updateFallbackShowStatus()
+                    }
+                } else if !showIsPlaying && Date().timeIntervalSince1970 - lastLiveSendTime > 2.0 {
+                    let expectedBriByte = max(1, min(255, Int((brightness / 100.0 * 255.0).rounded())))
+                    let expectedRgbw = ColorTempMath.rgbwForKelvin(kelvin)
+                    let hasColorMismatch = win.col.count >= 4 && (
+                        abs(win.col[0] - expectedRgbw[0]) > 8 ||
+                        abs(win.col[1] - expectedRgbw[1]) > 8 ||
+                        abs(win.col[2] - expectedRgbw[2]) > 8 ||
+                        abs(win.col[3] - expectedRgbw[3]) > 8
+                    )
+                    let needsRestore = (win.isOn != isOn) || (isOn && (abs(win.bri - expectedBriByte) > 4 || hasColorMismatch))
+                    if needsRestore {
+                        Task { await enforceSavedMenuBarStateOnE8(host: host) }
                     }
                 }
             }
@@ -733,12 +879,17 @@ final class E8LightController: ObservableObject {
     // MARK: - User Actions (Power Switch, Brightness, Color Temperature)
 
     func togglePower() {
-        setPower(!isOn)
+        if isLiveDdpActive {
+            setPower(true)
+        } else {
+            setPower(!isOn)
+        }
     }
 
     func setPower(_ newOn: Bool) {
         isOn = newOn
         isLiveDdpActive = false
+        persistLocalAmbientSettings()
         let rgbw = ColorTempMath.rgbwForKelvin(kelvin)
         let briByte = max(1, min(255, Int((brightness / 100.0 * 255.0).rounded())))
         currentWatts = computeRealWatts(isOn: newOn, wledPwrMa: nil, isLive: false, bri: briByte, col: rgbw)
@@ -749,11 +900,11 @@ final class E8LightController: ObservableObject {
     func updateBrightness(_ newBri: Double, isDragging: Bool) {
         isInteracting = isDragging
         brightness = max(1.0, min(100.0, newBri.rounded()))
-        UserDefaults.standard.set(brightness, forKey: "ledicated.brightness")
         if !isOn && brightness > 2.0 {
             isOn = true
             onStatusBarUpdate?()
         }
+        persistLocalAmbientSettings()
         isLiveDdpActive = false
         let rgbw = ColorTempMath.rgbwForKelvin(kelvin)
         let briByte = max(1, min(255, Int((brightness / 100.0 * 255.0).rounded())))
@@ -764,11 +915,11 @@ final class E8LightController: ObservableObject {
     func updateKelvin(_ newKelvin: Double, isDragging: Bool) {
         isInteracting = isDragging
         kelvin = max(ColorTempMath.minKelvin, min(ColorTempMath.maxKelvin, (newKelvin / 50.0).rounded() * 50.0))
-        UserDefaults.standard.set(kelvin, forKey: "ledicated.kelvin")
         if !isOn {
             isOn = true
             onStatusBarUpdate?()
         }
+        persistLocalAmbientSettings()
         isLiveDdpActive = false
         let rgbw = ColorTempMath.rgbwForKelvin(kelvin)
         let briByte = max(1, min(255, Int((brightness / 100.0 * 255.0).rounded())))
@@ -808,29 +959,13 @@ final class E8LightController: ObservableObject {
         disarmLocalServerIfRunning()
 
         Task {
-            guard let url = URL(string: "http://\(host)/json/state") else { return }
+            let winUrlStr = "http://\(host)/win&T=\(targetOn ? 1 : 0)&A=\(briByte)&R=\(rgbw[0])&G=\(rgbw[1])&B=\(rgbw[2])&W=\(rgbw[3])&R2=0&G2=0&B2=0&W2=0&FX=0&LO=2"
+            guard let url = URL(string: winUrlStr) else { return }
             var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpMethod = "GET"
+            req.setValue("close", forHTTPHeaderField: "Connection")
             req.timeoutInterval = 1.5
-
-            let payload: [String: Any] = [
-                "on": targetOn,
-                "bri": briByte,
-                "lor": 2,
-                "transition": 2,
-                "seg": [
-                    [
-                        "id": 0,
-                        "n": segName,
-                        "on": true,
-                        "bri": 255,
-                        "fx": 0,
-                        "col": [rgbw, [0, 0, 0, 0], [0, 0, 0, 0]]
-                    ]
-                ]
-            ]
-            req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+            req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
             _ = try? await urlSession.data(for: req)
         }
 
@@ -854,50 +989,44 @@ final class E8LightController: ObservableObject {
     }
 
     private func lockAmbientLorOnE8(host: String) async {
-        guard let stateUrl = URL(string: "http://\(host)/json/state") else { return }
-        var req = URLRequest(url: stateUrl)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        guard let winUrl = URL(string: "http://\(host)/win&LO=2") else { return }
+        var req = URLRequest(url: winUrl)
+        req.httpMethod = "GET"
+        req.setValue("close", forHTTPHeaderField: "Connection")
         req.timeoutInterval = 1.2
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["lor": 2, "transition": 0])
+        req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         _ = try? await urlSession.data(for: req)
         appendLocalLog(action: "AMBIENT_LOR_GUARD", details: ["host": host, "lor": 2])
     }
 
     private func persistToE8Flash(isOn: Bool, briByte: Int, rgbw: [Int], segName: String, host: String) async {
-        // Save Preset 1 via /json/state ("psave": 1) without touching /json/cfg.
-        // Calling /json/cfg on ESP32 WLED re-initializes the RMT LED bus and causes a ~0.4s blink;
-        // /json/state with psave:1 updates presets.json silently with zero flicker!
-        if let stateUrl = URL(string: "http://\(host)/json/state") {
-            var stateReq = URLRequest(url: stateUrl)
-            stateReq.httpMethod = "POST"
-            stateReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            stateReq.timeoutInterval = 2.0
-
-            let presetPayload: [String: Any] = [
-                "on": isOn,
-                "bri": briByte,
-                "lor": 2,
-                "transition": 0,
-                "seg": [
-                    [
-                        "id": 0,
-                        "n": segName,
-                        "on": true,
-                        "bri": 255,
-                        "fx": 0,
-                        "col": [rgbw, [0, 0, 0, 0], [0, 0, 0, 0]]
-                    ]
-                ],
-                "psave": 1,
-                "n": "Uredska rasvjeta",
-                "ib": true,
-                "sb": true
-            ]
-            stateReq.httpBody = try? JSONSerialization.data(withJSONObject: presetPayload)
-            _ = try? await urlSession.data(for: stateReq)
+        // Save Preset 1 via WLED's lightweight /win&...&PS=1 endpoint without touching /json/cfg or locking the JSON buffer.
+        let winUrlStr = "http://\(host)/win&T=\(isOn ? 1 : 0)&A=\(briByte)&R=\(rgbw[0])&G=\(rgbw[1])&B=\(rgbw[2])&W=\(rgbw[3])&R2=0&G2=0&B2=0&W2=0&FX=0&LO=2&PS=1"
+        if let winUrl = URL(string: winUrlStr) {
+            var winReq = URLRequest(url: winUrl)
+            winReq.httpMethod = "GET"
+            winReq.setValue("close", forHTTPHeaderField: "Connection")
+            winReq.timeoutInterval = 1.8
+            winReq.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+            _ = try? await urlSession.data(for: winReq)
             appendLocalLog(action: "PRESET_SAVED", details: ["on": isOn, "bri": briByte, "kelvin": Int(kelvin), "lor": 2])
         }
+    }
+
+    private func enforceSavedMenuBarStateOnE8(host: String) async {
+        let targetOn = isOn
+        let briByte = max(1, min(255, Int((brightness / 100.0 * 255.0).rounded())))
+        let rgbw = ColorTempMath.rgbwForKelvin(kelvin)
+        let lor = (studioOutputMode == "ambient") ? 2 : 0
+        let winUrlStr = "http://\(host)/win&T=\(targetOn ? 1 : 0)&A=\(briByte)&R=\(rgbw[0])&G=\(rgbw[1])&B=\(rgbw[2])&W=\(rgbw[3])&R2=0&G2=0&B2=0&W2=0&FX=0&LO=\(lor)&PS=1"
+        guard let winUrl = URL(string: winUrlStr) else { return }
+        var winReq = URLRequest(url: winUrl)
+        winReq.httpMethod = "GET"
+        winReq.setValue("close", forHTTPHeaderField: "Connection")
+        winReq.timeoutInterval = 1.5
+        winReq.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        _ = try? await urlSession.data(for: winReq)
+        appendLocalLog(action: "RESTORE_SAVED_STATE", details: ["on": targetOn, "bri": briByte, "kelvin": Int(kelvin), "lor": lor])
     }
 
     private func disarmLocalServerIfRunning() {
@@ -910,7 +1039,14 @@ final class E8LightController: ObservableObject {
         req.setValue("127.0.0.1:8787", forHTTPHeaderField: "Host")
         req.setValue("http://127.0.0.1:8787", forHTTPHeaderField: "Origin")
         req.timeoutInterval = 0.6
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["mode": "ambient", "restorePreset": false, "source": "menubar"])
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "mode": "ambient",
+            "restorePreset": false,
+            "source": "menubar",
+            "on": isOn,
+            "brightness": Int(brightness.rounded()),
+            "kelvin": Int(kelvin.rounded())
+        ])
         Task {
             _ = try? await urlSession.data(for: req)
         }
@@ -920,6 +1056,7 @@ final class E8LightController: ObservableObject {
         if !isOn {
             isOn = true
         }
+        persistLocalAmbientSettings()
         isLiveDdpActive = false
         studioOutputMode = "ambient"
         studioArmed = false
@@ -936,24 +1073,17 @@ final class E8LightController: ObservableObject {
         isLiveDdpActive = true
         studioOutputMode = "show"
         studioArmed = true
-        isOn = true
         appendLocalLog(action: "TAKEOVER_SHOW", details: ["host": host])
         onStatusBarUpdate?()
 
         Task {
-            // 1. Unlock WLED from lor:2 so E8 immediately accepts DDP frames
-            if let e8Url = URL(string: "http://\(host)/json/state") {
+            // 1. Unlock WLED from lor:2 via lightweight /win&T=1&A=255&R=0&G=0&B=0&W=0&LO=0 so E8 accepts DDP frames with dark fallback
+            if let e8Url = URL(string: "http://\(host)/win&T=1&A=255&R=0&G=0&B=0&W=0&R2=0&G2=0&B2=0&W2=0&FX=0&LO=0") {
                 var e8Req = URLRequest(url: e8Url)
-                e8Req.httpMethod = "POST"
-                e8Req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                e8Req.timeoutInterval = 1.2
-                let payload: [String: Any] = [
-                    "on": true,
-                    "bri": 255,
-                    "transition": 0,
-                    "lor": 0
-                ]
-                e8Req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+                e8Req.httpMethod = "GET"
+                e8Req.setValue("close", forHTTPHeaderField: "Connection")
+                e8Req.timeoutInterval = 1.4
+                e8Req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
                 _ = try? await urlSession.data(for: e8Req)
             }
 
@@ -1349,9 +1479,9 @@ struct MenuBarPopoverView: View {
                         .font(.system(size: 11, weight: .regular))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 BigAppleSwitch(
                     isOn: controller.isOn,
@@ -1402,7 +1532,7 @@ struct MenuBarPopoverView: View {
                                 endPoint: .trailing
                             )
                         ),
-                        isEnabled: controller.isConnected && controller.isOn,
+                        isEnabled: controller.isConnected,
                         onChanged: { newVal, dragging in
                             controller.updateBrightness(newVal, isDragging: dragging)
                         }
@@ -1423,7 +1553,7 @@ struct MenuBarPopoverView: View {
 
                     TemperaturePillSlider(
                         kelvin: $controller.kelvin,
-                        isEnabled: controller.isConnected && controller.isOn,
+                        isEnabled: controller.isConnected,
                         onChanged: { newK, dragging in
                             controller.updateKelvin(newK, isDragging: dragging)
                         }
@@ -1462,6 +1592,9 @@ struct MenuBarPopoverView: View {
                                     Text("\(bpm) BPM")
                                         .font(.system(size: 9, weight: .semibold))
                                         .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                        .layoutPriority(1)
                                         .padding(.horizontal, 5)
                                         .padding(.vertical, 1.5)
                                         .background(Capsule().fill(Color.primary.opacity(0.08)))
@@ -1473,8 +1606,7 @@ struct MenuBarPopoverView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                         }
-
-                        Spacer(minLength: 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .contentShape(Rectangle())
                 }
@@ -1494,7 +1626,9 @@ struct MenuBarPopoverView: View {
                             .font(.system(size: 10, weight: .bold))
                         Text(controller.isLiveDdpActive ? "Uredsko" : "Pusti Show")
                             .font(.system(size: 10.5, weight: .semibold))
+                            .lineLimit(1)
                     }
+                    .fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(controller.isLiveDdpActive ? Color.orange : Color.white)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5.5)
@@ -1600,6 +1734,7 @@ struct MenuBarPopoverView: View {
         }
         .padding(13)
         .frame(width: 312)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -1701,6 +1836,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private let controller = E8LightController()
+    private var hostingController: NSHostingController<MenuBarPopoverView>?
     private var eventMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1714,7 +1850,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         controller.onStatusBarUpdate = { [weak self] in
-            self?.updateStatusBarIcon()
+            guard let self else { return }
+            self.updateStatusBarIcon()
+            if self.popover.isShown {
+                self.updatePopoverSize()
+            }
         }
         updateStatusBarIcon()
 
@@ -1726,14 +1866,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         )
 
         let hosting = NSHostingController(rootView: contentView)
+        hosting.safeAreaRegions = []
+        hosting.sizingOptions = [.preferredContentSize, .intrinsicContentSize, .minSize, .maxSize]
+        hostingController = hosting
         popover.contentViewController = hosting
         popover.behavior = .transient
         popover.animates = true
         popover.delegate = self
+        updatePopoverSize()
 
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             guard let self, self.popover.isShown else { return }
             self.closePopover()
+        }
+    }
+
+    private func updatePopoverSize() {
+        guard let hosting = hostingController else { return }
+        hosting.view.layoutSubtreeIfNeeded()
+        let targetWidth: CGFloat = 312
+        let measured = hosting.sizeThatFits(in: CGSize(width: targetWidth, height: .greatestFiniteMagnitude))
+        let fitting = hosting.view.fittingSize
+        let height = ceil(max(measured.height, fitting.height))
+        let size = NSSize(width: targetWidth, height: height)
+        if hosting.preferredContentSize != size {
+            hosting.preferredContentSize = size
+        }
+        if popover.contentSize != size {
+            popover.contentSize = size
         }
     }
 
@@ -1796,7 +1956,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover.isShown {
             closePopover()
         } else {
+            updatePopoverSize()
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+            updatePopoverSize()
             popover.contentViewController?.view.window?.makeKey()
             controller.setPopoverOpen(true)
         }

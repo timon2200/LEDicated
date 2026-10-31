@@ -4,10 +4,10 @@
  * snap, resize, alt-drag duplicate, drag-drop of effect presets.
  */
 import {
-  MIN_CLIP_SEC, addClip, addKeyframe, addLayer, beatPosition, clamp, clipEnd, clipsInRect, deleteClips, duplicateClips, duplicateLayer, easeValue, envelopeAt, findClip, moveClip, moveKeyframe, moveLayer, refKey,
+  MIN_CLIP_SEC, addClip, addKeyframe, addLayer, beatPosition, clamp, clipEnd, clipsInRect, deleteClips, duplicateClips, duplicateLayer, easeValue, envelopeAt, findClip, inferLayerDriver, moveClip, moveKeyframe, moveLayer, refKey,
   removeKeyframe, removeLayer, resizeClip, setKeyframeEase, snapTime, splitClip, timeAtBeat
 } from './daw-state.mjs';
-import { TIMELINE_BLENDS, driverLevel, regenerateSectionClips } from './timeline.mjs';
+import { TIMELINE_BLENDS, adjustClipsForSectionBoundary, driverLevel, regenerateSectionClips } from './timeline.mjs';
 import { SECTION_TYPES, SECTION_NAMES, SECTION_COLORS } from './audio-sections.mjs';
 import { clipUiColor, h, hexToRgb, showMenu } from './daw-ui.mjs';
 
@@ -35,7 +35,7 @@ export function relabelSections(sections) {
 
 const RULER_BARS = 18, RULER_LOOP = 14, RULER_SECTIONS = 18;
 const RULER_H = RULER_BARS + RULER_LOOP + RULER_SECTIONS;
-const AUDIO_H = 76, ANALYSIS_H = 44, EDGE = 7;
+const AUDIO_H = 54, ANALYSIS_H = 66, EDGE = 7;
 export const LANE_HEIGHTS = { S: 46, M: 64, L: 92 };
 export const PRESET_LABELS = {
   wash: 'Wash', pulse: 'Puls', columns: 'Stupci', chase: 'Trkač', flash: 'Flash', wave: 'Val',
@@ -52,7 +52,7 @@ const STEM_ITEMS = [
 
 export function createPlaylist(host, ctx) {
   const { store } = ctx;
-  const state = { pps: 20, scrollSec: 0, laneSize: 'M', expandedLayerId: null, selectedKeyframe: null, selection: [], hover: null, marquee: null, ghost: null, gesture: null, dirty: true, peaks: null, peaksFor: null, solo: new Set(), spaceDown: false, shiftDown: false };
+  const state = { pps: 20, scrollSec: 0, laneSize: 'M', expandedLayerId: null, selectedKeyframe: null, selection: [], selectedSections: [], lastSectionAnchor: null, hover: null, marquee: null, ghost: null, gesture: null, dirty: true, peaks: null, peaksFor: null, solo: new Set(), spaceDown: false, shiftDown: false };
   if (ctx.stems?.subscribe) {
     ctx.stems.subscribe(() => {
       renderHeads();
@@ -60,7 +60,7 @@ export function createPlaylist(host, ctx) {
   }
 
   /* ---------------------------------------------------------------- DOM */
-  const corner = h('div', { class: 'pl-corner' });
+  const corner = h('div', { class: 'pl-corner' }, ctx.cornerContent || null);
   const ruler = h('canvas', { class: 'pl-ruler', 'aria-label': 'Ravnalo, takt i loop' });
   const topRow = h('div', { class: 'pl-top' }, corner, ruler);
   const heads = h('div', { class: 'pl-heads' });
@@ -193,11 +193,41 @@ export function createPlaylist(host, ctx) {
   function renderHeads() {
     heads.replaceChildren();
     heads.style.height = `${bodyHeight()}px`;
+    heads.dataset.laneSize = state.laneSize;
+    const audioMuted = ctx.isAudioMuted();
+    const volPct = Math.round(ctx.getVolume() * 100);
+    const volLabel = h('span', { class: 'head-vol-pct' }, audioMuted ? 'MUTE' : `${volPct}%`);
     heads.append(
-      h('div', { class: 'pl-head pl-head-audio', style: { height: `${AUDIO_H}px` } },
-        h('div', { class: 'head-title' }, h('b', {}, 'AUDIO'), h('span', { title: ctx.getTrackTitle() }, ctx.getTrackTitle())),
-        h('div', { class: 'head-row' }, h('button', { type: 'button', class: ctx.isAudioMuted() ? 'mini on' : 'mini', title: 'Utišaj audio (svjetlo nastavlja)', onClick: () => { ctx.toggleAudioMute(); renderHeads(); } }, 'M'),
-          h('input', { type: 'range', min: 0, max: 100, value: Math.round(ctx.getVolume() * 100), class: 'mini-range', 'aria-label': 'Glasnoća', title: 'Glasnoća reprodukcije', onInput: e => ctx.setVolume(Number(e.target.value) / 100) }))),
+      h('div', { class: `pl-head pl-head-audio${audioMuted ? ' muted' : ''}`, style: { height: `${AUDIO_H}px` } },
+        h('div', { class: 'head-title' },
+          h('b', {}, 'AUDIO'),
+          h('span', { class: 'head-track-name', title: ctx.getTrackTitle() }, ctx.getTrackTitle()),
+          volLabel
+        ),
+        h('div', { class: 'head-row' },
+          h('button', {
+            type: 'button',
+            class: audioMuted ? 'mini mute on' : 'mini mute',
+            'aria-pressed': String(audioMuted),
+            title: 'Utišaj audio (svjetlo nastavlja)',
+            onClick: () => { ctx.toggleAudioMute(); renderHeads(); }
+          }, 'M'),
+          h('input', {
+            type: 'range',
+            min: 0,
+            max: 100,
+            value: volPct,
+            class: 'mini-range',
+            'aria-label': 'Glasnoća',
+            title: 'Glasnoća reprodukcije',
+            onInput: e => {
+              const v = Number(e.target.value);
+              ctx.setVolume(v / 100);
+              volLabel.textContent = ctx.isAudioMuted() ? 'MUTE' : `${Math.round(v)}%`;
+            }
+          })
+        )
+      ),
       (() => {
         const st = ctx.stems?.getState?.() || { solo: new Set(), muted: new Set() };
         const hasStemFilter = (st.solo?.size > 0) || (st.muted?.size > 0);
@@ -210,7 +240,7 @@ export function createPlaylist(host, ctx) {
         return h('div', { class: 'pl-head pl-head-analysis', style: { height: `${ANALYSIS_H}px` } },
           h('div', { class: 'head-title' },
             h('b', {}, 'STEMOVI'),
-            h('span', { class: 'stem-title-desc' }, descText),
+            h('span', { class: `stem-title-desc${hasStemFilter ? ' active' : ''}` }, descText),
             hasStemFilter
               ? h('button', {
                   type: 'button',
@@ -218,21 +248,21 @@ export function createPlaylist(host, ctx) {
                   title: 'Vrati na cijeli audio miks (isključi solo i mute)',
                   onPointerDown: e => e.stopPropagation(),
                   onClick: e => { e.stopPropagation(); ctx.stems?.resetAll(); renderHeads(); ctx.onSolo?.(); }
-                }, 'Miks')
+                }, 'Sve')
               : null
           ),
           h('div', { class: 'head-sub stems' },
             ...STEM_ITEMS.map(({ id, short, label, color }) => {
-              const isSolo = st.solo?.has(id);
-              const isMuted = st.muted?.has(id);
-              return h('div', { class: `stem-ctl${isSolo ? ' solo' : ''}${isMuted ? ' muted' : ''}`, style: { '--stem-c': color } },
-                h('span', { class: 'dot', style: { background: color } }),
-                h('span', { class: 'stem-name', title: `${label} (audio stem)` }, short),
-                h('button', {
-                  type: 'button',
-                  class: `mini-stem solo${isSolo ? ' on' : ''}`,
-                  title: `Solo ${label} (čuj samo ovaj stem)`,
-                  'aria-pressed': String(isSolo),
+              const isSolo = Boolean(st.solo?.has(id));
+              const isMuted = Boolean(st.muted?.has(id));
+              const isDimmed = (st.solo?.size > 0 && !isSolo) || isMuted;
+              return h('div', {
+                class: `stem-ctl${isSolo ? ' solo' : ''}${isMuted ? ' muted' : ''}${isDimmed ? ' dimmed' : ''}`,
+                style: { '--stem-c': color }
+              },
+                h('span', {
+                  class: 'stem-info',
+                  title: `${label} — klikni naziv za brzi Solo (Shift+klik za više)`,
                   onPointerDown: e => e.stopPropagation(),
                   onClick: e => {
                     e.stopPropagation();
@@ -240,29 +270,54 @@ export function createPlaylist(host, ctx) {
                     renderHeads();
                     ctx.onSolo?.();
                   }
-                }, 'S'),
-                h('button', {
-                  type: 'button',
-                  class: `mini-stem mute${isMuted ? ' on' : ''}`,
-                  title: `Utišaj ${label} u audio miksu`,
-                  'aria-pressed': String(isMuted),
-                  onPointerDown: e => e.stopPropagation(),
-                  onClick: e => {
-                    e.stopPropagation();
-                    ctx.stems?.toggleMute(id);
-                    renderHeads();
-                    ctx.onSolo?.();
-                  }
-                }, 'M')
+                },
+                  h('span', { class: 'dot', style: { background: color } }),
+                  h('span', { class: 'stem-name' }, short)
+                ),
+                h('div', { class: 'stem-btns' },
+                  h('button', {
+                    type: 'button',
+                    class: `mini-stem mute${isMuted ? ' on' : ''}`,
+                    title: `Utišaj ${label} u audio miksu`,
+                    'aria-pressed': String(isMuted),
+                    onPointerDown: e => e.stopPropagation(),
+                    onClick: e => {
+                      e.stopPropagation();
+                      ctx.stems?.toggleMute(id);
+                      renderHeads();
+                      ctx.onSolo?.();
+                    }
+                  }, 'M'),
+                  h('button', {
+                    type: 'button',
+                    class: `mini-stem solo${isSolo ? ' on' : ''}`,
+                    title: `Solo ${label} (čuj samo ovaj stem; Shift+klik za više)`,
+                    'aria-pressed': String(isSolo),
+                    onPointerDown: e => e.stopPropagation(),
+                    onClick: e => {
+                      e.stopPropagation();
+                      ctx.stems?.toggleSolo(id, e.shiftKey);
+                      renderHeads();
+                      ctx.onSolo?.();
+                    }
+                  }, 'S')
+                )
               );
             })
           )
         );
       })()
     );
+    const anyLayerSolo = state.solo.size > 0;
     tl().layers.forEach((layer, index) => {
       const expanded = isLayerExpanded(layer.id);
-      const row = h('div', { class: `pl-head pl-head-layer${index === ctx.getActiveLayerIndex() ? ' active' : ''}${layer.enabled ? '' : ' muted'}${expanded ? ' expanded' : ''}`, style: { height: `${layerHeight(index)}px`, '--layer': layer.color || '#3aa0ff' }, dataset: { layer: layer.id } });
+      const solo = state.solo.has(layer.id);
+      const dimmedBySolo = anyLayerSolo && !solo;
+      const row = h('div', {
+        class: `pl-head pl-head-layer${index === ctx.getActiveLayerIndex() ? ' active' : ''}${layer.enabled ? '' : ' muted'}${solo ? ' soloed' : ''}${dimmedBySolo ? ' solo-dim' : ''}${expanded ? ' expanded' : ''}`,
+        style: { height: `${layerHeight(index)}px`, '--layer': layer.color || '#3aa0ff' },
+        dataset: { layer: layer.id }
+      });
       const expandBtn = h('button', {
         type: 'button',
         class: `layer-expand-btn${expanded ? ' on' : ''}`,
@@ -284,7 +339,20 @@ export function createPlaylist(host, ctx) {
           if (save && input.value.trim()) {
             store.commit('Preimenuj sloj', t => {
               const l = t.layers.find(x => x.id === layer.id);
-              if (l) l.name = input.value.trim().slice(0, 40);
+              if (l) {
+                l.name = input.value.trim().slice(0, 40);
+                for (const c of l.clips || []) {
+                  if (!c.driver || c.driver === 'none') {
+                    const inferred = inferLayerDriver(l, c.startSec);
+                    if (inferred.driver && inferred.driver !== 'none') {
+                      c.driver = inferred.driver;
+                      c.driverGain = inferred.driverGain;
+                      if (inferred.driver === 'band' && inferred.band) c.band = structuredClone(inferred.band);
+                      else delete c.band;
+                    }
+                  }
+                }
+              }
             });
           }
           renderHeads();
@@ -300,19 +368,27 @@ export function createPlaylist(host, ctx) {
         input.focus();
         input.select();
       });
-      const solo = state.solo.has(layer.id);
       const blend = h('select', { class: 'mini-select', 'aria-label': `Blend ${layer.name}`, title: 'Kako se sloj miješa sa slojevima ispod', onPointerDown: e => e.stopPropagation(), onChange: e => { store.commit('Blend', t => { t.layers.find(l => l.id === layer.id).blend = e.target.value; }); } }, TIMELINE_BLENDS.map(b => h('option', { value: b, selected: layer.blend === b }, b)));
-      const opacity = h('input', { type: 'range', min: 0, max: 100, value: Math.round(layer.opacity * 100), class: 'mini-range', 'aria-label': `Prozirnost ${layer.name}`, title: 'Prozirnost sloja' });
+      const opPct = Math.round(layer.opacity * 100);
+      const opReadout = h('span', { class: 'layer-op-pct' }, `${opPct}%`);
+      const opacity = h('input', { type: 'range', min: 0, max: 100, value: opPct, class: 'mini-range', 'aria-label': `Prozirnost ${layer.name}`, title: 'Prozirnost sloja' });
       opacity.addEventListener('pointerdown', e => { e.stopPropagation(); store.begin(); });
-      opacity.addEventListener('input', () => store.update(t => { t.layers.find(l => l.id === layer.id).opacity = Number(opacity.value) / 100; }));
+      opacity.addEventListener('input', () => {
+        const v = Number(opacity.value);
+        opReadout.textContent = `${Math.round(v)}%`;
+        store.update(t => { t.layers.find(l => l.id === layer.id).opacity = v / 100; });
+      });
       opacity.addEventListener('change', () => { store.end('Prozirnost sloja'); ctx.onStructure?.(); });
 
       let expandedPanel = null;
       if (expanded) {
         const curTime = ctx.getTime();
         const activeClip = layer.clips.find(c => curTime >= c.startSec && curTime <= clipEnd(c)) || layer.clips[0];
-        const drvName = activeClip?.driver && activeClip.driver !== 'none'
-          ? `${DRIVER_LABELS[activeClip.driver] || activeClip.driver} ${(activeClip.driverGain ?? 1).toFixed(1)}×`
+        const drvSpec = (activeClip?.driver && activeClip.driver !== 'none')
+          ? activeClip
+          : inferLayerDriver(layer, curTime);
+        const drvName = drvSpec?.driver && drvSpec.driver !== 'none'
+          ? `${DRIVER_LABELS[drvSpec.driver] || drvSpec.driver} ${(drvSpec.driverGain ?? 1).toFixed(1)}×`
           : 'BEZ DRIVERA';
 
         const easeEaseBtn = h('button', {
@@ -340,10 +416,10 @@ export function createPlaylist(host, ctx) {
 
       row.append(
         h('div', { class: 'head-top' }, expandBtn, name,
-          h('button', { type: 'button', class: layer.enabled ? 'mini' : 'mini on', title: 'Utišaj sloj (mute)', 'aria-pressed': String(!layer.enabled), onPointerDown: e => e.stopPropagation(), onClick: e => { e.stopPropagation(); store.commit('Mute sloja', t => { const l = t.layers.find(x => x.id === layer.id); l.enabled = !l.enabled; }); renderHeads(); } }, 'M'),
-          h('button', { type: 'button', class: solo ? 'mini solo on' : 'mini solo', title: 'Solo: čuj samo ovaj sloj', 'aria-pressed': String(solo), onPointerDown: e => e.stopPropagation(), onClick: e => { e.stopPropagation(); if (solo) state.solo.delete(layer.id); else if (e.shiftKey) state.solo.add(layer.id); else { state.solo.clear(); state.solo.add(layer.id); } renderHeads(); ctx.onSolo?.(); requestDraw(); } }, 'S'),
-          h('button', { type: 'button', class: 'mini', title: 'Više opcija', 'aria-label': `Opcije sloja ${layer.name}`, onPointerDown: e => e.stopPropagation(), onClick: e => { e.stopPropagation(); layerMenu(layer, e.clientX, e.clientY); } }, '⋯')),
-        h('div', { class: 'head-row' }, blend, opacity));
+          h('button', { type: 'button', class: layer.enabled ? 'mini mute' : 'mini mute on', title: 'Utišaj sloj (Mute)', 'aria-pressed': String(!layer.enabled), onPointerDown: e => e.stopPropagation(), onClick: e => { e.stopPropagation(); store.commit('Mute sloja', t => { const l = t.layers.find(x => x.id === layer.id); l.enabled = !l.enabled; }); renderHeads(); } }, 'M'),
+          h('button', { type: 'button', class: solo ? 'mini solo on' : 'mini solo', title: 'Solo: prikaži samo ovaj sloj (Shift+klik za više slojeva)', 'aria-pressed': String(solo), onPointerDown: e => e.stopPropagation(), onClick: e => { e.stopPropagation(); if (solo) state.solo.delete(layer.id); else if (e.shiftKey) state.solo.add(layer.id); else { state.solo.clear(); state.solo.add(layer.id); } renderHeads(); ctx.onSolo?.(); requestDraw(); } }, 'S'),
+          h('button', { type: 'button', class: 'mini menu', title: 'Više opcija sloja', 'aria-label': `Opcije sloja ${layer.name}`, onPointerDown: e => e.stopPropagation(), onClick: e => { e.stopPropagation(); layerMenu(layer, e.clientX, e.clientY); } }, '⋯')),
+        h('div', { class: 'head-row' }, blend, opacity, opReadout));
       if (expandedPanel) row.append(expandedPanel);
 
       row.addEventListener('pointerdown', e => {
@@ -423,7 +499,7 @@ export function createPlaylist(host, ctx) {
   /* -------------------------------------------------------- new clips */
   function createClipAt(layerIndex, startSec, lengthSec, extra = {}) {
     const layer = tl().layers[layerIndex]; if (!layer) return null;
-    const spec = { ...ctx.newClipSpec(layer), ...extra, startSec, durationSec: lengthSec };
+    const spec = { ...ctx.newClipSpec(layer, startSec), ...extra, startSec, durationSec: lengthSec };
     let ref;
     const out = store.commit('Novi clip', t => { ref = addClip(t, layer.id, spec); });
     if (out.error) { ctx.status(out.error); return null; }
@@ -546,7 +622,10 @@ export function createPlaylist(host, ctx) {
       const collapse = (!event.shiftKey && state.selection.length > 1 && isSelected(hit.ref)) ? hit.ref : null;
       store.begin();
       const sources = state.selection.map(ref => ({ ...findClip(tl(), ref), ref }));
-      const items = sources.map(s => ({ ref: s.ref, startSec: s.clip.startSec, endSec: clipEnd(s.clip), layerIndex: s.layerIndex }));
+      const items = sources.map(s => ({
+        ref: s.ref, startSec: s.clip.startSec, endSec: clipEnd(s.clip), layerIndex: s.layerIndex,
+        origDriver: s.clip.driver, origDriverGain: s.clip.driverGain, origBand: s.clip.band ? structuredClone(s.clip.band) : undefined
+      }));
       const anchor = items.find(i => i.ref.clipId === hit.ref.clipId) ?? items[0];
       const isShift = Boolean(event.shiftKey || state.shiftDown);
       state.gesture = {
@@ -572,7 +651,7 @@ export function createPlaylist(host, ctx) {
     if (layerIndex >= 0) ctx.setActiveLayer(layerIndex);
     if (tool === 'draw' && layerIndex >= 0 && !dbl) {
       const start = snap(t); store.begin();
-      let ref; store.update(tlm => { ref = addClip(tlm, tl().layers[layerIndex].id, { ...ctx.newClipSpec(tl().layers[layerIndex]), startSec: start, durationSec: Math.min(barLength(start), Math.max(MIN_CLIP_SEC, duration() - start)) }); });
+      let ref; store.update(tlm => { ref = addClip(tlm, tl().layers[layerIndex].id, { ...ctx.newClipSpec(tl().layers[layerIndex], start), startSec: start, durationSec: Math.min(barLength(start), Math.max(MIN_CLIP_SEC, duration() - start)) }); });
       setSelection([ref]); state.gesture = { mode: 'draw', ref, start, x0: x, moved: false }; canvas.setPointerCapture(event.pointerId); requestDraw(); return;
     }
     if (dbl && layerIndex >= 0) {
@@ -652,7 +731,13 @@ export function createPlaylist(host, ctx) {
     if (g.dup) {
       g.dup = false; const index = Math.max(0, g.items.findIndex(i => i.ref.clipId === g.anchor.ref.clipId));
       let dup; store.update(tlm => { dup = duplicateClips(tlm, g.items.map(i => i.ref), 0, 0); });
-      g.items = dup.map(ref => { const hit = findClip(tl(), ref); return { ref, startSec: hit.clip.startSec, endSec: clipEnd(hit.clip), layerIndex: hit.layerIndex }; });
+      g.items = dup.map(ref => {
+        const hit = findClip(tl(), ref);
+        return {
+          ref, startSec: hit.clip.startSec, endSec: clipEnd(hit.clip), layerIndex: hit.layerIndex,
+          origDriver: hit.clip.driver, origDriverGain: hit.clip.driverGain, origBand: hit.clip.band ? structuredClone(hit.clip.band) : undefined
+        };
+      });
       g.anchor = g.items[index]; setSelection(dup, false);
       g.baseLayerCount = tl().layers.length;
       g.lastRenderedCount = tl().layers.length;
@@ -697,7 +782,18 @@ export function createPlaylist(host, ctx) {
         const targetLayer = tlm.layers[targetIndex];
         if (targetLayer) {
           const next = moveClip(tlm, item.ref, { startSec: item.startSec + delta, layerId: targetLayer.id });
-          if (next) item.ref = next;
+          if (next) {
+            item.ref = next;
+            if (targetIndex === item.layerIndex && item.origDriver !== undefined) {
+              const movedHit = findClip(tlm, item.ref);
+              if (movedHit) {
+                movedHit.clip.driver = item.origDriver;
+                movedHit.clip.driverGain = item.origDriverGain ?? 1;
+                if (item.origBand) movedHit.clip.band = structuredClone(item.origBand);
+                else delete movedHit.clip.band;
+              }
+            }
+          }
         }
       }
     });
@@ -742,7 +838,9 @@ export function createPlaylist(host, ctx) {
     state.gesture = null; state.marquee = null; canvas.classList.remove('panning');
     if (canvas.hasPointerCapture?.(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (g.mode === 'drag-keyframe') {
-      store.end('Pomakni točku');
+      if (g.moved) store.end('Pomakni točku');
+      else if (store.discardGesture) store.discardGesture();
+      else store.cancel();
       requestDraw();
       return;
     }
@@ -759,7 +857,13 @@ export function createPlaylist(host, ctx) {
     if (['move', 'start', 'end'].includes(g.mode)) {
       const openedNewTrack = Boolean(g.createdLayerId && tl().layers.some(l => l.id === g.createdLayerId));
       const label = openedNewTrack ? 'Novi sloj i premjesti clip' : g.label;
-      store.end(label);
+      if (g.moved || openedNewTrack) {
+        store.end(label);
+      } else if (store.discardGesture) {
+        store.discardGesture();
+      } else {
+        store.cancel();
+      }
       if (!g.moved && g.collapse) setSelection([g.collapse]);
       if (openedNewTrack) {
         const newIdx = tl().layers.findIndex(l => l.id === g.createdLayerId);
@@ -767,7 +871,8 @@ export function createPlaylist(host, ctx) {
         renderHeads();
         ctx.status('Novi sloj otvoren i clip postavljen.');
       }
-      ctx.onStructure?.(); requestDraw(); return;
+      if (g.moved || openedNewTrack) ctx.onStructure?.();
+      requestDraw(); return;
     }
     if (g.mode === 'erase') { store.end('Obriši clipove'); ctx.onStructure?.(); requestDraw(); }
   };
@@ -878,16 +983,37 @@ export function createPlaylist(host, ctx) {
     return true;
   }
 
+  function setSelectedSections(indices = [], notify = true) {
+    const a = analysis();
+    const maxLen = a?.sections?.length || 0;
+    const clean = [...new Set((Array.isArray(indices) ? indices : []).filter(i => Number.isInteger(i) && i >= 0 && i < maxLen))].sort((x, y) => x - y);
+    state.selectedSections = clean;
+    if (!clean.length) state.lastSectionAnchor = null;
+    if (notify) ctx.onSectionSelectionChange?.([...clean]);
+    requestDraw();
+    return clean;
+  }
+
   function regenerateSingleSection(idx) {
     const a = analysis();
-    if (!a?.sections?.[idx]) return false;
-    const sec = a.sections[idx];
+    const targets = Array.isArray(idx) ? idx : [idx];
+    const valid = targets.filter(i => Boolean(a?.sections?.[i]));
+    if (!valid.length) return false;
     const themeOpts = ctx.getThemeOptions?.() || {};
-    store.commit(`Regeneriraj: ${sec.name}`, tlm => {
-      regenerateSectionClips(tlm, a, idx, { ...themeOpts, sectionType: sec.type });
+    const label = valid.length === 1
+      ? `Regeneriraj: ${a.sections[valid[0]].name}`
+      : `Regeneriraj dionice (${valid.length})`;
+    store.commit(label, tlm => {
+      regenerateSectionClips(tlm, a, valid, {
+        ...(themeOpts.pipelineConfig || {}),
+        ...themeOpts,
+        ...(valid.length === 1 ? { sectionType: a.sections[valid[0]].type } : {})
+      });
     });
-    ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: idx });
-    ctx.status?.(`Svjetlo regenerirano za dionicu „${sec.name}”.`);
+    ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: valid.length === 1 ? valid[0] : valid });
+    ctx.status?.(valid.length === 1
+      ? `Svjetlo regenerirano za dionicu „${a.sections[valid[0]].name}”.`
+      : `Svjetlo regenerirano za ${valid.length} označene dionice.`);
     requestDraw();
     return true;
   }
@@ -913,6 +1039,7 @@ export function createPlaylist(host, ctx) {
     const second = { ...sec, id: `sec-split-${idx + 1}`, startSec: splitT, endSec: sec.endSec, durationSec: Math.round((sec.endSec - splitT) * 100) / 100 };
     a.sections.splice(idx, 1, first, second);
     relabelSections(a.sections);
+    setSelectedSections(state.selectedSections.map(i => i > idx ? i + 1 : i), true);
     ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: null });
     ctx.status?.(`Dionica podijeljena na ${splitT.toFixed(1)}s.`);
     requestDraw();
@@ -928,6 +1055,7 @@ export function createPlaylist(host, ctx) {
     sec.durationSec = Math.round((sec.endSec - sec.startSec) * 100) / 100;
     a.sections.splice(idx + 1, 1);
     relabelSections(a.sections);
+    setSelectedSections(state.selectedSections.filter(i => i !== idx + 1).map(i => i > idx ? i - 1 : i), true);
     ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: null });
     ctx.status?.(`Dionica „${sec.name}” spojena sa sljedećom.`);
     requestDraw();
@@ -938,6 +1066,10 @@ export function createPlaylist(host, ctx) {
     const a = analysis();
     const sec = a?.sections?.[idx];
     if (!sec) return;
+    if (!state.selectedSections.includes(idx)) {
+      setSelectedSections([idx], true);
+    }
+    const selCount = state.selectedSections.length;
     const typeItems = SECTION_TYPES.map(type => ({
       label: `${sec.type === type ? '✓ ' : ''}${SECTION_NAMES[type]} (promijeni i regeneriraj dionicu)`,
       onClick: () => setSectionType(idx, type, { regenerate: true })
@@ -955,9 +1087,15 @@ export function createPlaylist(host, ctx) {
         }
       },
       {
-        label: `Regeneriraj svjetlo za ovu dionicu (${sec.name})`,
-        onClick: () => regenerateSingleSection(idx)
+        label: selCount > 1
+          ? `⚡ Regeneriraj označene dionice (${selCount})`
+          : `⚡ Regeneriraj svjetlo za ovu dionicu (${sec.name})`,
+        onClick: () => regenerateSingleSection(selCount > 1 ? state.selectedSections : idx)
       },
+      ...(selCount > 0 ? [{
+        label: 'Odznači odabrane dionice',
+        onClick: () => setSelectedSections([], true)
+      }] : []),
       {
         label: 'Podijeli dionicu ovdje (na taktu)',
         disabled: (sec.endSec - sec.startSec) < 0.5,
@@ -993,7 +1131,19 @@ export function createPlaylist(host, ctx) {
       const a = analysis();
       const bIdx = findSectionBoundary(x, a?.sections);
       if (bIdx >= 1) {
-        rulerGesture = { mode: 'section-drag', index: bIdx, startX: x, moved: false };
+        const prevSec = a.sections[bIdx - 1];
+        const curSec = a.sections[bIdx];
+        store.begin?.();
+        rulerGesture = {
+          mode: 'section-drag',
+          index: bIdx,
+          startX: x,
+          moved: false,
+          oldBoundary: curSec.startSec,
+          origPrevStart: prevSec.startSec,
+          origCurEnd: curSec.endSec,
+          origLayers: structuredClone(tl().layers)
+        };
         requestDraw();
         return;
       }
@@ -1001,9 +1151,42 @@ export function createPlaylist(host, ctx) {
       const secIdx = findSectionIndexAt(t, a?.sections);
       const hitSec = secIdx >= 0 ? a.sections[secIdx] : null;
       if (hitSec) {
-        ctx.seek(hitSec.startSec, false);
-        ctx.setLoop?.({ start: hitSec.startSec, end: hitSec.endSec });
-        ctx.status?.(`Dionica „${hitSec.name}” (${hitSec.startSec.toFixed(1)}s – ${hitSec.endSec.toFixed(1)}s) odabrana za loop.`);
+        let nextSel;
+        if (event.metaKey || event.ctrlKey) {
+          const exists = state.selectedSections.includes(secIdx);
+          nextSel = exists
+            ? state.selectedSections.filter(i => i !== secIdx)
+            : [...state.selectedSections, secIdx];
+          state.lastSectionAnchor = secIdx;
+        } else if (event.shiftKey) {
+          const anchor = Number.isInteger(state.lastSectionAnchor) ? state.lastSectionAnchor : secIdx;
+          const lo = Math.min(anchor, secIdx);
+          const hi = Math.max(anchor, secIdx);
+          nextSel = [];
+          for (let i = lo; i <= hi; i++) nextSel.push(i);
+        } else {
+          if (state.selectedSections.length === 1 && state.selectedSections[0] === secIdx) {
+            nextSel = [];
+            state.lastSectionAnchor = null;
+          } else {
+            nextSel = [secIdx];
+            state.lastSectionAnchor = secIdx;
+          }
+        }
+        const activeSel = setSelectedSections(nextSel, true);
+        if (activeSel.length > 0) {
+          const minStart = Math.min(...activeSel.map(i => a.sections[i].startSec));
+          const maxEnd = Math.max(...activeSel.map(i => a.sections[i].endSec));
+          ctx.seek(minStart, false);
+          ctx.setLoop?.({ start: minStart, end: maxEnd });
+          ctx.status?.(activeSel.length === 1
+            ? `Označena dionica „${hitSec.name}” (${hitSec.startSec.toFixed(1)}s – ${hitSec.endSec.toFixed(1)}s) · Regeneracija utječe samo na nju.`
+            : `Označeno ${activeSel.length} dionica (${minStart.toFixed(1)}s – ${maxEnd.toFixed(1)}s) · Regeneracija utječe samo na njih.`);
+        } else {
+          ctx.seek(hitSec.startSec, false);
+          ctx.setLoop?.({ start: hitSec.startSec, end: hitSec.endSec });
+          ctx.status?.(`Sve dionice odznačene · Loop na „${hitSec.name}”.`);
+        }
         requestDraw();
       }
       return;
@@ -1036,14 +1219,14 @@ export function createPlaylist(host, ctx) {
         if (bIdx >= 1) {
           ruler.style.cursor = 'ew-resize';
           const prevS = a.sections[bIdx - 1], curS = a.sections[bIdx];
-          ruler.title = `Granica dionica: ${prevS.name} | ${curS.name} (${curS.startSec.toFixed(1)}s) · Povuci za pomak po taktu`;
+          ruler.title = `Granica dionica: ${prevS.name} | ${curS.name} (${curS.startSec.toFixed(1)}s) · Povuci za pomak dionice i poravnatih clipova (Alt = samo granica)`;
         } else {
           ruler.style.cursor = 'pointer';
           const t = tAt(x);
           const secIdx = findSectionIndexAt(t, a?.sections);
           const hitSec = secIdx >= 0 ? a.sections[secIdx] : null;
           ruler.title = hitSec
-            ? `Dionica: ${hitSec.name} (${hitSec.startSec.toFixed(1)}s – ${hitSec.endSec.toFixed(1)}s) · Klikni za loop, desni klik ili dvoklik za vrstu i opcije`
+            ? `Dionica: ${hitSec.name} (${hitSec.startSec.toFixed(1)}s – ${hitSec.endSec.toFixed(1)}s) · Klikni za označavanje (Shift/Cmd za više), desni klik za opcije`
             : 'Dionice pjesme';
         }
       } else {
@@ -1080,7 +1263,19 @@ export function createPlaylist(host, ctx) {
         prevSec.durationSec = Math.round((prevSec.endSec - prevSec.startSec) * 100) / 100;
         curSec.startSec = nextT;
         curSec.durationSec = Math.round((curSec.endSec - curSec.startSec) * 100) / 100;
-        ctx.status?.(`Granica ${prevSec.name} | ${curSec.name}: ${nextT.toFixed(2)}s`);
+        if (!event.altKey && Array.isArray(g.origLayers)) {
+          store.update(tlm => {
+            tlm.layers = structuredClone(g.origLayers);
+            adjustClipsForSectionBoundary(
+              tlm,
+              { startSec: g.origPrevStart, endSec: g.oldBoundary },
+              { startSec: g.oldBoundary, endSec: g.origCurEnd },
+              g.oldBoundary,
+              nextT
+            );
+          });
+        }
+        ctx.status?.(`Granica ${prevSec.name} | ${curSec.name}: ${nextT.toFixed(2)}s (clipovi poravnati)`);
         requestDraw();
         drawRuler(stageWidth(), ctx.getTime());
       }
@@ -1108,10 +1303,17 @@ export function createPlaylist(host, ctx) {
   });
   const rulerUp = event => {
     if (rulerGesture?.mode === 'section-drag') {
+      if (rulerGesture.moved) {
+        store.end?.('Pomak granice dionice');
+      } else if (store.discardGesture) {
+        store.discardGesture();
+      } else {
+        store.cancel?.();
+      }
       const a = analysis();
       if (a?.sections) {
         relabelSections(a.sections);
-        ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: null });
+        ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: null, boundaryMoved: rulerGesture.moved });
       }
       requestDraw();
     }
@@ -1300,10 +1502,15 @@ export function createPlaylist(host, ctx) {
         if (x1 < 0 || x0 > width) return;
         const drawX0 = Math.max(0, x0), drawX1 = Math.min(width, x1), w = drawX1 - drawX0;
         if (w < 2) return;
-        g.fillStyle = `${s.color}38`;
+        const isSelSec = state.selectedSections.includes(idx);
+        g.fillStyle = isSelSec ? `${s.color}66` : `${s.color}38`;
         g.fillRect(drawX0, secY, w, RULER_SECTIONS - 1);
-        g.fillStyle = s.color;
-        g.fillRect(drawX0, secY, w, 2);
+        g.fillStyle = isSelSec ? '#ffd36b' : s.color;
+        g.fillRect(drawX0, secY, w, isSelSec ? 3 : 2);
+        if (isSelSec) {
+          g.fillStyle = '#ffd36b';
+          g.fillRect(drawX0, secY + RULER_SECTIONS - 2, w, 2);
+        }
         if (x0 >= 0 && idx >= 1) {
           const isActiveDiv = hoverSectionBoundary === idx || (rulerGesture?.mode === 'section-drag' && rulerGesture.index === idx);
           g.fillStyle = isActiveDiv ? '#ffd36b' : `${s.color}cc`;
@@ -1321,8 +1528,9 @@ export function createPlaylist(host, ctx) {
           g.beginPath();
           g.rect?.(drawX0 + 4, secY, Math.max(0, w - 8), RULER_SECTIONS);
           g.clip?.();
-          g.fillStyle = '#e4edf7';
-          const label = w > 72 ? `${s.name.toUpperCase()} · ${s.durationSec.toFixed(0)}s ▾` : s.name.toUpperCase();
+          g.fillStyle = isSelSec ? '#ffd36b' : '#e4edf7';
+          const prefix = isSelSec ? '✓ ' : '';
+          const label = w > 72 ? `${prefix}${s.name.toUpperCase()} · ${s.durationSec.toFixed(0)}s ▾` : `${prefix}${s.name.toUpperCase()}`;
           g.fillText(label, drawX0 + 5, secY + RULER_SECTIONS / 2 + .5);
           g.restore();
         }
@@ -2134,17 +2342,22 @@ export function createPlaylist(host, ctx) {
   /* -------------------------------------------------------------- loop */
   let lastSize = '', lastPlayDrawMs = 0;
   function frame() {
-    syncScrollbarGutter();
-    const size = `${stageWidth()}x${root.clientHeight}x${lastSbW}`;
-    if (size !== lastSize) { lastSize = size; clampView(); state.dirty = true; }
-    const nowMs = performance.now();
-    const isScrubbing = state.gesture?.mode === 'scrub' || rulerGesture?.mode === 'seek';
-    if (state.dirty || isScrubbing || (ctx.isPlaying() && (nowMs - lastPlayDrawMs >= 22))) {
-      state.dirty = false;
-      lastPlayDrawMs = nowMs;
-      draw();
+    try {
+      syncScrollbarGutter();
+      const size = `${stageWidth()}x${root.clientHeight}x${lastSbW}`;
+      if (size !== lastSize) { lastSize = size; clampView(); state.dirty = true; }
+      const nowMs = performance.now();
+      const isScrubbing = state.gesture?.mode === 'scrub' || rulerGesture?.mode === 'seek';
+      if (state.dirty || isScrubbing || (ctx.isPlaying() && (nowMs - lastPlayDrawMs >= 22))) {
+        state.dirty = false;
+        lastPlayDrawMs = nowMs;
+        draw();
+      }
+    } catch (err) {
+      console.error('Playlist draw error:', err);
+    } finally {
+      requestAnimationFrame(frame);
     }
-    requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
   new ResizeObserver(() => { state.dirty = true; }).observe(canvas);
@@ -2200,8 +2413,9 @@ export function createPlaylist(host, ctx) {
     setLaneSize(size) { state.laneSize = size; renderHeads(); requestDraw(); },
     get laneSize() { return state.laneSize; },
     get view() { return { pps: state.pps, scrollSec: state.scrollSec, visibleSec: visibleSec() }; },
-    hit: (x, y) => hitTest(x, y), canvas, ruler, addLayerAction,
+    hit: (x, y) => hitTest(x, y), canvas, ruler, corner, addLayerAction,
     setSectionType, splitSectionAt, mergeSectionWithNext, regenerateSingleSection,
+    getSelectedSections: () => [...state.selectedSections], setSelectedSections,
     clipScreenRect: (layerIndex, clip) => clipRect(layerIndex, clip),
     selectAll() { setSelection(tl().layers.flatMap(l => l.clips.map(c => ({ layerId: l.id, clipId: c.id })))); },
     clearSolo() { state.solo.clear(); renderHeads(); requestDraw(); }

@@ -22,9 +22,9 @@
           <div class="brand-titles">
             <span class="brand-eyebrow">LEDICATED · LIVE SURFACE</span>
             <div class="stage-badge-row">
-              <button type="button" class="stage-pill" id="btn-stage-role" title="Preuzmi ili pusti pozornicu">
+              <button type="button" class="stage-pill" id="btn-stage-role" title="Tandem način s MacBookom i E8 kontrolerom">
                 <span class="stage-pill-dot"></span>
-                <span id="stage-role-label">ON AIR</span>
+                <span id="stage-role-label">TANDEM · E8</span>
               </button>
               <span class="latency-readout" id="latency-readout">LAN 0 ms</span>
             </div>
@@ -121,18 +121,64 @@
       <section class="pad-surface-area" id="pad-surface-area">
         <div class="pad-matrix-grid" id="pad-matrix-grid" role="group" aria-label="12 live performance padova"></div>
 
-        <!-- XY Morph Expressive Pad Surface -->
+        <!-- XY Spatial 3x3 Pad Surface + Right-Side Intensity & Spread Sliders + Color Wheel -->
         <div class="xy-morph-surface" id="xy-morph-surface" hidden>
           <div class="xy-pad-stage" id="xy-pad-stage">
             <canvas id="xy-canvas" width="600" height="440"></canvas>
-            <div class="xy-axis-label xy-label-x">X · BRZINA &amp; GUSTOĆA (0.4× → 3.2×)</div>
-            <div class="xy-axis-label xy-label-y">Y · INTENZITET &amp; TOPLA BIJELA (W)</div>
-            <div class="xy-puck" id="xy-puck">
-              <span class="xy-puck-ring"></span>
-              <span class="xy-puck-core"></span>
-            </div>
+            <div class="xy-axis-label xy-label-y">L1 · C1 · R1 · GUITAR MODE — CRTAJ PO PANELIMA (BRZINA = INTENZITET)</div>
+            <div class="xy-axis-label xy-label-x">DRŽI TOČKICU UZ DONJI RUB (STUPAC) ILI LIJEVI RUB (RED) ZA SPAJANJE</div>
           </div>
-          <div class="xy-quick-pads" id="xy-quick-pads"></div>
+
+          <aside class="xy-right-controls" aria-label="Intenzitet, spread, efekt i kotač boja">
+            <div class="xy-dual-sliders">
+              <div class="xy-slider-col">
+                <span class="xy-ctrl-label">INTENZ.</span>
+                <div class="xy-vslider-track" id="xy-intensity-track" role="slider" aria-label="Intenzitet" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" tabindex="0">
+                  <div class="xy-vslider-fill" id="xy-intensity-fill"></div>
+                  <div class="xy-vslider-thumb" id="xy-intensity-thumb"></div>
+                </div>
+                <strong class="xy-ctrl-val" id="xy-intensity-val">100%</strong>
+              </div>
+
+              <div class="xy-slider-col">
+                <span class="xy-ctrl-label">SPREAD</span>
+                <div class="xy-vslider-track" id="xy-spread-track" role="slider" aria-label="Spread proširenje" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0">
+                  <div class="xy-vslider-fill" id="xy-spread-fill" style="height: 0%"></div>
+                  <div class="xy-vslider-thumb" id="xy-spread-thumb" style="bottom: 0%"></div>
+                </div>
+                <strong class="xy-ctrl-val" id="xy-spread-val">0%</strong>
+              </div>
+            </div>
+
+            <div class="xy-wheel-col">
+              <label class="xy-ctrl-label" for="xy-effect-select">EFEKT</label>
+              <select id="xy-effect-select" class="xy-effect-select" aria-label="Efekt panela">
+                <option value="solid" selected>Svijetli (Panel)</option>
+                <option value="pulse">Puls</option>
+                <option value="wash">Preljev (Wash)</option>
+                <option value="wave">Val (Wave)</option>
+                <option value="sparkle">Iskre (Sparkle)</option>
+                <option value="fire">Vatra (Fire)</option>
+                <option value="rain">Kiša (Rain)</option>
+                <option value="chase">Trkač (Chase)</option>
+                <option value="flash">Bljesak (Flash)</option>
+                <option value="ripple">Valovi (Ripple)</option>
+                <option value="bounce">Odskok (Bounce)</option>
+                <option value="sweep">Prelet (Sweep)</option>
+                <option value="spiral">Spirala (Spiral)</option>
+                <option value="columns">Stupci (Columns)</option>
+                <option value="alternate">Izmjena</option>
+                <option value="center">Središte (Center)</option>
+                <option value="strobe">Stroboskop</option>
+              </select>
+              <span class="xy-ctrl-label">BOJA</span>
+              <div class="xy-wheel-wrap" id="xy-wheel-wrap">
+                <canvas id="xy-wheel-canvas" width="160" height="160"></canvas>
+                <div class="xy-wheel-puck" id="xy-wheel-puck"></div>
+              </div>
+              <strong class="xy-ctrl-val" id="xy-color-val">195°</strong>
+            </div>
+          </aside>
         </div>
       </section>
 

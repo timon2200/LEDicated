@@ -5,6 +5,7 @@
 - **Name**: YouTube Plus Downloader
 - **Short Name**: YouTube Plus
 - **Version**: 1.0.0
+- **Last Updated**: 2026-10-29
 - **Summary / Short Description**: Download high-quality MP3 audio and MP4 video directly within YouTube's native Share dialog.
 - **Detailed Description**:
   Enhance your YouTube viewing experience with YouTube Plus Downloader. Seamlessly integrated into YouTube's native interface, this extension lets you download videos and audio without intrusive redirects or external popups.
@@ -13,12 +14,21 @@
   - **Native Share Dialog Integration**: Adds a clean download section right inside the YouTube Share modal.
   - **Video Downloads (MP4)**: Choose between 1080p (Full HD), 720p (HD), 480p, 360p, or Best Available.
   - **Audio Downloads (MP3)**: Select your preferred bitrate from 320 kbps (High Quality), 256 kbps, 192 kbps, or 128 kbps.
+  - **Consent-Only Light Show Song Downloads**: Downloads music to create a Light Show only when you explicitly click the download button in the Light Show menu, with a helpful reminder tooltip when a new song autoplays or opens during an active session.
   - **Direct to Downloads**: Automatically names files cleanly based on video title and saves directly to your computer's Downloads folder.
   - **Dark & Light Mode Support**: Automatically adapts to YouTube's current color theme.
   - **Customizable**: Set your preferred default qualities in the extension popup.
 
 - **Category**: Productivity / Media
 - **Primary Language**: English
+
+---
+
+## Version History
+
+| Version | Date | Summary |
+|---|---|---|
+| 1.0.0 | 2026-10-29 | Enforce explicit user consent for Light Show song downloads and add next-song reminder tooltip during play sessions. |
 
 ---
 

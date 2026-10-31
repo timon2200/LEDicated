@@ -401,6 +401,12 @@ input {
 }
 
 .watts-readout {
+  display: inline-block;
+  min-width: 40px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-muted);
@@ -691,13 +697,13 @@ input {
   pointer-events: none;
 }
 
-/* XY Morph Expressive Surface */
+/* XY Spatial 3x3 Pad Surface + Right-Side Intensity Slider & Color Wheel */
 .xy-morph-surface {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-rows: 1fr auto;
-  gap: 8px;
+  grid-template-columns: 1fr minmax(128px, 32%);
+  gap: 10px;
 }
 
 .xy-morph-surface[hidden] {
@@ -708,9 +714,11 @@ input {
   position: relative;
   border-radius: 18px;
   overflow: hidden;
-  border: 1.5px solid rgba(0, 242, 255, 0.3);
+  border: 1.5px solid rgba(0, 242, 255, 0.35);
   background: radial-gradient(circle at 50% 50%, #142038 0%, #070a12 100%);
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 #xy-canvas {
@@ -724,8 +732,8 @@ input {
   font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.1em;
-  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.52);
   pointer-events: none;
 }
 
@@ -739,56 +747,172 @@ input {
   left: 12px;
 }
 
-.xy-puck {
+.xy-right-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 18px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-bright);
+  min-height: 0;
+}
+
+@media (orientation: landscape) {
+  .xy-morph-surface {
+    grid-template-columns: 1fr minmax(210px, 33%);
+  }
+  .xy-right-controls {
+    flex-direction: row;
+    align-items: stretch;
+  }
+}
+
+.xy-dual-sliders {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  justify-content: center;
+}
+
+.xy-slider-col,
+.xy-wheel-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+}
+
+.xy-ctrl-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.xy-ctrl-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+.xy-vslider-track {
+  position: relative;
+  width: 44px;
+  flex: 1;
+  min-height: 90px;
+  border-radius: 16px;
+  background: rgba(6, 9, 16, 0.88);
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+  touch-action: none;
+  cursor: ns-resize;
+}
+
+.xy-vslider-track:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+
+.xy-vslider-fill {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 48px;
-  height: 48px;
-  transform: translate(-50%, -50%);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 100%;
+  background: linear-gradient(180deg, #ffffff 0%, var(--accent-cyan) 40%, rgba(0, 242, 255, 0.32) 100%);
   pointer-events: none;
 }
 
-.xy-puck-ring {
+.xy-vslider-thumb {
   position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 2px solid var(--accent-cyan);
-  box-shadow: 0 0 20px var(--accent-cyan);
-}
-
-.xy-puck-core {
-  position: absolute;
-  inset: 14px;
-  border-radius: 50%;
+  left: 5px;
+  right: 5px;
+  bottom: calc(100% - 9px);
+  height: 7px;
+  border-radius: 4px;
   background: #ffffff;
-  box-shadow: 0 0 12px #ffffff;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
 }
 
-.xy-quick-pads {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 6px;
+.xy-wheel-wrap {
+  position: relative;
+  width: 112px;
+  height: 112px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  cursor: crosshair;
 }
 
-.xy-mini-pad {
-  padding: 8px 4px;
-  border-radius: 10px;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-panel);
+.xy-effect-select {
+  width: 100%;
+  max-width: 132px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  border: 1px solid rgba(0, 242, 255, 0.35);
+  background: rgba(8, 12, 22, 0.92);
+  color: var(--text-main);
+  font-family: var(--font-mono);
   font-size: 10px;
-  font-weight: 700;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-weight: 800;
   cursor: pointer;
+  outline: none;
 }
 
-.xy-mini-pad.active {
+.xy-effect-select:focus-visible {
   border-color: var(--accent-cyan);
-  background: rgba(0, 242, 255, 0.2);
-  color: #fff;
+  box-shadow: 0 0 0 2px rgba(0, 242, 255, 0.25);
+}
+
+@supports (appearance: base-select) {
+  .xy-effect-select,
+  .xy-effect-select::picker(select) {
+    appearance: base-select;
+  }
+  .xy-effect-select::picker(select) {
+    border: 1px solid rgba(0, 242, 255, 0.35);
+    border-radius: 10px;
+    background: #0b101c;
+    color: var(--text-main);
+    padding: 4px;
+  }
+  .xy-effect-select::picker-icon {
+    color: var(--accent-cyan);
+    transition: rotate 0.18s ease;
+  }
+  .xy-effect-select:open::picker-icon {
+    rotate: 180deg;
+  }
+}
+
+#xy-wheel-canvas {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  display: block;
+}
+
+.xy-wheel-puck {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2.5px solid #ffffff;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.85);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
 /* 5. Bottom Expression & Transport Dock */

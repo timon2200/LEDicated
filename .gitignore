@@ -18,6 +18,7 @@ logs/
 
 # Native app build artifacts
 macos-menubar/build/
+ios-companion/build/
 **/xcuserdata/
 **/DerivedData/
 *.xcworkspace/xcuserdata/

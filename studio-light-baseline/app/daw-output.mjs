@@ -29,7 +29,7 @@ function template(id, old) {
     }) };
 }
 
-export function createOutput(host, { badge, status, isBlackout, onConfig }) {
+export function createOutput(host, { badge, status, isBlackout, onConfig, onStateChange }) {
   const s = { config: null, draft: null, armed: false, outputMode: 'show', dirty: false, probes: new Map(), discovery: { loading: false, devices: [], error: null, ever: false }, lastTest: null, testRunning: false,
     lastSent: 0, sending: false, failed: false, offsetSec: 0, calibrateFrom: 0, calibrateUntil: 0, manualDisarm: false, autoConnecting: false };
   const note = h('p', { class: 'out-status', 'aria-live': 'polite' }, 'Izlaz nije uključen.');
@@ -78,6 +78,7 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
     note.textContent = s.armed
       ? `DDP ${(s.config?.transport || 'rgb').toUpperCase()} slanje uključeno (${activeCount}/${totalNodes} kontrolera) · prijem na trakama nije potvrđen.`
       : (s.outputMode === 'ambient' ? 'Menu Bar (Uredska rasvjeta) trenutno upravlja EO8+ kontrolerom.' : (s.yieldedToRemote ? (s.reason || 'Drugi laptop na LAN-u trenutno upravlja EO8+ kontrolerom.') : 'Izlaz nije uključen.'));
+    onStateChange?.(s);
   }
 
   function readInputs() {
@@ -466,6 +467,7 @@ export function createOutput(host, { badge, status, isBlackout, onConfig }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           bars: next.bars,
+          previewBars: next.unscaledBars || undefined,
           clientId: window.ledicatedClientId || undefined,
           clientName: window.ledicatedClientName || undefined
         }),

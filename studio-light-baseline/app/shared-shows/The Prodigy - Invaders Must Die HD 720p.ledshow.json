@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.746Z",
+  "exportedAt": "2026-10-28T23:52:12.746Z",
   "author": "Timon",
   "track": {
     "id": "8a5991b5-23d3-4144-a2ed-58c38b34a641",
@@ -11,7 +11,9 @@
     "sha256": "d7c0805c34d08a4acfb7e5ab256dce9fde425727fa8666adb8329c104f212996",
     "sizeBytes": 12133666,
     "durationSec": 295.172,
-    "bpm": 139.7
+    "bpm": 139.7,
+    "videoId": "1T-sGC37XHE",
+    "sourceUrl": "https://www.youtube.com/watch?v=1T-sGC37XHE"
   },
   "analysis": {
     "durationSec": 295.172,
@@ -12590,5 +12592,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "the-prodigy-invaders-must-die-hd-720p-f357d2df",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:12.743Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 270 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/d7c0805c34d08a4acfb7e5ab256dce9fde425727fa8666adb8329c104f212996.mp3"
 }

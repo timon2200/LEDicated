@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.836Z",
+  "exportedAt": "2026-10-28T23:52:16.403Z",
   "author": "Timon",
   "track": {
     "id": "95e4e700-9f7c-432c-ada1-e3468e33681e",
@@ -911,5 +911,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "jet-set-06510b20",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:16.403Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 14 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/f8ca6b69e08561531c2dfd6613d8db058b22600f6d7bb41343318137f3cc5f64.mp3"
 }

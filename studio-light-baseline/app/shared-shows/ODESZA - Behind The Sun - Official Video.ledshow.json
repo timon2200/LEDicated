@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.811Z",
+  "exportedAt": "2026-10-28T23:52:15.323Z",
   "author": "Timon",
   "track": {
     "id": "711c81a0-2d96-4fac-9a9e-654d8a60ebf6",
@@ -6313,5 +6313,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "odesza-behind-the-sun-official-video-df21bab0",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:15.321Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 135 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/234928ba5ce5f17557f2a46d0a2b7508d38a58618ea2fdb3a7b7474ae186e9d1.mp3"
 }

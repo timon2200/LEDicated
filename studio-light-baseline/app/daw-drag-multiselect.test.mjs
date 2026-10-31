@@ -425,6 +425,16 @@ test('createPerformancePanel: live drag multiselect across row and column', asyn
     // 7. Verify window listeners are cleaned up
     assert.equal((windowListeners['pointermove'] || []).length, 0, 'pointermove listener cleaned up');
     assert.equal((windowListeners['pointerup'] || []).length, 0, 'pointerup listener cleaned up');
+
+    // 8. Verify effect parameter options (including bounce axis/direction) render icons with aria-hidden="true"
+    panel.assignPreset('bounce', 0);
+    const optionIcons = host.querySelectorAll('.pf-opt-icon');
+    assert(optionIcons.length >= 4, 'bounce effect options must include directional and motion icons');
+    assert.equal(optionIcons[0].getAttribute('aria-hidden'), 'true');
+    assert.equal(optionIcons[0].textContent, '↔');
+    assert.equal(optionIcons[1].textContent, '↕');
+    assert.equal(optionIcons[2].textContent, '∿');
+    assert.equal(optionIcons[3].textContent, '⚡');
   } finally {
     globalThis.document = originalDoc;
     globalThis.window = originalWin;

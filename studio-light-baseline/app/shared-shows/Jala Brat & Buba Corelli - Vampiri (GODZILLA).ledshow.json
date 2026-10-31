@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.784Z",
+  "exportedAt": "2026-10-28T23:52:14.161Z",
   "author": "Timon",
   "track": {
     "id": "367d213d-da40-49e0-97af-81e7e4697bed",
@@ -4172,5 +4172,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "jala-brat-buba-corelli-vampiri-godzilla-dc524532",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:14.160Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 88 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/adbd03f3e6bb40639afd681bb59f9cdfaae2e5a33a64b923bc14974dda18d99a.mp3"
 }

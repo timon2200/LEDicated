@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.795Z",
+  "exportedAt": "2026-10-28T23:52:14.546Z",
   "author": "Timon",
   "track": {
     "id": "152585ba-ecd2-4adc-b0e9-f695240add77",
@@ -1229,5 +1229,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "the-prince-karma-ft-thompson-later-anice-krizhni-mashup-remix-bb8a1214",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:14.545Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 19 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/0bef7e51ace592b12166793d958b18b8688bf458e6ee4a82cc4b8becd02b4391.mp3"
 }

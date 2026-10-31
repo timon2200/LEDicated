@@ -1532,6 +1532,25 @@ test('interactive section ruler: boundary hover/drag, relabeling, type change + 
   assert.equal(trackAnalysis.sections[1].durationSec, 12, 'curSec.durationSec updated to 12s');
   assert.ok(sectionChanges.length >= 1, 'onSectionsChange called after boundary drag');
 
+  // Verify clips underneath moved/stretched with the section boundary drag!
+  const washLayerAfterDrag = store.timeline.layers.find(l => l.id === 'base-wash');
+  const introWash = washLayerAfterDrag.clips.find(c => c.id === 'wash-intro-0');
+  assert.ok(introWash, 'Intro wash clip exists');
+  assert.equal(introWash.durationSec, 20, 'Intro wash clip stretched from 16s to 20s');
+
+  // Test single click, Ctrl+Click, and Shift+Click section selection in the ruler
+  // Click inside section 0 (0..20s) at x = 80px (6.4s)
+  ruler.dispatchEvent(new MockEvent('pointerdown', { button: 0, clientX: 80, clientY: 40, pointerId: 1 }));
+  assert.deepEqual(playlist.getSelectedSections(), [0], 'Single click selects section 0');
+
+  // Ctrl+Click inside section 2 (32..48s) at x = 500px (40s)
+  ruler.dispatchEvent(new MockEvent('pointerdown', { button: 0, clientX: 500, clientY: 40, ctrlKey: true, pointerId: 1 }));
+  assert.deepEqual(playlist.getSelectedSections(), [0, 2], 'Ctrl+Click adds section 2 to selection');
+
+  // Shift+Click inside section 3 (48..64s) at x = 700px (56s) -> selects range from anchor 2..3 (or with ctrl adds)
+  ruler.dispatchEvent(new MockEvent('pointerdown', { button: 0, clientX: 700, clientY: 40, shiftKey: true, pointerId: 1 }));
+  assert.deepEqual(playlist.getSelectedSections(), [2, 3], 'Shift+Click selects range 2..3');
+
   // Change section 1 from 'build' to 'drop' with regeneration
   playlist.setSectionType(1, 'drop', { regenerate: true });
   assert.equal(trackAnalysis.sections[1].type, 'drop');
@@ -1608,6 +1627,80 @@ test('Theme & Style Studio in daw-browser: 8 themes, 4 color pickers, effect whi
   assert.equal(generatedArgs.theme, 'rave');
   assert.equal(generatedArgs.customColors.length, 4);
 });
+
+test('timeline headers: compact 2x2 stem controls and layer solo/mute states work cleanly across all 4 stems', () => {
+  const timeline = normalizeTimeline(createAutoShow(analysis()));
+  const store = createStore(timeline);
+  const host = new MockElement('div');
+  const stemState = { solo: new Set(), muted: new Set() };
+  const stemsMock = {
+    getState: () => stemState,
+    subscribe: () => {},
+    toggleSolo(id, multi) {
+      if (stemState.solo.has(id)) stemState.solo.delete(id);
+      else {
+        if (!multi) stemState.solo.clear();
+        stemState.solo.add(id);
+      }
+    },
+    toggleMute(id) {
+      if (stemState.muted.has(id)) stemState.muted.delete(id);
+      else stemState.muted.add(id);
+    },
+    resetAll() {
+      stemState.solo.clear();
+      stemState.muted.clear();
+    }
+  };
+
+  createPlaylist(host, {
+    store,
+    stems: stemsMock,
+    getAnalysis: () => analysis(),
+    duration: () => 60,
+    getTime: () => 0,
+    seek: () => {},
+    commitSeek: () => {},
+    getSnap: () => 'beat',
+    getTool: () => 'select',
+    isPlaying: () => false,
+    hasTrack: () => true,
+    getTrackTitle: () => 'Test Track',
+    isAudioMuted: () => false,
+    toggleAudioMute: () => {},
+    getVolume: () => 1,
+    setVolume: () => {},
+    getActiveLayerIndex: () => 0,
+    setActiveLayer: () => {},
+    status: () => {},
+    newClipSpec: () => ({ preset: 'pulse' })
+  });
+
+  const heads = host.querySelector('.pl-heads');
+  const stemCtls = heads.querySelectorAll('.stem-ctl');
+  assert.equal(stemCtls.length, 4, 'All 4 stem controls (Bubnj, Bas, Vok, Ost) are rendered');
+
+  // Clicking stem-info label on Vocals (index 2) toggles Solo
+  const vokInfo = stemCtls[2].querySelector('.stem-info');
+  assert.ok(vokInfo, 'Vocals stem-info exists');
+  vokInfo.dispatchEvent(new MockEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(stemState.solo.has('vocals'), true, 'Clicking stem label solos vocals');
+
+  // Clicking M button on Other (index 3) toggles Mute
+  const refreshedCtls = heads.querySelectorAll('.stem-ctl');
+  const ostMuteBtn = refreshedCtls[3].querySelectorAll('button').find(b => b.textContent === 'M');
+  assert.ok(ostMuteBtn, 'Ostalo M button exists');
+  ostMuteBtn.dispatchEvent(new MockEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(stemState.muted.has('other'), true, 'Clicking M mutes other stem');
+
+  // Reset button clears both solo and mute
+  const resetBtn = heads.querySelector('.stem-reset-btn');
+  assert.ok(resetBtn, 'Reset button appears when stem filter is active');
+  resetBtn.dispatchEvent(new MockEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(stemState.solo.size, 0, 'Reset cleared solo');
+  assert.equal(stemState.muted.size, 0, 'Reset cleared mute');
+});
+
 
 
 

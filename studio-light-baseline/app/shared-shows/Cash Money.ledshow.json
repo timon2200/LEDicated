@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.852Z",
+  "exportedAt": "2026-10-28T23:52:16.971Z",
   "author": "Timon",
   "track": {
     "id": "19f56fa1-734e-4ff0-abf3-5e004e8fb20f",
@@ -986,7 +986,7 @@
         "id": "base-wash",
         "name": "Atmosfera i baza",
         "color": "#3aa0ff",
-        "enabled": false,
+        "enabled": true,
         "blend": "screen",
         "opacity": 0.72,
         "clips": [
@@ -3114,7 +3114,7 @@
         "id": "bass",
         "name": "Sub i bas",
         "color": "#b25cff",
-        "enabled": false,
+        "enabled": true,
         "blend": "add",
         "opacity": 0.82,
         "clips": [
@@ -3321,7 +3321,7 @@
         "id": "synth",
         "name": "Sint i vokal",
         "color": "#00d2ff",
-        "enabled": false,
+        "enabled": true,
         "blend": "screen",
         "opacity": 0.72,
         "clips": [
@@ -3795,7 +3795,7 @@
         "id": "motion",
         "name": "Ritam i kretanje",
         "color": "#ffb23a",
-        "enabled": false,
+        "enabled": true,
         "blend": "add",
         "opacity": 0.82,
         "clips": [
@@ -15513,7 +15513,7 @@
         "id": "drums",
         "name": "Akcenti i stroboskop",
         "color": "#ff5c8a",
-        "enabled": false,
+        "enabled": true,
         "blend": "add",
         "opacity": 0.88,
         "clips": [
@@ -16045,5 +16045,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "cash-money-a36ce993",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:16.969Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 344 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/392ac3e280c703a4e232e2b5de38edbb9aae2e81de5b314266cdf44711f3a705.mp3"
 }

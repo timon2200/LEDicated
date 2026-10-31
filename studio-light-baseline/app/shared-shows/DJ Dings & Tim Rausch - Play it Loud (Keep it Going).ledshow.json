@@ -1,8 +1,8 @@
 {
   "format": "ledicated-show",
-  "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.844Z",
-  "author": "Timon",
+  "version": 5,
+  "exportedAt": "2026-10-29T14:26:10.231Z",
+  "author": "Mortu",
   "track": {
     "id": "0aac19e0-5550-44ce-9fe7-3e99b4d66d37",
     "title": "DJ Dings & Tim Rausch - Play it Loud (Keep it Going)",
@@ -2890,7 +2890,7 @@
         "id": "bass",
         "name": "Sub i bas",
         "color": "#b25cff",
-        "enabled": false,
+        "enabled": true,
         "blend": "add",
         "opacity": 0.82,
         "clips": [
@@ -3180,7 +3180,7 @@
         "id": "synth",
         "name": "Sint i vokal",
         "color": "#00d2ff",
-        "enabled": false,
+        "enabled": true,
         "blend": "screen",
         "opacity": 0.72,
         "clips": [
@@ -3695,7 +3695,7 @@
         "id": "motion",
         "name": "Ritam i kretanje",
         "color": "#ffb23a",
-        "enabled": false,
+        "enabled": true,
         "blend": "add",
         "opacity": 0.82,
         "clips": [
@@ -11751,7 +11751,7 @@
         "id": "drums",
         "name": "Akcenti i stroboskop",
         "color": "#ff5c8a",
-        "enabled": false,
+        "enabled": true,
         "blend": "add",
         "opacity": 0.88,
         "clips": [
@@ -12359,5 +12359,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "dj-dings-tim-rausch-play-it-loud-keep-it-going-ef8851da",
+  "updatedBy": "Mortu",
+  "updatedAt": "2026-10-29T14:26:10.220Z",
+  "summary": "Ažurirane postavke · ukupno 267 clipova",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/0afa166bc0fecb5e3e32bf1861356181f7f6bd3b4f535db18c0c40c9197c3686.mp3"
 }

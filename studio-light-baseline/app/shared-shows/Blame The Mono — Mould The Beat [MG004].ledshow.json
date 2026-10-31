@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
   "version": 1,
-  "exportedAt": "2026-10-26T22:10:12.765Z",
+  "exportedAt": "2026-10-28T23:52:13.452Z",
   "author": "Timon",
   "track": {
     "id": "1d925e91-aa4b-48f6-8e06-e566811f1872",
@@ -1915,50 +1915,6 @@
         "blend": "add",
         "opacity": 0.82,
         "clips": [
-          {
-            "id": "rhy-drop-kick-0",
-            "startSec": 0,
-            "durationSec": 105.58,
-            "preset": "pulse",
-            "targets": "all",
-            "color": [
-              1,
-              0.025,
-              0.775,
-              0.42
-            ],
-            "driver": "band",
-            "driverGain": 1.45,
-            "speed": 1,
-            "timing": "beat",
-            "params": {
-              "floor": 0.25,
-              "curve": "punch"
-            },
-            "band": {
-              "source": "drums",
-              "lowHz": 40,
-              "highHz": 110,
-              "threshold": 0.55,
-              "ceiling": 1,
-              "mode": "gate",
-              "releaseSec": 0.14
-            },
-            "keyframes": [
-              {
-                "timeSec": 0,
-                "value": 1
-              },
-              {
-                "timeSec": 105.39999999999999,
-                "value": 1
-              },
-              {
-                "timeSec": 105.58,
-                "value": 0.9
-              }
-            ]
-          },
           {
             "id": "rhy-bld-open-1",
             "startSec": 105.58,
@@ -7144,5 +7100,10 @@
         ]
       }
     ]
-  }
+  },
+  "showId": "blame-the-mono-mould-the-beat-mg004-e8fc27fe",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:13.450Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 152 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/ea4ec2695f1e93192ce09e1e96b3b138f1108f9942d1eacd7af1983f72ff1ba5.mp3"
 }

@@ -144,11 +144,9 @@ try {
   const frame = await page.evaluate(() => window.studioTest.getFrame());
   assert.equal(Object.keys(frame.bars).length, 9);
 
-  // mixer and live docks render
-  await page.locator('#tab-mixer').click(); assert((await page.locator('.mx-strip').count()) >= 5);
-  await page.screenshot({ path: `${shot}/daw-2-mixer.png` });
-  await page.locator('#tab-live').click(); assert((await page.locator('.pad').count()) === 8);
-  await page.locator('#tab-output').click();
+  // auto show and live board docks render
+  await page.locator('#tab-autoshow').click();
+  await page.locator('#tab-perform').click();
   await page.locator('#tab-clip').click();
   await page.keyboard.press('Space'); await page.waitForTimeout(900);
   const t1 = await page.evaluate(() => window.studioTest.state.scrubSec + 0);

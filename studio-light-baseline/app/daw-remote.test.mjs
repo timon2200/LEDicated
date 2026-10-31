@@ -81,3 +81,29 @@ test('applyTimelineOp: adds layers, clips, keyframes, splits and modifies', () =
   const check = validateTimeline(tl);
   assert.equal(check.valid, true);
 });
+
+test('applyTimelineOp: add_clip inherits layer driver and update_layer assigns inferred driver to driverless clips', () => {
+  const tl = baseTimeline();
+  const { layer } = applyTimelineOp(tl, 'add_layer', { name: 'Sloj 1' });
+  const { clip: firstClip } = applyTimelineOp(tl, 'add_clip', {
+    layerId: layer.id,
+    preset: 'pulse',
+    startSec: 0,
+    durationSec: 4
+  });
+  assert.equal(firstClip.driver, 'none');
+
+  // Rename layer to "Sub bas" -> existing driverless clip gets 'bass'
+  applyTimelineOp(tl, 'update_layer', { layerId: layer.id, name: 'Sub bas' });
+  assert.equal(firstClip.driver, 'bass');
+
+  // Adding another clip to "Sub bas" automatically inherits 'bass'
+  const { clip: secondClip } = applyTimelineOp(tl, 'add_clip', {
+    layerId: layer.id,
+    preset: 'wash',
+    startSec: 4,
+    durationSec: 4
+  });
+  assert.equal(secondClip.driver, 'bass');
+  assert.equal(validateTimeline(tl).valid, true);
+});

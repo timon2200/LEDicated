@@ -1,0 +1,4220 @@
+{
+  "format": "ledicated-show",
+  "version": 1,
+  "exportedAt": "2026-10-28T23:52:18.466Z",
+  "author": "Timon",
+  "track": {
+    "id": "d95d0c81-4480-4ae2-a5bd-476e4f9c9aa1",
+    "title": "Ninho - Jefe (Clip officiel)",
+    "originalName": "Ninho - Jefe (Clip officiel).mp3",
+    "extension": ".mp3",
+    "sha256": "ed8e8ec42e38afeed4e7942a901f4e1becff1d9e0d3d3251346031606b8d11a1",
+    "sizeBytes": 4276845,
+    "durationSec": 178.132,
+    "bpm": 80.7,
+    "videoId": "pxjsZK_fkO4",
+    "sourceUrl": "https://www.youtube.com/watch?v=pxjsZK_fkO4",
+    "theme": "ice"
+  },
+  "analysis": {
+    "durationSec": 178.132,
+    "bpm": 80.7,
+    "beatsSec": [
+      0.626,
+      1.369,
+      2.113,
+      2.856,
+      3.6,
+      4.343,
+      5.087,
+      5.83,
+      6.574,
+      7.317,
+      8.061,
+      8.804,
+      9.548,
+      10.291,
+      11.035,
+      11.778,
+      12.522,
+      13.265,
+      14.009,
+      14.752,
+      15.496,
+      16.239,
+      16.983,
+      17.726,
+      18.47,
+      19.213,
+      19.957,
+      20.7,
+      21.444,
+      22.187,
+      22.931,
+      23.674,
+      24.418,
+      25.161,
+      25.905,
+      26.648,
+      27.392,
+      28.135,
+      28.879,
+      29.622,
+      30.366,
+      31.109,
+      31.853,
+      32.596,
+      33.34,
+      34.083,
+      34.827,
+      35.57,
+      36.314,
+      37.057,
+      37.8,
+      38.544,
+      39.287,
+      40.031,
+      40.774,
+      41.518,
+      42.261,
+      43.005,
+      43.748,
+      44.492,
+      45.235,
+      45.979,
+      46.722,
+      47.466,
+      48.209,
+      48.953,
+      49.696,
+      50.44,
+      51.183,
+      51.927,
+      52.67,
+      53.414,
+      54.157,
+      54.901,
+      55.644,
+      56.388,
+      57.131,
+      57.875,
+      58.618,
+      59.362,
+      60.105,
+      60.849,
+      61.592,
+      62.336,
+      63.079,
+      63.823,
+      64.566,
+      65.31,
+      66.053,
+      66.797,
+      67.54,
+      68.284,
+      69.027,
+      69.771,
+      70.514,
+      71.258,
+      72.001,
+      72.745,
+      73.488,
+      74.232,
+      74.975,
+      75.719,
+      76.462,
+      77.206,
+      77.949,
+      78.693,
+      79.436,
+      80.18,
+      80.923,
+      81.667,
+      82.41,
+      83.154,
+      83.897,
+      84.641,
+      85.384,
+      86.128,
+      86.871,
+      87.615,
+      88.358,
+      89.102,
+      89.845,
+      90.589,
+      91.332,
+      92.076,
+      92.819,
+      93.563,
+      94.306,
+      95.05,
+      95.793,
+      96.537,
+      97.28,
+      98.024,
+      98.767,
+      99.511,
+      100.254,
+      100.998,
+      101.741,
+      102.485,
+      103.228,
+      103.971,
+      104.715,
+      105.458,
+      106.202,
+      106.945,
+      107.689,
+      108.432,
+      109.176,
+      109.919,
+      110.663,
+      111.406,
+      112.15,
+      112.893,
+      113.637,
+      114.38,
+      115.124,
+      115.867,
+      116.611,
+      117.354,
+      118.098,
+      118.841,
+      119.585,
+      120.328,
+      121.072,
+      121.815,
+      122.559,
+      123.302,
+      124.046,
+      124.789,
+      125.533,
+      126.276,
+      127.02,
+      127.763,
+      128.507,
+      129.25,
+      129.994,
+      130.737,
+      131.481,
+      132.224,
+      132.968,
+      133.711,
+      134.455,
+      135.198,
+      135.942,
+      136.685,
+      137.429,
+      138.172,
+      138.916,
+      139.659,
+      140.403,
+      141.146,
+      141.89,
+      142.633,
+      143.377,
+      144.12,
+      144.864,
+      145.607,
+      146.351,
+      147.094,
+      147.838,
+      148.581,
+      149.325,
+      150.068,
+      150.812,
+      151.555,
+      152.299,
+      153.042,
+      153.786,
+      154.529,
+      155.273,
+      156.016,
+      156.76,
+      157.503,
+      158.247,
+      158.99,
+      159.734,
+      160.477,
+      161.221,
+      161.964,
+      162.708,
+      163.451,
+      164.195,
+      164.938,
+      165.682,
+      166.425,
+      167.169,
+      167.912,
+      168.656,
+      169.399,
+      170.143,
+      170.886,
+      171.629,
+      172.373,
+      173.116,
+      173.86,
+      174.603,
+      175.347,
+      176.09,
+      176.834,
+      177.577
+    ],
+    "sections": [
+      {
+        "id": "sec-1",
+        "name": "Uvod",
+        "type": "intro",
+        "startSec": 0,
+        "endSec": 12.52,
+        "durationSec": 12.52,
+        "energy": 0.33,
+        "color": "#3a86ff"
+      },
+      {
+        "id": "sec-2",
+        "name": "Strofa 1",
+        "type": "verse",
+        "startSec": 12.52,
+        "endSec": 24.42,
+        "durationSec": 11.9,
+        "energy": 0.52,
+        "color": "#00b4d8"
+      },
+      {
+        "id": "sec-3",
+        "name": "Gradnja 1",
+        "type": "build",
+        "startSec": 24.42,
+        "endSec": 35.57,
+        "durationSec": 11.15,
+        "energy": 0.76,
+        "color": "#ffb703"
+      },
+      {
+        "id": "sec-4",
+        "name": "Drop 1",
+        "type": "drop",
+        "startSec": 35.57,
+        "endSec": 77.95,
+        "durationSec": 42.38,
+        "energy": 0.98,
+        "color": "#ff0054"
+      },
+      {
+        "id": "sec-5",
+        "name": "Breakdown",
+        "type": "breakdown",
+        "startSec": 77.95,
+        "endSec": 101.74,
+        "durationSec": 23.79,
+        "energy": 0.69,
+        "color": "#9d4edd"
+      },
+      {
+        "id": "sec-6",
+        "name": "Gradnja 2",
+        "type": "build",
+        "startSec": 101.74,
+        "endSec": 113.64,
+        "durationSec": 11.9,
+        "energy": 0.92,
+        "color": "#ffb703"
+      },
+      {
+        "id": "sec-7",
+        "name": "Drop 2",
+        "type": "drop",
+        "startSec": 113.64,
+        "endSec": 149.32,
+        "durationSec": 35.68,
+        "energy": 1,
+        "color": "#ff0054"
+      },
+      {
+        "id": "sec-8",
+        "name": "Strofa 2",
+        "type": "verse",
+        "startSec": 149.32,
+        "endSec": 158.25,
+        "durationSec": 8.93,
+        "energy": 0.81,
+        "color": "#00b4d8"
+      },
+      {
+        "id": "sec-9",
+        "name": "Završetak",
+        "type": "outro",
+        "startSec": 158.25,
+        "endSec": 178.13,
+        "durationSec": 19.88,
+        "energy": 0.24,
+        "color": "#48cae4"
+      }
+    ]
+  },
+  "timeline": {
+    "version": 1,
+    "durationSec": 178.132,
+    "bpm": 80.7,
+    "beatOffsetSec": 0.626,
+    "blackout": false,
+    "layers": [
+      {
+        "id": "base-wash",
+        "name": "Atmosfera i baza",
+        "color": "#3aa0ff",
+        "enabled": true,
+        "blend": "screen",
+        "opacity": 0.72,
+        "clips": [
+          {
+            "id": "wash-intro-0",
+            "startSec": 0,
+            "durationSec": 12.52,
+            "preset": "pulse",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.7224999999999999,
+              0.051,
+              0.017,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "floor": 0.2,
+              "curve": "breath"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.198
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.44
+              },
+              {
+                "timeSec": 12.17,
+                "value": 0.44
+              },
+              {
+                "timeSec": 12.52,
+                "value": 0.154
+              }
+            ]
+          },
+          {
+            "id": "wash-vrs-1",
+            "startSec": 12.52,
+            "durationSec": 11.9,
+            "preset": "rain",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.782,
+              0.0552,
+              0.0184,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 1.05,
+            "speed": 2,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.25200000000000006
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.56
+              },
+              {
+                "timeSec": 11.55,
+                "value": 0.56
+              },
+              {
+                "timeSec": 11.9,
+                "value": 0.196
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp1-2",
+            "startSec": 28.878550185873607,
+            "durationSec": 1.486988847583643,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.9309999999999999,
+              0.646,
+              0.038,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.1,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.52
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.62
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp2-2",
+            "startSec": 30.36553903345725,
+            "durationSec": 1.486988847583643,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.9603999999999999,
+              0.6664,
+              0.0392,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.15,
+            "speed": 4,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.62
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.72
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp3-2",
+            "startSec": 31.852527881040892,
+            "durationSec": 1.486988847583643,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.98,
+              0.68,
+              0.04,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.2,
+            "speed": 8,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.72
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.8
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp4-2",
+            "startSec": 33.33951672862454,
+            "durationSec": 1.486988847583643,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.98,
+              0.68,
+              0.04,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.25,
+            "speed": 16,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.8
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.88
+              }
+            ]
+          },
+          {
+            "id": "wash-drop-rip-3",
+            "startSec": 35.57,
+            "durationSec": 42.38,
+            "preset": "ripple",
+            "targets": [
+              "C1",
+              "L2",
+              "C2",
+              "R2",
+              "C3"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.4
+            ],
+            "driver": "drums",
+            "driverGain": 1.35,
+            "speed": 2,
+            "timing": "beat",
+            "params": {
+              "width": "wide"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 42.2,
+                "value": 1
+              },
+              {
+                "timeSec": 42.38,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-wave-4-0",
+            "startSec": 77.95,
+            "durationSec": 2.973977695167286,
+            "preset": "wave",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.7224999999999999,
+              0.051,
+              0.017,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.623977695167286,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.973977695167286,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-rain-4-1",
+            "startSec": 80.9239776951673,
+            "durationSec": 2.973977695167286,
+            "preset": "rain",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.7224999999999999,
+              0.051,
+              0.017,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.623977695167286,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.973977695167286,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-sparkle-4-2",
+            "startSec": 83.89795539033459,
+            "durationSec": 2.973977695167286,
+            "preset": "sparkle",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.7224999999999999,
+              0.051,
+              0.017,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.623977695167286,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.973977695167286,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-sweep-4-3",
+            "startSec": 86.87193308550188,
+            "durationSec": 2.973977695167286,
+            "preset": "sweep",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.7224999999999999,
+              0.051,
+              0.017,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.623977695167286,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.973977695167286,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-wave-4-4",
+            "startSec": 89.84591078066917,
+            "durationSec": 2.973977695167286,
+            "preset": "wave",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.7224999999999999,
+              0.051,
+              0.017,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.623977695167286,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.973977695167286,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-rain-4-5",
+            "startSec": 92.81988847583646,
+            "durationSec": 2.973977695167286,
+            "preset": "rain",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.7224999999999999,
+              0.051,
+              0.017,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.623977695167286,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.973977695167286,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-sparkle-4-6",
+            "startSec": 95.79386617100376,
+            "durationSec": 2.973977695167286,
+            "preset": "sparkle",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.7224999999999999,
+              0.051,
+              0.017,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.623977695167286,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.973977695167286,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-brk-sweep-4-7",
+            "startSec": 98.76784386617105,
+            "durationSec": 2.9721561338289604,
+            "preset": "sweep",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.7224999999999999,
+              0.051,
+              0.017,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.18000000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.6221561338289603,
+                "value": 0.4
+              },
+              {
+                "timeSec": 2.9721561338289604,
+                "value": 0.13999999999999999
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp1-5",
+            "startSec": 106.20505576208178,
+            "durationSec": 1.486988847583643,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.9309999999999999,
+              0.646,
+              0.038,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.1,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.52
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.62
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp2-5",
+            "startSec": 107.69204460966543,
+            "durationSec": 1.486988847583643,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.9603999999999999,
+              0.6664,
+              0.0392,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.15,
+            "speed": 4,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.62
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.72
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp3-5",
+            "startSec": 109.17903345724908,
+            "durationSec": 1.486988847583643,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.98,
+              0.68,
+              0.04,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.2,
+            "speed": 8,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.72
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.8
+              }
+            ]
+          },
+          {
+            "id": "wash-bld-sp4-5",
+            "startSec": 110.66602230483271,
+            "durationSec": 1.486988847583643,
+            "preset": "spiral",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.98,
+              0.68,
+              0.04,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.25,
+            "speed": 16,
+            "timing": "beat",
+            "band": {
+              "source": "vocals",
+              "lowHz": 350,
+              "highHz": 3400,
+              "threshold": 0.38,
+              "ceiling": 0.95,
+              "mode": "follow",
+              "releaseSec": 0.15
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.8
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.88
+              }
+            ]
+          },
+          {
+            "id": "wash-drop-rip-6",
+            "startSec": 113.64,
+            "durationSec": 35.68,
+            "preset": "ripple",
+            "targets": [
+              "C1",
+              "L2",
+              "C2",
+              "R2",
+              "C3"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.4
+            ],
+            "driver": "drums",
+            "driverGain": 1.35,
+            "speed": 2,
+            "timing": "beat",
+            "params": {
+              "width": "wide"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 35.5,
+                "value": 1
+              },
+              {
+                "timeSec": 35.68,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "wash-vrs-7",
+            "startSec": 149.32,
+            "durationSec": 8.93,
+            "preset": "rain",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.782,
+              0.0552,
+              0.0184,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 1.05,
+            "speed": 2,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.25200000000000006
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.56
+              },
+              {
+                "timeSec": 8.58,
+                "value": 0.56
+              },
+              {
+                "timeSec": 8.93,
+                "value": 0.196
+              }
+            ]
+          },
+          {
+            "id": "wash-out-8",
+            "startSec": 158.25,
+            "durationSec": 19.88,
+            "preset": "wave",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.7224999999999999,
+              0.051,
+              0.017,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 0.95,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.5
+              },
+              {
+                "timeSec": 16.898,
+                "value": 0.22
+              },
+              {
+                "timeSec": 19.88,
+                "value": 0.15
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "bass",
+        "name": "Sub i bas",
+        "color": "#b25cff",
+        "enabled": true,
+        "blend": "add",
+        "opacity": 0.82,
+        "clips": [
+          {
+            "id": "bass-vrs-1",
+            "startSec": 12.52,
+            "durationSec": 11.9,
+            "preset": "pulse",
+            "targets": [
+              "L3",
+              "C3",
+              "R3"
+            ],
+            "color": [
+              0.8832,
+              0.3312,
+              0.0184,
+              0
+            ],
+            "driver": "bass",
+            "driverGain": 1.12,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "floor": 0.15,
+              "curve": "punch"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.261
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.58
+              },
+              {
+                "timeSec": 11.55,
+                "value": 0.58
+              },
+              {
+                "timeSec": 11.9,
+                "value": 0.20299999999999999
+              }
+            ]
+          },
+          {
+            "id": "bass-bld-chL-2",
+            "startSec": 28.878550185873607,
+            "durationSec": 5.947955390334572,
+            "preset": "chase",
+            "targets": [
+              "L1",
+              "L2",
+              "L3"
+            ],
+            "color": [
+              0.98,
+              0.68,
+              0.04,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.25,
+            "speed": 16,
+            "timing": "4bar",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.6
+              },
+              {
+                "timeSec": 5.947955390334572,
+                "value": 0.88
+              }
+            ]
+          },
+          {
+            "id": "bass-drop-3",
+            "startSec": 35.57,
+            "durationSec": 42.38,
+            "preset": "pulse",
+            "targets": [
+              "L3",
+              "C3",
+              "R3"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.45
+            ],
+            "driver": "bass",
+            "driverGain": 1.45,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "floor": 0.2,
+              "curve": "punch"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 42.2,
+                "value": 1
+              },
+              {
+                "timeSec": 42.38,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "bass-bld-chL-5",
+            "startSec": 106.20505576208178,
+            "durationSec": 5.947955390334572,
+            "preset": "chase",
+            "targets": [
+              "L1",
+              "L2",
+              "L3"
+            ],
+            "color": [
+              0.98,
+              0.68,
+              0.04,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.25,
+            "speed": 16,
+            "timing": "4bar",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.6
+              },
+              {
+                "timeSec": 5.947955390334572,
+                "value": 0.88
+              }
+            ]
+          },
+          {
+            "id": "bass-drop-6",
+            "startSec": 113.64,
+            "durationSec": 35.68,
+            "preset": "pulse",
+            "targets": [
+              "L3",
+              "C3",
+              "R3"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.45
+            ],
+            "driver": "bass",
+            "driverGain": 1.45,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "floor": 0.2,
+              "curve": "punch"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 35.5,
+                "value": 1
+              },
+              {
+                "timeSec": 35.68,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "bass-vrs-7",
+            "startSec": 149.32,
+            "durationSec": 8.93,
+            "preset": "pulse",
+            "targets": [
+              "L3",
+              "C3",
+              "R3"
+            ],
+            "color": [
+              0.8832,
+              0.3312,
+              0.0184,
+              0
+            ],
+            "driver": "bass",
+            "driverGain": 1.12,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "floor": 0.15,
+              "curve": "punch"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.261
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.58
+              },
+              {
+                "timeSec": 8.58,
+                "value": 0.58
+              },
+              {
+                "timeSec": 8.93,
+                "value": 0.20299999999999999
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "synth",
+        "name": "Sint i vokal",
+        "color": "#00d2ff",
+        "enabled": true,
+        "blend": "screen",
+        "opacity": 0.72,
+        "clips": [
+          {
+            "id": "syn-intro-0",
+            "startSec": 0,
+            "durationSec": 12.52,
+            "preset": "pulse",
+            "targets": [
+              "C1",
+              "C2",
+              "C3"
+            ],
+            "color": [
+              0.816,
+              0.306,
+              0.017,
+              0
+            ],
+            "driver": "vocals",
+            "driverGain": 1,
+            "speed": 1,
+            "timing": "bar",
+            "params": {
+              "floor": 0.18,
+              "curve": "swell"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.20700000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.46
+              },
+              {
+                "timeSec": 12.17,
+                "value": 0.46
+              },
+              {
+                "timeSec": 12.52,
+                "value": 0.161
+              }
+            ]
+          },
+          {
+            "id": "syn-vrs-1",
+            "startSec": 12.52,
+            "durationSec": 11.9,
+            "preset": "pulse",
+            "targets": [
+              "C1",
+              "C2",
+              "C3"
+            ],
+            "color": [
+              0.9016000000000001,
+              0.6256,
+              0.0368,
+              0
+            ],
+            "driver": "vocals",
+            "driverGain": 1.15,
+            "speed": 1,
+            "timing": "half",
+            "params": {
+              "floor": 0.2,
+              "curve": "breath"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.279
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.62
+              },
+              {
+                "timeSec": 11.55,
+                "value": 0.62
+              },
+              {
+                "timeSec": 11.9,
+                "value": 0.217
+              }
+            ]
+          },
+          {
+            "id": "syn-bld-bnc-2",
+            "startSec": 24.42,
+            "durationSec": 4.458550185873607,
+            "preset": "bounce",
+            "targets": [
+              "C1",
+              "L2",
+              "R2",
+              "C3"
+            ],
+            "color": [
+              0.9119999999999999,
+              0.34199999999999997,
+              0.019,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 1.1,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "physics": "elastic",
+              "axis": "horiz"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.45
+              },
+              {
+                "timeSec": 4.458550185873607,
+                "value": 0.64
+              }
+            ]
+          },
+          {
+            "id": "syn-drop-rn1-3",
+            "startSec": 35.57,
+            "durationSec": 21,
+            "preset": "chase",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              1,
+              0.8500000000000001,
+              0.05,
+              0.38
+            ],
+            "driver": "other",
+            "driverGain": 1.3,
+            "speed": 4,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 20.82,
+                "value": 1
+              },
+              {
+                "timeSec": 21,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "syn-drop-sw2-3",
+            "startSec": 56.57,
+            "durationSec": 21.380000000000003,
+            "preset": "sweep",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.38
+            ],
+            "driver": "drums",
+            "driverGain": 1.3,
+            "speed": 4,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 21.200000000000003,
+                "value": 1
+              },
+              {
+                "timeSec": 21.380000000000003,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "syn-brk-vox-4",
+            "startSec": 77.95,
+            "durationSec": 23.79,
+            "preset": "pulse",
+            "targets": [
+              "C1",
+              "C2",
+              "C3"
+            ],
+            "color": [
+              0.8623999999999999,
+              0.5984,
+              0.0352,
+              0
+            ],
+            "driver": "vocals",
+            "driverGain": 1.05,
+            "speed": 1,
+            "timing": "bar",
+            "params": {
+              "floor": 0.2,
+              "curve": "breath"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.20700000000000002
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.46
+              },
+              {
+                "timeSec": 23.439999999999998,
+                "value": 0.46
+              },
+              {
+                "timeSec": 23.79,
+                "value": 0.161
+              }
+            ]
+          },
+          {
+            "id": "syn-bld-bnc-5",
+            "startSec": 101.74,
+            "durationSec": 4.465055762081786,
+            "preset": "bounce",
+            "targets": [
+              "C1",
+              "L2",
+              "R2",
+              "C3"
+            ],
+            "color": [
+              0.9119999999999999,
+              0.34199999999999997,
+              0.019,
+              0
+            ],
+            "driver": "other",
+            "driverGain": 1.1,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "physics": "elastic",
+              "axis": "horiz"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.45
+              },
+              {
+                "timeSec": 4.465055762081786,
+                "value": 0.64
+              }
+            ]
+          },
+          {
+            "id": "syn-drop-rn1-6",
+            "startSec": 113.64,
+            "durationSec": 17.999999999999986,
+            "preset": "chase",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              1,
+              0.8500000000000001,
+              0.05,
+              0.38
+            ],
+            "driver": "other",
+            "driverGain": 1.3,
+            "speed": 4,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 17.819999999999986,
+                "value": 1
+              },
+              {
+                "timeSec": 17.999999999999986,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "syn-drop-sw2-6",
+            "startSec": 131.64,
+            "durationSec": 17.680000000000007,
+            "preset": "sweep",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.38
+            ],
+            "driver": "drums",
+            "driverGain": 1.3,
+            "speed": 4,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 17.500000000000007,
+                "value": 1
+              },
+              {
+                "timeSec": 17.680000000000007,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "syn-vrs-7",
+            "startSec": 149.32,
+            "durationSec": 8.93,
+            "preset": "pulse",
+            "targets": [
+              "C1",
+              "C2",
+              "C3"
+            ],
+            "color": [
+              0.9016000000000001,
+              0.6256,
+              0.0368,
+              0
+            ],
+            "driver": "vocals",
+            "driverGain": 1.15,
+            "speed": 1,
+            "timing": "half",
+            "params": {
+              "floor": 0.2,
+              "curve": "breath"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.279
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.62
+              },
+              {
+                "timeSec": 8.58,
+                "value": 0.62
+              },
+              {
+                "timeSec": 8.93,
+                "value": 0.217
+              }
+            ]
+          },
+          {
+            "id": "syn-out-8",
+            "startSec": 158.25,
+            "durationSec": 19.88,
+            "preset": "rain",
+            "targets": [
+              "C1",
+              "C2",
+              "C3"
+            ],
+            "color": [
+              0.833,
+              0.5780000000000001,
+              0.034,
+              0
+            ],
+            "driver": "vocals",
+            "driverGain": 0.95,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.5
+              },
+              {
+                "timeSec": 16.898,
+                "value": 0.22
+              },
+              {
+                "timeSec": 19.88,
+                "value": 0.15
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "motion",
+        "name": "Ritam i kretanje",
+        "color": "#ffb23a",
+        "enabled": true,
+        "blend": "add",
+        "opacity": 0.82,
+        "clips": [
+          {
+            "id": "rhy-vrs-1",
+            "startSec": 12.52,
+            "durationSec": 11.9,
+            "preset": "bounce",
+            "targets": [
+              "C1",
+              "L2",
+              "R2",
+              "C3"
+            ],
+            "color": [
+              0.8832,
+              0.3312,
+              0.0184,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 1.1,
+            "speed": 2,
+            "timing": "beat",
+            "params": {
+              "physics": "elastic",
+              "axis": "horiz"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.261
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.58
+              },
+              {
+                "timeSec": 11.55,
+                "value": 0.58
+              },
+              {
+                "timeSec": 11.9,
+                "value": 0.20299999999999999
+              }
+            ]
+          },
+          {
+            "id": "rhy-bld-open-2",
+            "startSec": 24.42,
+            "durationSec": 4.458550185873607,
+            "preset": "chase",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.8075,
+              0.056999999999999995,
+              0.019,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 1.1,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.45
+              },
+              {
+                "timeSec": 4.458550185873607,
+                "value": 0.64
+              }
+            ]
+          },
+          {
+            "id": "rhy-bld-chR-2",
+            "startSec": 28.878550185873607,
+            "durationSec": 5.947955390334572,
+            "preset": "chase",
+            "targets": [
+              "R1",
+              "R2",
+              "R3"
+            ],
+            "color": [
+              0.98,
+              0.68,
+              0.04,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.25,
+            "speed": 16,
+            "timing": "4bar",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.6
+              },
+              {
+                "timeSec": 5.947955390334572,
+                "value": 0.88
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-kick-3",
+            "startSec": 35.57,
+            "durationSec": 42.38,
+            "preset": "pulse",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.45,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "floor": 0.25,
+              "curve": "punch"
+            },
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 42.2,
+                "value": 1
+              },
+              {
+                "timeSec": 42.38,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-4-0",
+            "startSec": 77.95,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.369,
+              0.14759999999999998,
+              0.016399999999999998,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.26765799256505574,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.2193308550185873,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-4-1",
+            "startSec": 80.9239776951673,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.369,
+              0.14759999999999998,
+              0.016399999999999998,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.26765799256505574,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.2193308550185873,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-4-2",
+            "startSec": 83.89795539033459,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.369,
+              0.14759999999999998,
+              0.016399999999999998,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.26765799256505574,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.2193308550185873,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-4-3",
+            "startSec": 86.87193308550188,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.369,
+              0.14759999999999998,
+              0.016399999999999998,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.26765799256505574,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.2193308550185873,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-4-4",
+            "startSec": 89.84591078066917,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.369,
+              0.14759999999999998,
+              0.016399999999999998,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.26765799256505574,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.2193308550185873,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-4-5",
+            "startSec": 92.81988847583646,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.369,
+              0.14759999999999998,
+              0.016399999999999998,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.26765799256505574,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.2193308550185873,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-4-6",
+            "startSec": 95.79386617100376,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.369,
+              0.14759999999999998,
+              0.016399999999999998,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.26765799256505574,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.2193308550185873,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-brk-alt-4-7",
+            "startSec": 98.76784386617105,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              0.369,
+              0.14759999999999998,
+              0.016399999999999998,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 0.98,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.171
+              },
+              {
+                "timeSec": 0.26765799256505574,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.2193308550185873,
+                "value": 0.38
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.13299999999999998
+              }
+            ]
+          },
+          {
+            "id": "rhy-bld-open-5",
+            "startSec": 101.74,
+            "durationSec": 4.465055762081786,
+            "preset": "chase",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.8075,
+              0.056999999999999995,
+              0.019,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 1.1,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.45
+              },
+              {
+                "timeSec": 4.465055762081786,
+                "value": 0.64
+              }
+            ]
+          },
+          {
+            "id": "rhy-bld-chR-5",
+            "startSec": 106.20505576208178,
+            "durationSec": 5.947955390334572,
+            "preset": "chase",
+            "targets": [
+              "R1",
+              "R2",
+              "R3"
+            ],
+            "color": [
+              0.98,
+              0.68,
+              0.04,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.25,
+            "speed": 16,
+            "timing": "4bar",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.6
+              },
+              {
+                "timeSec": 5.947955390334572,
+                "value": 0.88
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-0",
+            "startSec": 113.64,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-1",
+            "startSec": 115.12698884758365,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-2",
+            "startSec": 116.61397769516729,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-3",
+            "startSec": 118.10096654275094,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-4",
+            "startSec": 119.58795539033459,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-5",
+            "startSec": 121.07494423791823,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-6",
+            "startSec": 122.56193308550188,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-7",
+            "startSec": 124.04892193308552,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-8",
+            "startSec": 125.53591078066917,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-9",
+            "startSec": 127.02289962825282,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-10",
+            "startSec": 128.50988847583645,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-11",
+            "startSec": 129.99687732342008,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-12",
+            "startSec": 131.4838661710037,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-13",
+            "startSec": 132.97085501858734,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-14",
+            "startSec": 134.45784386617098,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-15",
+            "startSec": 135.9448327137546,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-16",
+            "startSec": 137.43182156133824,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-17",
+            "startSec": 138.91881040892187,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-18",
+            "startSec": 140.4057992565055,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-19",
+            "startSec": 141.89278810408914,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-20",
+            "startSec": 143.37977695167277,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-21",
+            "startSec": 144.8667657992564,
+            "durationSec": 1.486988847583643,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-22",
+            "startSec": 146.35375464684003,
+            "durationSec": 1.486988847583643,
+            "preset": "alternate",
+            "targets": [
+              "L1",
+              "C1",
+              "R1",
+              "R2",
+              "R3",
+              "C3",
+              "L3",
+              "L2"
+            ],
+            "color": [
+              1,
+              0.44999999999999996,
+              0.025,
+              0.42
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3382899628252787,
+                "value": 1
+              },
+              {
+                "timeSec": 1.486988847583643,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-drop-alt-6-23",
+            "startSec": 147.84074349442366,
+            "durationSec": 1.4792565055763305,
+            "preset": "columns",
+            "targets": "all",
+            "color": [
+              1,
+              0.075,
+              0.025,
+              0.4
+            ],
+            "driver": "band",
+            "driverGain": 1.42,
+            "speed": 2,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 40,
+              "highHz": 110,
+              "threshold": 0.55,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.14
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.3313308550186975,
+                "value": 1
+              },
+              {
+                "timeSec": 1.4792565055763305,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "rhy-vrs-7",
+            "startSec": 149.32,
+            "durationSec": 8.93,
+            "preset": "bounce",
+            "targets": [
+              "C1",
+              "L2",
+              "R2",
+              "C3"
+            ],
+            "color": [
+              0.8832,
+              0.3312,
+              0.0184,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 1.1,
+            "speed": 2,
+            "timing": "beat",
+            "params": {
+              "physics": "elastic",
+              "axis": "horiz"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.261
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.58
+              },
+              {
+                "timeSec": 8.58,
+                "value": 0.58
+              },
+              {
+                "timeSec": 8.93,
+                "value": 0.20299999999999999
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "drums",
+        "name": "Akcenti i stroboskop",
+        "color": "#ff5c8a",
+        "enabled": true,
+        "blend": "add",
+        "opacity": 0.88,
+        "clips": [
+          {
+            "id": "acc-intro-sw1-0",
+            "startSec": 9.546022304832714,
+            "durationSec": 2.973977695167286,
+            "preset": "sweep",
+            "targets": [
+              "L1",
+              "R1",
+              "L2",
+              "R2",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.882,
+              0.6120000000000001,
+              0.036000000000000004,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 1.02,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.216
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.48
+              },
+              {
+                "timeSec": 2.623977695167286,
+                "value": 0.48
+              },
+              {
+                "timeSec": 2.973977695167286,
+                "value": 0.16799999999999998
+              }
+            ]
+          },
+          {
+            "id": "acc-intro-sw2-0",
+            "startSec": 11.776505576208178,
+            "durationSec": 0.7434944237918215,
+            "preset": "sweep",
+            "targets": [
+              "C1",
+              "C2",
+              "C3"
+            ],
+            "color": [
+              0.98,
+              0.68,
+              0.04,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 1.05,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.234
+              },
+              {
+                "timeSec": 0.13382899628252787,
+                "value": 0.52
+              },
+              {
+                "timeSec": 0.6096654275092936,
+                "value": 0.52
+              },
+              {
+                "timeSec": 0.7434944237918215,
+                "value": 0.182
+              }
+            ]
+          },
+          {
+            "id": "acc-vrs-1",
+            "startSec": 12.52,
+            "durationSec": 11.9,
+            "preset": "sparkle",
+            "targets": [
+              "L1",
+              "R1",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.8623999999999999,
+              0.5984,
+              0.0352,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 1.08,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.234
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.52
+              },
+              {
+                "timeSec": 11.55,
+                "value": 0.52
+              },
+              {
+                "timeSec": 11.9,
+                "value": 0.182
+              }
+            ]
+          },
+          {
+            "id": "acc-bld-fl-2",
+            "startSec": 28.878550185873607,
+            "durationSec": 5.947955390334572,
+            "preset": "flash",
+            "targets": "all",
+            "color": [
+              0.45,
+              0.18,
+              0.02,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.3,
+            "speed": 0.5,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 180,
+              "highHz": 450,
+              "threshold": 0.6,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.12
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.55
+              },
+              {
+                "timeSec": 5.947955390334572,
+                "value": 0.88
+              }
+            ]
+          },
+          {
+            "id": "acc-drop-hit-3",
+            "startSec": 35.57,
+            "durationSec": 0.06,
+            "preset": "flash",
+            "targets": "all",
+            "color": [
+              1,
+              0.98,
+              0.92,
+              1
+            ],
+            "driver": "drums",
+            "driverGain": 1.5,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "decay": "instant",
+              "focus": "all"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 0.054,
+                "value": 1
+              },
+              {
+                "timeSec": 0.06,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "acc-drop-str-3",
+            "startSec": 35.57,
+            "durationSec": 6.32,
+            "preset": "strobe",
+            "targets": [
+              "C1",
+              "L2",
+              "C2",
+              "R2"
+            ],
+            "color": [
+              1,
+              0.98,
+              0.92,
+              1
+            ],
+            "driver": "drums",
+            "driverGain": 1.45,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "duty": "sharp",
+              "rate": "1/4"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 6.140000000000001,
+                "value": 1
+              },
+              {
+                "timeSec": 6.32,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "acc-drop-fl-3",
+            "startSec": 41.89,
+            "durationSec": 36.06,
+            "preset": "flash",
+            "targets": [
+              "L1",
+              "R1",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              1,
+              0.98,
+              0.92,
+              1
+            ],
+            "driver": "band",
+            "driverGain": 1.45,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "decay": "fast",
+              "focus": "all"
+            },
+            "band": {
+              "source": "drums",
+              "lowHz": 180,
+              "highHz": 450,
+              "threshold": 0.6,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.12
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 35.88,
+                "value": 1
+              },
+              {
+                "timeSec": 36.06,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "acc-bld-fl-5",
+            "startSec": 106.20505576208178,
+            "durationSec": 5.947955390334572,
+            "preset": "flash",
+            "targets": "all",
+            "color": [
+              0.45,
+              0.18,
+              0.02,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.3,
+            "speed": 0.5,
+            "timing": "beat",
+            "band": {
+              "source": "drums",
+              "lowHz": 180,
+              "highHz": 450,
+              "threshold": 0.6,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.12
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.55
+              },
+              {
+                "timeSec": 5.947955390334572,
+                "value": 0.88
+              }
+            ]
+          },
+          {
+            "id": "acc-drop-hit-6",
+            "startSec": 113.64,
+            "durationSec": 0.06,
+            "preset": "flash",
+            "targets": "all",
+            "color": [
+              1,
+              0.98,
+              0.92,
+              1
+            ],
+            "driver": "drums",
+            "driverGain": 1.5,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "decay": "instant",
+              "focus": "all"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 0.054,
+                "value": 1
+              },
+              {
+                "timeSec": 0.06,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "acc-drop-str-6",
+            "startSec": 113.64,
+            "durationSec": 6.32,
+            "preset": "strobe",
+            "targets": [
+              "C1",
+              "L2",
+              "C2",
+              "R2"
+            ],
+            "color": [
+              1,
+              0.98,
+              0.92,
+              1
+            ],
+            "driver": "drums",
+            "driverGain": 1.45,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "duty": "sharp",
+              "rate": "1/4"
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 6.140000000000001,
+                "value": 1
+              },
+              {
+                "timeSec": 6.32,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "acc-drop-fl-6",
+            "startSec": 119.96000000000001,
+            "durationSec": 29.36,
+            "preset": "flash",
+            "targets": [
+              "L1",
+              "R1",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              1,
+              0.98,
+              0.92,
+              1
+            ],
+            "driver": "band",
+            "driverGain": 1.45,
+            "speed": 1,
+            "timing": "beat",
+            "params": {
+              "decay": "fast",
+              "focus": "all"
+            },
+            "band": {
+              "source": "drums",
+              "lowHz": 180,
+              "highHz": 450,
+              "threshold": 0.6,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.12
+            },
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 29.18,
+                "value": 1
+              },
+              {
+                "timeSec": 29.36,
+                "value": 0.9
+              }
+            ]
+          },
+          {
+            "id": "acc-vrs-7",
+            "startSec": 149.32,
+            "durationSec": 8.93,
+            "preset": "sparkle",
+            "targets": [
+              "L1",
+              "R1",
+              "L3",
+              "R3"
+            ],
+            "color": [
+              0.8623999999999999,
+              0.5984,
+              0.0352,
+              0
+            ],
+            "driver": "drums",
+            "driverGain": 1.08,
+            "speed": 1,
+            "timing": "beat",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 0.234
+              },
+              {
+                "timeSec": 0.35,
+                "value": 0.52
+              },
+              {
+                "timeSec": 8.58,
+                "value": 0.52
+              },
+              {
+                "timeSec": 8.93,
+                "value": 0.182
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "showId": "ninho-jefe-clip-officiel-e8a31bc4",
+  "updatedBy": "Timon",
+  "updatedAt": "2026-10-28T23:52:18.465Z",
+  "summary": "Početni klupski show u oblaku (5 slojeva · 90 clipova)",
+  "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/ed8e8ec42e38afeed4e7942a901f4e1becff1d9e0d3d3251346031606b8d11a1.mp3"
+}

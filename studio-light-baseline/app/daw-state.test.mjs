@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createAutoShow, validateTimeline, renderTimelineFrame } from './timeline.mjs';
 import {
   addClip, addKeyframe, addLayer, beatPosition, clampBand, clipEnd, clipsInRect, copyClips, createStore, deleteClips, duplicateClips, duplicateLayer, envelopeAt,
-  findClip, formatBBT, formatClock, gridBeats, moveClip, moveKeyframe, moveKeyframes, normalizeTimeline, pasteClips, patchClips, removeKeyframe, removeKeyframes, resizeClip, snapStepSec,
+  findClip, formatBBT, formatClock, gridBeats, inferLayerDriver, moveClip, moveKeyframe, moveKeyframes, normalizeTimeline, pasteClips, patchClips, removeKeyframe, removeKeyframes, resizeClip, snapStepSec,
   snapTime, splitClip, timeAtBeat, toggleTarget, trimKeyframes
 } from './daw-state.mjs';
 
@@ -237,4 +237,47 @@ test('edited timeline renders deterministic RGBW frames', () => {
   assert(frame.bars.C2.some(p => p[3] > 0));
   assert.deepEqual(renderTimelineFrame(t, analysis(), 6, null), frame);
   assert(ref);
+});
+
+test('inferLayerDriver and addClip automatically inherit audio driver from existing clips or layer name', () => {
+  const t = fresh();
+  // 1. Adding a clip to each auto-show layer inherits that layer's active audio driver
+  for (const layer of t.layers) {
+    const expected = inferLayerDriver(layer, 10);
+    assert.notEqual(expected.driver, 'none', `Layer ${layer.name} should have an active inferred driver`);
+    const ref = addClip(t, layer.id, { startSec: 10, durationSec: 4, preset: 'wave' });
+    const added = findClip(t, ref).clip;
+    assert.equal(added.driver, expected.driver, `Added clip on ${layer.name} inherited driver`);
+    assert.equal(added.driverGain, expected.driverGain, `Added clip on ${layer.name} inherited driverGain`);
+    if (expected.driver === 'band') {
+      assert.deepEqual(added.band, expected.band, `Added clip on ${layer.name} inherited band EQ`);
+    }
+  }
+  assert.equal(validateTimeline(t).valid, true);
+
+  // 2. Empty named layers infer driver from Croatian/English names
+  const custom = blank();
+  custom.layers = [];
+  const lAtmos = addLayer(custom, { name: 'Atmosfera i baza' });
+  const lBass = addLayer(custom, { name: 'Sub i bas' });
+  const lVocal = addLayer(custom, { name: 'Vokal' });
+  const lRitam = addLayer(custom, { name: 'Ritam i kretanje' });
+
+  const cAtmos = findClip(custom, addClip(custom, lAtmos.id, { startSec: 0, durationSec: 4 })).clip;
+  const cBass = findClip(custom, addClip(custom, lBass.id, { startSec: 0, durationSec: 4 })).clip;
+  const cVocal = findClip(custom, addClip(custom, lVocal.id, { startSec: 0, durationSec: 4 })).clip;
+  const cRitam = findClip(custom, addClip(custom, lRitam.id, { startSec: 0, durationSec: 4 })).clip;
+
+  assert.equal(cAtmos.driver, 'other');
+  assert.equal(cBass.driver, 'bass');
+  assert.equal(cVocal.driver, 'vocals');
+  assert.equal(cRitam.driver, 'drums');
+
+  // 3. Moving or duplicating a clip onto another driven layer adopts the target layer's driver
+  const movedRef = moveClip(custom, { layerId: lAtmos.id, clipId: cAtmos.id }, { layerId: lBass.id, startSec: 8 });
+  assert.equal(findClip(custom, movedRef).clip.driver, 'bass');
+
+  const [dupRef] = duplicateClips(custom, [movedRef], 4, 2); // from lBass (idx 1) to lRitam (idx 3)
+  assert.equal(findClip(custom, dupRef).clip.driver, 'drums');
+  assert.equal(validateTimeline(custom).valid, true);
 });

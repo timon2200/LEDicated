@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXFileReference section */
+		AA0000050000000000000001 /* LEDicatedPad.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LEDicatedPad.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AA0000010000000000000001 /* LEDicatedPad */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -78,6 +82,8 @@
 				TargetAttributes = {
 					AA0000060000000000000001 = {
 						CreatedOnToolsVersion = 16.0;
+						DevelopmentTeam = 3M2Q64Z5JM;
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -174,8 +180,10 @@
 		AA00000E0000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3M2Q64Z5JM;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "LEDicated Pad";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
@@ -206,8 +214,10 @@
 		AA00000F0000000000000001 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3M2Q64Z5JM;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "LEDicated Pad";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
@@ -257,16 +267,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin PBXFileReference section */
-		AA0000050000000000000001 /* LEDicatedPad.app */ = {
-			isa = PBXFileReference;
-			explicitFileType = wrapper.application;
-			includeInIndex = 0;
-			path = LEDicatedPad.app;
-			sourceTree = BUILT_PRODUCTS_DIR;
-		};
-/* End PBXFileReference section */
 	};
 	rootObject = AA00000A0000000000000001 /* Project object */;
 }

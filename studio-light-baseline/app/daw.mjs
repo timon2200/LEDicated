@@ -4,12 +4,13 @@
  * feeds both the WebGL preview and the WLED/DDP output.
  */
 import { BAR_IDS } from './engine.mjs';
-import { createAutoShow, renderTimelineFrame, validateTimeline } from './timeline.mjs';
+import { createAutoShow, regenerateSectionClips, renderTimelineFrame, validateTimeline } from './timeline.mjs';
 import { createShowEngine } from './show-engine.mjs';
+import { createAutoShowPanel } from './daw-autoshow.mjs';
 import { createLedPreview } from './led-preview.mjs';
 import { installTooltips } from './tooltips.mjs';
 import {
-  SNAP_MODES, addClip, beatPosition, timeAtBeat, clamp, clipEnd, copyClips, createStore, deleteClips, duplicateClips, findClip, formatBBT, formatClock, normalizeTimeline,
+  SNAP_MODES, addClip, beatPosition, timeAtBeat, clamp, clipEnd, copyClips, createStore, deleteClips, duplicateClips, findClip, formatBBT, formatClock, inferLayerDriver, normalizeTimeline,
   pasteClips, refKey, snapStepSec, uid
 } from './daw-state.mjs';
 import { applyTimelineOp } from './daw-remote.mjs';
@@ -25,7 +26,7 @@ import { createPerformancePanel } from './daw-performance.mjs';
 import { createSessionRecorder } from './live-session-recorder.mjs';
 import { PAD_KEYS } from './live-performance-state.mjs';
 import { createOutput } from './daw-output.mjs';
-import { createBrowser, libraryApi } from './daw-browser.mjs';
+import { createBrowser, libraryApi, parseTrackTitle } from './daw-browser.mjs';
 import { detectSections } from './audio-sections.mjs';
 
 const now = () => performance.now() / 1000;
@@ -42,17 +43,25 @@ const ICONS = {
   slice: '<path d="M8 1.5v13" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"/><path d="M2.5 4.5 7 8l-4.5 3.5zM13.5 4.5 9 8l4.5 3.5z" fill="currentColor"/>',
   erase: '<path d="M3 10.5 9 4l4 3.3L7.5 14H4.7zM8 14h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
   magnet: '<path d="M3 2.5v5a5 5 0 0 0 10 0v-5h-3v5a2 2 0 0 1-4 0v-5z"/>',
-  help: '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.2 6.2A1.9 1.9 0 1 1 8.6 8c-.5.3-.6.6-.6 1.1M8 11.3v.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
+  help: '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.2 6.2A1.9 1.9 0 1 1 8.6 8c-.5.3-.6.6-.6 1.1M8 11.3v.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+  music: '<path d="M6 12.5V3.5l7-1.5v9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="4.3" cy="12.5" r="1.8"/><circle cx="11.3" cy="11" r="1.8"/>',
+  broadcast: '<circle cx="8" cy="8" r="1.8"/><path d="M5.2 10.8a4 4 0 0 1 0-5.6M10.8 5.2a4 4 0 0 1 0 5.6M3 13a7 7 0 0 1 0-10M13 3a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+  sliders: '<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="5.5" cy="4.5" r="1.6"/><circle cx="10.5" cy="8" r="1.6"/><circle cx="7" cy="11.5" r="1.6"/>',
+  padGrid: '<rect x="2.2" y="2.2" width="4.8" height="4.8" rx="1.1"/><rect x="9" y="2.2" width="4.8" height="4.8" rx="1.1"/><rect x="2.2" y="9" width="4.8" height="4.8" rx="1.1"/><rect x="9" y="9" width="4.8" height="4.8" rx="1.1"/>',
+  phone: '<rect x="4.5" y="1.8" width="7" height="12.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><line x1="7" y1="12.2" x2="9" y2="12.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+  sparkle: '<path d="M8 1.5 9.6 6.4 14.5 8 9.6 9.6 8 14.5 6.4 9.6 1.5 8 6.4 6.4z"/>',
+  lightbulb: '<path d="M8 1.5a4.5 4.5 0 0 0-2.6 8.17c.4.3.6.75.6 1.23v.6h4v-.6c0-.48.2-.93.6-1.23A4.5 4.5 0 0 0 8 1.5zM6.2 13h3.6M6.8 14.5h2.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
 };
 const icon = name => h('span', { class: 'ico', 'aria-hidden': 'true', innerHTML: `<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">${ICONS[name]}</svg>` });
 const emptyTimeline = () => ({ version: 1, durationSec: 60, bpm: 120, beatOffsetSec: 0, blackout: false, layers: [] });
 const TOOLS = [['draw', 'Crtaj', '1', 'Povuci u praznoj traci za novi clip. Klik na clip ga pomiče, rubovi mijenjaju duljinu.'], ['select', 'Odaberi', '2', 'Klik odabire, povlačenje okvirom odabire više clipova. ⌥ + povuci duplicira.'], ['slice', 'Podijeli', '3', 'Klikni clip za rez na snap poziciji.'], ['erase', 'Briši', '4', 'Klikni ili povuci preko clipova za brisanje. Desni klik briše uvijek.']];
+const SNAP_SHORT = { bar: 'Takt', '1': '1', '0.5': '½', '0.25': '¼', '0.125': '⅛', none: 'Off' };
 
 /* ------------------------------------------------------------------ layout */
 const app = h('div', { class: 'app' });
 document.body.replaceChildren(app);
 
-const badge = h('span', { id: 'output-status', class: 'badge' }, 'SIMULACIJA');
+const badge = h('span', { id: 'output-status', class: 'mp-phase' }, 'SIMULACIJA');
 const bbtEl = h('div', { id: 'bbt', class: 'lcd-main', 'aria-label': 'Takt:beat:tik' }, '1:1:00');
 const clockEl = h('div', { id: 'clock', class: 'lcd-sub' }, '0:00.000');
 const playBtn = h('button', { type: 'button', id: 'play', class: 'tbtn play', title: 'Reproduciraj / pauziraj (Space)', 'aria-label': 'Reproduciraj', disabled: true }, icon('play'));
@@ -60,14 +69,44 @@ const stopBtn = h('button', { type: 'button', id: 'stop', class: 'tbtn', title: 
 const recBtn = h('button', { type: 'button', id: 'rec', class: 'tbtn rec', title: 'Snimaj live izvedbu (⇧R). Bilježi padove i promjene postavki na vremensku traku.', 'aria-label': 'Snimaj izvedbu', 'aria-pressed': 'false', disabled: true }, icon('record'));
 const loopBtn = h('button', { type: 'button', id: 'loop', class: 'tbtn', title: 'Loop regije (L). Povuci po donjem pojasu ravnala za regiju.', 'aria-pressed': 'false', 'aria-label': 'Loop' }, icon('loop'));
 const followBtn = h('button', { type: 'button', id: 'follow', class: 'tbtn on', title: 'Prati playhead (F)', 'aria-pressed': 'true', 'aria-label': 'Prati playhead' }, icon('follow'));
+
+// Transport + LCD mounted in the playlist top-left corner (.pl-corner)
+const playlistCornerTransport = h('div', { class: 'pl-corner-transport' },
+  h('div', { class: 'tgroup transport' }, stopBtn, playBtn, recBtn, loopBtn, followBtn),
+  h('div', { class: 'lcd', title: 'Takt:beat:tik i vrijeme' }, bbtEl, clockEl)
+);
+
 const undoBtn = h('button', { type: 'button', id: 'undo', class: 'tbtn', title: 'Poništi (⌘Z)', 'aria-label': 'Poništi', disabled: true }, icon('undo'));
 const redoBtn = h('button', { type: 'button', id: 'redo', class: 'tbtn', title: 'Ponovi (⇧⌘Z)', 'aria-label': 'Ponovi', disabled: true }, icon('redo'));
-const saveBtn = h('button', { type: 'button', id: 'save', class: 'tbtn', title: 'Spremi (⌘S). Sprema se i automatski.', 'aria-label': 'Spremi' }, icon('save'));
-const snapSelect = h('select', { id: 'snap', 'aria-label': 'Snap', title: 'Preciznost poravnanja na beat' }, Object.entries(SNAP_MODES).map(([value, label]) => h('option', { value, selected: value === '1' }, label)));
-const gridBtn = h('button', { type: 'button', id: 'grid-menu', class: 'txt-btn', title: 'Tempo i mreža pjesme' }, 'Mreža ▾');
+const saveBtn = h('button', { type: 'button', id: 'save', class: 'tbtn', title: 'Spremi (⌘S). Sprema se i automatski u Cloud + Git.', 'aria-label': 'Spremi' }, icon('save'));
+const verBtn = h('button', { type: 'button', id: 'version-history-btn', class: 'txt-btn ver-top-btn', title: 'Povijest verzija i vraćanje (Cloud + Git)', disabled: true, onClick: () => { if (s.track) browser.openVersionHistory?.(s.track); } }, 'v1');
+const snapSelect = h('select', { id: 'snap', hidden: true, 'aria-label': 'Snap', title: 'Preciznost poravnanja na beat' }, Object.entries(SNAP_MODES).map(([value, label]) => h('option', { value, selected: value === '1' }, label)));
+const snapBadgeEl = h('span', { class: 'snap-mini-badge' }, '1');
+const snapBtn = h('button', {
+  type: 'button',
+  id: 'snap-btn',
+  class: 'tbtn snap-icon-btn on',
+  title: 'Snap na mrežu (Beat)',
+  'aria-label': 'Snap poravnanje',
+  onClick: () => {
+    const r = snapBtn.getBoundingClientRect();
+    showMenu(r.left, r.bottom + 4, Object.entries(SNAP_MODES).map(([value, label]) => ({
+      label: `${snapSelect.value === value ? '✓ ' : ''}${label}`,
+      onClick: () => {
+        snapSelect.value = value;
+        snapBadgeEl.textContent = SNAP_SHORT[value] || value;
+        snapBtn.classList.toggle('on', value !== 'none');
+        snapBtn.title = `Snap: ${label}`;
+      }
+    })));
+  }
+}, icon('magnet'), snapBadgeEl, snapSelect);
+
+const gridBtn = h('button', { type: 'button', id: 'grid-menu', class: 'tl-grid-btn', title: 'Tempo, TAP i mreža pjesme', 'aria-label': 'Opcije tempa i mreže' }, '▾');
 const toolButtons = TOOLS.map(([id, label, key, tip]) => h('button', { type: 'button', class: 'tbtn tool', dataset: { tool: id }, title: `${label} (${key}). ${tip}`, 'aria-label': label, 'aria-pressed': 'false' }, icon(id)));
+
 const trackTitleName = h('span', { class: 'tl-name' }, 'Nema odabrane pjesme');
-const trackTitleBpm = h('span', { class: 'tl-bpm-badge', hidden: true }, '');
+const trackTitleAuthor = h('span', { class: 'tl-author' }, 'Odaberi pjesmu (⌘O)');
 const trackTitle = h('button', {
   type: 'button',
   id: 'project-title',
@@ -76,18 +115,33 @@ const trackTitle = h('button', {
   'aria-label': 'Katalog pjesama',
   onClick: () => browser.openLauncher?.()
 },
-  h('span', { class: 'tl-icon' }, '🎵'),
-  trackTitleName,
-  trackTitleBpm,
-  h('span', { class: 'tl-chevron' }, '⊞ ▾')
+  h('span', { class: 'tl-icon' }, icon('music')),
+  h('span', { class: 'tl-meta' }, trackTitleName, trackTitleAuthor),
+  h('span', { class: 'tl-chevron' }, '▾')
 );
-function updateTrackTitle(title, bpm = null) {
-  trackTitleName.textContent = title || 'Nema odabrane pjesme';
-  if (bpm && bpm >= 40) {
-    trackTitleBpm.hidden = false;
-    trackTitleBpm.textContent = `${Math.round(bpm)} BPM`;
+function updateTrackTitle(rawTitle, bpm = null, trackObj = s?.track) {
+  const full = rawTitle || trackObj?.title || trackObj?.originalName || '';
+  if (!full || full === 'Nema odabrane pjesme') {
+    trackTitleName.textContent = 'Nema odabrane pjesme';
+    trackTitleAuthor.textContent = 'Odaberi pjesmu (⌘O)';
+    return;
+  }
+  const parsed = parseTrackTitle(full);
+  const cleanTitle = parsed.title || full;
+  const artist = parsed.artist || '';
+  const showAuthor = trackObj?.author || trackObj?.updatedBy || '';
+  trackTitleName.textContent = cleanTitle;
+  if (artist && showAuthor && artist.toLowerCase() !== showAuthor.toLowerCase()) {
+    trackTitleAuthor.textContent = `${artist} · ${showAuthor}`;
+  } else if (artist) {
+    trackTitleAuthor.textContent = artist;
+  } else if (showAuthor) {
+    trackTitleAuthor.textContent = `Show: ${showAuthor}`;
   } else {
-    trackTitleBpm.hidden = true;
+    trackTitleAuthor.textContent = 'Lokalna pjesma';
+  }
+  if (bpm && bpm >= 40) {
+    bpmNumber.set(bpm);
   }
 }
 const clientId = (() => {
@@ -114,12 +168,255 @@ window.ledicatedClientName = clientName;
 window.ledicatedIsStageOwner = true;
 window.ledicatedPeerCount = 1;
 
+const outputStageDot = h('span', { class: 'mp-dot' });
+const outputStageData = h('span', { class: 'mp-data' }, 'Lokalno');
 const lanBtn = h('button', {
   type: 'button',
   id: 'lan-open',
-  class: 'txt-btn lan-btn on-air',
-  title: 'Uredski LAN, Stage kontrola (ON AIR / SOLO) i dijeljenje showova'
-}, '🌐 LAN · ON AIR');
+  class: 'mp-segment mp-main',
+  title: 'Status izlaza, Stage kontrola (ON AIR / SOLO) i uredski LAN'
+}, outputStageDot, icon('broadcast'), badge, outputStageData);
+
+const outNodeData = h('span', { class: 'mp-data' }, 'DDP');
+const outOpenBtn = h('button', {
+  type: 'button',
+  id: 'out-open',
+  class: 'mp-segment mp-sub',
+  title: 'Postavke WLED kontrolera, DDP izlaza i Bluetooth kalibracija'
+}, icon('sliders'), outNodeData);
+
+const outputStagePill = h('div', {
+  id: 'output-stage-pill',
+  class: 'multi-pill output-stage-pill phase-sim',
+  role: 'group',
+  'aria-label': 'Status izlaza i stagea'
+}, lanBtn, outOpenBtn);
+
+const performPhaseEl = h('span', { class: 'mp-phase' }, 'Pad');
+const performDataEl = h('span', { class: 'mp-data' }, '12');
+const performOpen = h('button', {
+  type: 'button',
+  id: 'perform-open',
+  class: 'mp-segment mp-main',
+  title: 'Otvori izvedbeni Live Board (tipka P)'
+}, icon('padGrid'), performPhaseEl, performDataEl);
+
+const mobileDotEl = h('span', { class: 'mp-dot' });
+const mobileDataEl = h('span', { class: 'mp-data' }, 'Offline');
+const mobileOpen = h('button', {
+  type: 'button',
+  id: 'mobile-open',
+  class: 'mp-segment mp-sub mp-phone',
+  title: 'iPhone Live Pad Companion — status veze i latencija'
+}, mobileDotEl, icon('phone'), mobileDataEl);
+
+const livePadPill = h('div', {
+  id: 'live-pad-pill',
+  class: 'multi-pill live-pad-pill phase-idle iphone-offline',
+  role: 'group',
+  'aria-label': 'Live Board i iPhone Pad'
+}, performOpen, mobileOpen);
+
+const autoShowDataEl = h('span', { class: 'mp-data' }, 'Auto');
+const autoShowOpenBtn = h('button', {
+  type: 'button',
+  id: 'autoshow-open',
+  class: 'icon-data-pill autoshow-top-btn',
+  title: 'Auto Show & Pipeline Studio (dionice, algoritmi, Vibecode JS)'
+}, icon('sparkle'), autoShowDataEl);
+
+/* ------------------------------------------------ Room Light Switch & Widget */
+const roomLightState = { on: false, brightness: 100, kelvin: 4000, watts: 3.2 };
+const lightSwitchDot = h('span', { class: 'mp-dot' });
+const lightSwitchPhaseEl = h('span', { class: 'mp-phase' }, 'Svjetlo');
+const lightSwitchDataEl = h('span', { class: 'mp-data' }, 'Off');
+
+const roomLightToggleBtn = h('button', {
+  type: 'button',
+  id: 'room-light-toggle',
+  class: 'mp-segment mp-main',
+  'aria-pressed': 'false',
+  title: 'Prekidač uredske rasvjete (Upali / Ugasi svjetlo)'
+}, lightSwitchDot, icon('lightbulb'), lightSwitchPhaseEl, lightSwitchDataEl);
+
+const roomLightWidgetOpenBtn = h('button', {
+  type: 'button',
+  id: 'room-light-widget-open',
+  class: 'mp-segment mp-sub',
+  title: 'Otvori widget za svjetlinu i temperaturu svjetla (2700K–6500K)',
+  'aria-label': 'Postavke uredske rasvjete'
+}, h('span', { class: 'mp-data' }, '▾'));
+
+const lightSwitchPill = h('div', {
+  id: 'light-switch-pill',
+  class: 'multi-pill light-switch-pill',
+  role: 'group',
+  'aria-label': 'Prekidač uredskog svjetla'
+}, roomLightToggleBtn, roomLightWidgetOpenBtn);
+
+const rlwWattsEl = h('span', { class: 'rlw-watts' }, '3.2 W');
+const rlwStatusSubEl = h('small', {}, 'Ugašeno · 4000K');
+const rlwSwitchInput = h('input', {
+  id: 'room-light-switch-input',
+  type: 'checkbox',
+  switch: '',
+  class: 'rlw-switch-input',
+  'aria-label': 'Prekidač svjetla'
+});
+const rlwBriValEl = h('b', {}, '100%');
+const rlwBriInput = h('input', {
+  type: 'range',
+  class: 'rlw-range',
+  min: 1,
+  max: 100,
+  step: 1,
+  value: 100,
+  'aria-label': 'Svjetlina uredske rasvjete'
+});
+const rlwKelvinValEl = h('b', {}, '4000K');
+const rlwKelvinInput = h('input', {
+  type: 'range',
+  class: 'rlw-range',
+  min: 2700,
+  max: 6500,
+  step: 50,
+  value: 4000,
+  'aria-label': 'Temperatura boje (Kelvin)'
+});
+
+const rlwPresets = [
+  ['warm', 'Topla', 2700],
+  ['neutral', 'Prirodna', 4000],
+  ['full', 'Puna', 4800],
+  ['cool', 'Hladna', 6500]
+].map(([presetId, label, kVal]) => h('button', {
+  type: 'button',
+  class: 'rlw-preset-btn',
+  dataset: { preset: presetId, kelvin: String(kVal) },
+  onClick: () => sendRoomLightUpdate({ preset: presetId })
+}, label));
+
+const roomLightWidget = h('div', {
+  id: 'room-light-widget',
+  class: 'room-light-widget',
+  role: 'dialog',
+  'aria-label': 'Widget uredske rasvjete',
+  hidden: true
+},
+  h('div', { class: 'rlw-head' },
+    h('span', { class: 'rlw-title' }, icon('lightbulb'), 'Uredska rasvjeta'),
+    rlwWattsEl
+  ),
+  h('label', { class: 'rlw-hero', for: 'room-light-switch-input' },
+    h('div', { class: 'rlw-hero-meta' },
+      h('strong', {}, 'Glavni prekidač svjetla'),
+      rlwStatusSubEl
+    ),
+    rlwSwitchInput
+  ),
+  h('div', { class: 'rlw-slider-group' },
+    h('div', { class: 'rlw-slider-head' }, h('span', {}, 'Svjetlina'), rlwBriValEl),
+    rlwBriInput
+  ),
+  h('div', { class: 'rlw-slider-group' },
+    h('div', { class: 'rlw-slider-head' }, h('span', {}, 'Temperatura boje'), rlwKelvinValEl),
+    rlwKelvinInput
+  ),
+  h('div', { class: 'rlw-presets' }, ...rlwPresets)
+);
+document.body.append(roomLightWidget);
+
+function renderRoomLightUI(patch = {}) {
+  if (typeof patch.on === 'boolean') roomLightState.on = patch.on;
+  if (Number.isFinite(Number(patch.brightness))) roomLightState.brightness = Math.round(Number(patch.brightness));
+  if (Number.isFinite(Number(patch.kelvin))) roomLightState.kelvin = Math.round(Number(patch.kelvin));
+  if (Number.isFinite(Number(patch.watts))) roomLightState.watts = Math.round(Number(patch.watts) * 10) / 10;
+
+  lightSwitchPill.classList.toggle('is-on', roomLightState.on);
+  roomLightToggleBtn.setAttribute('aria-pressed', String(roomLightState.on));
+  lightSwitchDataEl.textContent = roomLightState.on ? `${roomLightState.brightness}%` : 'Off';
+  rlwSwitchInput.checked = roomLightState.on;
+  rlwBriInput.value = String(roomLightState.brightness);
+  rlwBriValEl.textContent = `${roomLightState.brightness}%`;
+  rlwKelvinInput.value = String(roomLightState.kelvin);
+  rlwKelvinValEl.textContent = `${roomLightState.kelvin}K`;
+  rlwWattsEl.textContent = `${roomLightState.watts} W`;
+  rlwStatusSubEl.textContent = roomLightState.on
+    ? `Uključeno · ${roomLightState.brightness}% · ${roomLightState.kelvin}K`
+    : `Ugašeno · ${roomLightState.kelvin}K`;
+  for (const btn of rlwPresets) {
+    btn.classList.toggle('active', roomLightState.on && Number(btn.dataset.kelvin) === roomLightState.kelvin);
+  }
+}
+
+let roomLightSendTimer = 0;
+async function sendRoomLightUpdate(payload, { debounce = false } = {}) {
+  if (debounce) {
+    clearTimeout(roomLightSendTimer);
+    roomLightSendTimer = setTimeout(() => sendRoomLightUpdate(payload, { debounce: false }), 80);
+    return;
+  }
+  try {
+    const res = await fetch('/api/ambient-light', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, source: 'daw_switch' })
+    });
+    const data = await res.json().catch(() => null);
+    if (data && data.ok) {
+      renderRoomLightUI(data);
+      if (data.state) output.syncServerState?.(data.state);
+      status(data.on ? `Svjetlo uključeno (${data.brightness}% · ${data.kelvin}K).` : 'Svjetlo ugašeno.');
+    }
+  } catch (err) {
+    toast(`Greška prekidača svjetla: ${err.message}`, 'error');
+  }
+}
+
+roomLightToggleBtn.addEventListener('click', () => {
+  renderRoomLightUI({ on: !roomLightState.on });
+  sendRoomLightUpdate({ on: roomLightState.on });
+});
+roomLightWidgetOpenBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  roomLightWidget.hidden = !roomLightWidget.hidden;
+  if (!roomLightWidget.hidden) {
+    fetch('/api/ambient-light').then(r => r.json()).then(d => { if (d?.ok) renderRoomLightUI(d); }).catch(() => {});
+  }
+});
+rlwSwitchInput.addEventListener('change', () => {
+  renderRoomLightUI({ on: rlwSwitchInput.checked });
+  sendRoomLightUpdate({ on: rlwSwitchInput.checked });
+});
+rlwBriInput.addEventListener('input', () => {
+  renderRoomLightUI({ on: true, brightness: Number(rlwBriInput.value) });
+  sendRoomLightUpdate({ on: true, brightness: Number(rlwBriInput.value), savePreset: false }, { debounce: true });
+});
+rlwBriInput.addEventListener('change', () => {
+  sendRoomLightUpdate({ on: true, brightness: Number(rlwBriInput.value), savePreset: true });
+});
+rlwKelvinInput.addEventListener('input', () => {
+  renderRoomLightUI({ on: true, kelvin: Number(rlwKelvinInput.value) });
+  sendRoomLightUpdate({ on: true, kelvin: Number(rlwKelvinInput.value), savePreset: false }, { debounce: true });
+});
+rlwKelvinInput.addEventListener('change', () => {
+  sendRoomLightUpdate({ on: true, kelvin: Number(rlwKelvinInput.value), savePreset: true });
+});
+document.addEventListener('pointerdown', e => {
+  if (!roomLightWidget.hidden && !roomLightWidget.contains(e.target) && !lightSwitchPill.contains(e.target)) {
+    roomLightWidget.hidden = true;
+  }
+});
+fetch('/api/ambient-light?probe=0').then(r => r.json()).then(d => { if (d?.ok) renderRoomLightUI(d); }).catch(() => {});
+
+const helpOpenBtn = h('button', {
+  type: 'button',
+  id: 'help-open',
+  class: 'sb-help-btn',
+  title: 'Prečaci tipkovnice i geste (?)',
+  'aria-label': 'Prečaci'
+}, icon('help'));
+
 const blackoutBtn = h('button', { type: 'button', id: 'blackout', class: 'blackout', 'aria-pressed': 'false', title: 'Blackout: sve ugasi i isključi izlaz (Esc)' }, 'BLACKOUT ', h('kbd', {}, 'Esc'));
 const statusEl = h('span', { id: 'status', role: 'status', 'aria-live': 'polite' }, 'Odaberi ili povuci pjesmu za početak.');
 const selectionEl = h('span', { id: 'selection-info' }), saveEl = h('span', { id: 'save-state', class: 'save-ok' }, 'Spremljeno');
@@ -130,6 +427,7 @@ const bpmTapBtn = h('button', {
   type: 'button',
   id: 'bpm-tap',
   class: 'mini-tap',
+  hidden: true,
   title: 'TAP: klikni barem 4 puta u ritmu za određivanje tempa pjesme',
   onClick: () => {
     if (!hasTrack()) return status('Odaberi pjesmu prije tapkanja tempa.');
@@ -156,18 +454,19 @@ const bpmTapBtn = h('button', {
 }, 'TAP');
 
 const bpmNumber = createDragNumber({ id: 'bpm', label: 'BPM', value: 120, min: 40, max: 240, step: .5, decimals: 1, onChange: v => { if (!hasTrack()) return; store.commit('Tempo', t => { t.bpm = v; t.gridMode = 'manual'; }); updateGridButton(); } });
-const masterKnob = createKnob({ label: 'MASTER', value: 100, min: 0, max: 100, step: 1, size: 40, reset: 100, warnAbove: 85, format: v => `${Math.round(v)}%`, title: 'Master svjetlina (0–100%). Puna snaga na 100%.', onInput: v => { live.setBrightness(v); mixer.setMaster(v); } });
+const masterKnob = createKnob({ label: 'MASTER', value: 100, min: 0, max: 100, step: 1, size: 36, reset: 100, warnAbove: 85, format: v => `${Math.round(v)}%`, title: 'Master svjetlina (0–100%). Puna snaga na 100%.', onInput: v => { live.setBrightness(v); mixer.setMaster(v); } });
+
+const trackHeaderBar = h('div', { class: 'track-header-bar' },
+  trackTitle,
+  h('div', { class: 'track-bpm-box' }, bpmNumber.element, gridBtn, bpmTapBtn)
+);
 
 const header = h('header', { class: 'topbar' },
   h('div', { class: 'brand' }, h('span', { class: 'mark' }, 'L', h('i', {}, '•')), h('div', {}, h('strong', {}, 'LEDicated'), h('small', {}, 'SHOW STUDIO'))),
-  h('div', { class: 'tgroup transport' }, stopBtn, playBtn, recBtn, loopBtn, followBtn),
-  h('div', { class: 'lcd', title: 'Takt:beat:tik i vrijeme' }, bbtEl, clockEl),
-  h('div', { class: 'tgroup' }, bpmNumber.element, bpmTapBtn, gridBtn),
-  h('div', { class: 'tgroup' }, h('span', { class: 'glabel' }, icon('magnet')), snapSelect),
-  h('div', { class: 'tgroup tools', role: 'group', 'aria-label': 'Alati' }, toolButtons),
-  h('div', { class: 'tgroup' }, undoBtn, redoBtn, saveBtn),
-  trackTitle,
-  h('div', { class: 'tgroup right' }, masterKnob.element, badge, lanBtn, h('button', { type: 'button', id: 'out-open', class: 'txt-btn', title: 'Postavke izlaza i kalibracija' }, 'Izlaz'), h('button', { type: 'button', id: 'help-open', class: 'tbtn', title: 'Prečaci tipkovnice (?)', 'aria-label': 'Prečaci' }, icon('help')), blackoutBtn));
+  trackHeaderBar,
+  h('div', { class: 'tgroup tools', role: 'group', 'aria-label': 'Alati i poravnanje' }, ...toolButtons, snapBtn),
+  h('div', { class: 'tgroup history-group' }, undoBtn, redoBtn, saveBtn, verBtn),
+  h('div', { class: 'tgroup right' }, masterKnob.element, lightSwitchPill, outputStagePill, livePadPill, autoShowOpenBtn, blackoutBtn));
 
 header.addEventListener('wheel', event => {
   if (header.scrollWidth > header.clientWidth) {
@@ -188,10 +487,11 @@ const clipPane = h('div', { class: 'dock-pane clip-pane', role: 'tabpanel' });
 const envPane = h('div', { class: 'dock-pane envelope-pane', role: 'tabpanel', hidden: true });
 const driverPane = h('div', { class: 'dock-pane driver-pane', role: 'tabpanel', hidden: true });
 const mixerPane = h('div', { class: 'dock-pane mixer-pane', role: 'tabpanel', hidden: true });
+const autoShowPane = h('div', { class: 'dock-pane autoshow-pane', role: 'tabpanel', hidden: true });
 const livePane = h('div', { class: 'dock-pane live-pane', role: 'tabpanel', hidden: true });
 const performancePane = h('div', { class: 'dock-pane performance-pane', role: 'tabpanel', hidden: true });
 const outputPane = h('div', { class: 'dock-pane live-pane output-pane', role: 'tabpanel', hidden: true });
-const dock = h('section', { class: 'panel dock', 'aria-label': 'Urednik' }, dockTabs, clipPane, envPane, driverPane, mixerPane, livePane, performancePane, outputPane);
+const dock = h('section', { class: 'panel dock', 'aria-label': 'Urednik' }, dockTabs, clipPane, envPane, driverPane, mixerPane, autoShowPane, livePane, performancePane, outputPane);
 const activeNow = h('div', { id: 'active-now', class: 'active-now' });
 const stage = h('div', { class: 'stage' },
   h('div', { id: 'bar-grid', class: 'bar-grid', role: 'img', 'aria-label': 'Devet traka u rasporedu tri puta tri' })
@@ -245,7 +545,7 @@ const stagePanel = h('section', { class: 'stage-panel', 'aria-label': 'Svjetlo' 
 const splitter = (axis, variable, min, max, dir) => h('div', { class: `splitter ${axis}`, role: 'separator', tabIndex: 0, 'aria-orientation': axis === 'x' ? 'vertical' : 'horizontal', dataset: { variable, min, max, dir } });
 const center = h('main', { class: 'center' }, playlistHost, splitter('y', '--dock-h', 36, 680, -1), dock);
 const workspace = h('div', { class: 'workspace' }, browserHost, splitter('x', '--browser-w', 0, 460, 1), center, splitter('x', '--stage-w', 0, 620, -1), stagePanel);
-const footer = h('footer', { class: 'statusbar' }, statusEl, selectionEl, h('span', { class: 'sb-right' }, saveEl, h('span', { id: 'render-mode' })));
+const footer = h('footer', { class: 'statusbar' }, statusEl, selectionEl, h('span', { class: 'sb-right' }, saveEl, h('span', { id: 'render-mode' }), helpOpenBtn));
 const dropOverlay = h('div', { class: 'drop-overlay' }, h('div', {}, h('b', {}, 'Ispusti glazbu ovdje'), h('span', {}, 'MP3 ili WAV · ostaje na ovom računalu')));
 app.append(header, workspace, footer, dropOverlay);
 installTooltips();
@@ -324,7 +624,12 @@ const output = createOutput(outputHost, {
       const ledCount = (config.bars || []).reduce((sum, bar) => sum + (bar.physicalLeds || 72), 0) || 648;
       const nodeWord = nodeCount === 1 ? 'KONTROLER' : 'KONTROLERA';
       teleNodes.textContent = `${nodeCount} ${nodeWord} · ${ledCount} LED`;
+      const activeNodes = (config.nodes || []).filter(n => n.host).length;
+      outNodeData.textContent = activeNodes > 0 ? `${activeNodes}/${nodeCount} · DDP` : 'DDP';
     }
+  },
+  onStateChange: () => {
+    if (typeof updateLanBadge === 'function') updateLanBadge();
   }
 });
 let recorder;
@@ -360,6 +665,13 @@ const performDesk = createPerformancePanel(performancePane, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ clientId, clientName, pads, quantize })
+    }).catch(() => {});
+  },
+  onPadAction: (payload) => {
+    fetch('/api/live/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId, clientName, source: 'daw', type: 'live_pad', ...payload })
     }).catch(() => {});
   }
 });
@@ -468,7 +780,7 @@ function stop() {
   syncPlay();
 }
 audio.onplay = audio.onpause = () => { syncPlay(); liveSync?.sendLiveState?.(); };
-audio.onended = () => { if (recorder?.isRecording) recorder.stopRecording(); s.scrubSec = 0; syncPlay(); playlist.redraw(); };
+audio.onended = () => { if (recorder?.isRecording) recorder.stopRecording(); s.scrubSec = 0; audio.currentTime = 0; syncPlay(); playlist.redraw(); liveSync?.sendLiveState?.(); };
 audio.onloadedmetadata = () => { if (audio.paused) audio.currentTime = s.scrubSec; playlist.redraw(); };
 playBtn.onclick = togglePlay; stopBtn.onclick = stop;
 
@@ -490,19 +802,31 @@ function setTool(id) { s.tool = id; for (const b of toolButtons) { const on = b.
 toolButtons.forEach(b => { b.onclick = () => setTool(b.dataset.tool); });
 
 /* --------------------------------------------------------------- playlist */
-const newClipSpec = layer => ({ preset: s.brush.preset, driver: s.brush.driver, driverGain: s.brush.driverGain, ...(s.brush.driver === 'band' && s.brush.band ? { band: { ...s.brush.band } } : {}), targets: s.brush.targets === 'all' ? 'all' : [...s.brush.targets], color: [...hexToRgb(layer.color || '#3aa0ff'), 0] });
+const newClipSpec = (layer, startSec = null) => ({
+  preset: s.brush.preset,
+  ...inferLayerDriver(layer, startSec),
+  targets: s.brush.targets === 'all' ? 'all' : [...s.brush.targets],
+  color: [...hexToRgb(layer?.color || '#3aa0ff'), 0]
+});
 const playlist = createPlaylist(playlistHost, {
+  cornerContent: playlistCornerTransport,
   store, stems: stemsEngine, getAnalysis: () => s.analysis, duration, getTime: songTime, seek: (sec, isScrubbing) => seek(sec, isScrubbing), commitSeek: () => commitSeek(), getSnap: snapMode, getTool: () => s.tool,
   isPlaying: () => !audio.paused, hasTrack, getTrackTitle: () => s.track?.title || s.track?.originalName || 'Nema pjesme',
   isAudioMuted: () => audio.muted, toggleAudioMute: () => { audio.muted = !audio.muted; }, getVolume: () => audio.volume, setVolume: v => { audio.volume = clamp(v, 0, 1); },
   getActiveLayerIndex: () => s.activeLayer, setActiveLayer: index => { if (s.activeLayer !== index) { s.activeLayer = index; playlist.updateActiveHead?.(index); playlist.redraw(); if (s.dock === 'mixer') mixer.render(); } },
   status, newClipSpec, getLoop: () => s.loop, setLoop, isLoopOn: () => s.loopOn,
-  getThemeOptions: () => browser?.getThemeOptions?.() || {},
+  getThemeOptions: () => ({ ...(autoShowPanel?.getConfig?.() || {}), ...(browser?.getThemeOptions?.() || {}) }),
   onSectionsChange: sections => {
-    if (s.track?.id && s.analysis) {
+    if (s.analysis) {
       s.analysis.sections = sections;
+    }
+    autoShowPanel?.render();
+    if (s.track?.id && s.analysis) {
       libraryApi('sections', { id: s.track.id, sections }).catch(err => toast(err.message, 'error'));
     }
+  },
+  onSectionSelectionChange: () => {
+    autoShowPanel?.render();
   },
   onSelect: refs => { editor.render(); selectionInfo(refs); const hit = refs[0] && findClip(tl(), refs[0]); if (hit) s.brush = { preset: hit.clip.preset, driver: hit.clip.driver, driverGain: hit.clip.driverGain, band: hit.clip.band ? { ...hit.clip.band } : null, targets: hit.clip.targets === 'all' ? 'all' : [...hit.clip.targets] }; },
   onStructure: () => structureChanged(), openEditor: () => switchDock('clip'), onSolo: () => { playlist.redraw(); if (s.dock === 'mixer') mixer.render(); }
@@ -541,28 +865,136 @@ function updateHistoryButtons() {
   undoBtn.disabled = !store.canUndo; redoBtn.disabled = !store.canRedo;
   undoBtn.title = store.canUndo ? `Poništi: ${store.undoLabel} (⌘Z)` : 'Poništi (⌘Z)'; redoBtn.title = store.canRedo ? `Ponovi: ${store.redoLabel} (⇧⌘Z)` : 'Ponovi (⇧⌘Z)';
 }
-function updateGridButton() { gridBtn.textContent = `Mreža · ${tl().gridMode === 'manual' ? 'ručna' : 'analiza'} ▾`; if (hasTrack()) bpmNumber.set(tl().bpm); }
+function updateGridButton() {
+  const isManual = tl().gridMode === 'manual';
+  gridBtn.textContent = isManual ? 'RUČNO ▾' : '▾';
+  gridBtn.classList.toggle('is-manual', isManual);
+  gridBtn.title = `Tempo i mreža (${isManual ? 'ručna' : 'iz analize'}) — klikni za TAP i pomak mreže`;
+  if (hasTrack()) bpmNumber.set(tl().bpm);
+  const secCount = s.analysis?.sections?.length || 0;
+  autoShowDataEl.textContent = secCount > 0 ? `${secCount} dion.` : 'Auto';
+}
 
 /* ------------------------------------------------------------------- save */
-function setSaveState(text, kind) { saveEl.textContent = text; saveEl.className = `save-${kind}`; }
-function scheduleSave() {
-  if (!hasTrack()) return;
-  s.pendingSave = { id: s.track.id, snapshot: structuredClone(tl()) }; setSaveState('Sprema se…', 'busy');
-  clearTimeout(s.saveTimer); s.saveTimer = setTimeout(flushSave, 400);
-}
-async function flushSave() {
-  const pending = s.pendingSave; if (!pending) return;
-  s.pendingSave = null; clearTimeout(s.saveTimer);
-  const check = validateTimeline(pending.snapshot);
-  if (!check.valid) { setSaveState('Nije spremljeno', 'err'); status(`Show nije valjan: ${check.errors[0]}`); return; }
+function reportClientLog(category, action, details = {}) {
   try {
-    await libraryApi('timeline', { id: pending.id, timeline: pending.snapshot, clientId, author: clientName });
-    if (!s.pendingSave) setSaveState('Spremljeno', 'ok');
-  }
-  catch (error) { setSaveState('Nije spremljeno', 'err'); status(error.message); toast(`Spremanje nije uspjelo: ${error.message}`, 'error'); }
+    const payload = JSON.stringify({
+      category,
+      action,
+      details: {
+        clientId,
+        clientName,
+        trackId: s.track?.id || null,
+        ...details
+      }
+    });
+    fetch('/api/logs/event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      keepalive: true
+    }).catch(() => {});
+  } catch {}
 }
-saveBtn.onclick = () => { flushSave().then(() => toast('Show spremljen.')); };
-addEventListener('pagehide', () => { const p = s.pendingSave; if (p) navigator.sendBeacon('/api/library/timeline', new Blob([JSON.stringify({ id: p.id, timeline: p.snapshot, clientId, author: clientName })], { type: 'application/json' })); });
+
+window.addEventListener('error', event => {
+  reportClientLog('CLIENT_CRASH', 'WINDOW_ERROR', {
+    message: event.message || String(event.error || 'Unknown error'),
+    filename: event.filename || '',
+    lineno: event.lineno || 0,
+    colno: event.colno || 0,
+    stack: event.error?.stack ? String(event.error.stack).slice(0, 800) : ''
+  });
+});
+
+window.addEventListener('unhandledrejection', event => {
+  const reason = event.reason;
+  reportClientLog('CLIENT_CRASH', 'UNHANDLED_REJECTION', {
+    message: reason?.message || String(reason || 'Unhandled rejection'),
+    stack: reason?.stack ? String(reason.stack).slice(0, 800) : ''
+  });
+});
+
+function setSaveState(text, kind) { saveEl.textContent = text; saveEl.className = `save-${kind}`; }
+let saveChain = Promise.resolve();
+function scheduleSave() {
+  if (!s.track?.id) return;
+  s.pendingSave = { id: s.track.id, snapshot: null, dirty: true };
+  setSaveState('Sprema se…', 'busy');
+  clearTimeout(s.saveTimer);
+  s.saveTimer = setTimeout(() => { flushSave(); }, 400);
+}
+async function performSave({ force = false } = {}) {
+  const pending = s.pendingSave;
+  const targetId = pending?.id || (force && s.track?.id ? s.track.id : null);
+  if (!targetId) return { ok: false, skipped: true };
+  s.pendingSave = null;
+  clearTimeout(s.saveTimer);
+  const rawSnapshot = pending?.snapshot || (s.track?.id === targetId ? structuredClone(tl()) : null);
+  if (!rawSnapshot) return { ok: false, skipped: true };
+  const snapshot = normalizeTimeline(rawSnapshot);
+  const check = validateTimeline(snapshot);
+  if (!check.valid) {
+    setSaveState('Nije spremljeno', 'err');
+    status(`Show nije valjan: ${check.errors[0]}`);
+    reportClientLog('VALIDATION_ERROR', 'CLIENT_SAVE_INVALID', { trackId: targetId, errors: check.errors.slice(0, 5) });
+    return { ok: false, error: check.errors[0] };
+  }
+  setSaveState('Sprema se…', 'busy');
+  try {
+    const res = await libraryApi('timeline', { id: targetId, timeline: snapshot, clientId, author: clientName });
+    if (s.track?.id === targetId && res?.version) {
+      s.track.version = res.version;
+      if (res.showId) s.track.showId = res.showId;
+      s.track.updatedBy = clientName;
+      verBtn.textContent = `🕒 v${res.version}`;
+    }
+    if (!s.pendingSave) setSaveState(`Spremljeno · v${res?.version || s.track?.version || 1} ☁️`, 'ok');
+    return { ok: true, version: res?.version };
+  } catch (error) {
+    if (!s.pendingSave) s.pendingSave = { id: targetId, snapshot, dirty: true };
+    setSaveState('Nije spremljeno', 'err');
+    status(error.message);
+    toast(`Spremanje nije uspjelo: ${error.message}`, 'error');
+    reportClientLog('CLIENT_ERROR', 'SAVE_FAILED', { trackId: targetId, error: error.message });
+    return { ok: false, error: error.message };
+  }
+}
+function flushSave(options = {}) {
+  const next = saveChain.then(() => performSave(options));
+  saveChain = next.catch(() => {});
+  return next;
+}
+saveBtn.onclick = async () => {
+  if (!s.track?.id) return toast('Najprije odaberi pjesmu.', 'error');
+  if (recorder?.isRecording) recorder.stopRecording();
+  const res = await flushSave({ force: true });
+  if (res?.ok) toast('Show spremljen.');
+};
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && s.pendingSave) flushSave();
+});
+addEventListener('pagehide', () => {
+  if (recorder?.isRecording) recorder.stopRecording();
+  const p = s.pendingSave;
+  if (!p) return;
+  const snapshot = normalizeTimeline(p.snapshot || structuredClone(tl()));
+  const body = JSON.stringify({ id: p.id, timeline: snapshot, clientId, author: clientName });
+  if (body.length < 60000) {
+    try {
+      fetch('/api/library/timeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        keepalive: true
+      }).catch(() => {});
+      return;
+    } catch {}
+  }
+  try {
+    navigator.sendBeacon('/api/library/timeline', new Blob([body], { type: 'application/json' }));
+  } catch {}
+});
 
 let timelineVersion = 1;
 store.subscribe(kind => {
@@ -575,8 +1007,9 @@ undoBtn.onclick = () => { if (store.undo()) status(`Poništeno: ${store.redoLabe
 redoBtn.onclick = () => { if (store.redo()) status(`Ponovljeno: ${store.undoLabel}`); };
 
 /* ------------------------------------------------------------ track loading */
-async function selectTrack(id) {
+async function selectTrack(id, opts = {}) {
   const token = ++s.token;
+  if (recorder?.isRecording) recorder.stopRecording();
   await flushSave(); audio.pause(); syncPlay();
   const result = await libraryApi(`track/${id}`);
   if (token !== s.token) return;
@@ -595,19 +1028,40 @@ async function selectTrack(id) {
     }
   }
   audio.src = `/api/library/audio/${id}`; audio.load();
-  let timeline = result.timeline;
+  let timeline = result.timeline ? normalizeTimeline(result.timeline) : null;
   if (s.analysis) {
-    if (timeline && !validateTimeline(timeline).valid) { toast('Spremljeni show nije valjan; stvoren je novi.', 'error'); timeline = null; }
-    if (!timeline) { timeline = createAutoShow(s.analysis); await libraryApi('timeline', { id, timeline }); }
-    store.replace(normalizeTimeline(timeline));
-  } else store.replace(emptyTimeline());
-  s.activeLayer = 0; playlist.setSelection([], false); playlist.fit(); playlist.renderHeads(); editor.render(); mixer.render(); updateHistoryButtons(); updateGridButton(); selectionInfo();
-  updateTrackTitle(s.track.title || s.track.originalName || 'Pjesma', s.analysis?.bpm || tl()?.bpm); browser.setActive(id); syncPlay(); setSaveState('Spremljeno', 'ok');
-  const initialTime = parseFloat(new URLSearchParams(window.location.search).get('t') || window.location.hash.slice(1));
+    if (timeline && !validateTimeline(timeline).valid) {
+      reportClientLog('VALIDATION_ERROR', 'LOADED_TIMELINE_INVALID', { trackId: id, errors: validateTimeline(timeline).errors.slice(0, 5) });
+      toast('Spremljeni show nije valjan; stvoren je novi.', 'error');
+      timeline = null;
+    }
+    if (!timeline) { timeline = normalizeTimeline(createAutoShow(s.analysis)); await libraryApi('timeline', { id, timeline, clientId, author: clientName }); }
+    store.replace(timeline);
+  } else if (timeline && validateTimeline(timeline).valid) {
+    store.replace(timeline);
+  } else {
+    store.replace(emptyTimeline());
+  }
+  s.activeLayer = 0; playlist.setSelection([], false); playlist.fit(); playlist.renderHeads(); editor.render(); mixer.render(); autoShowPanel?.render(); updateHistoryButtons(); updateGridButton(); selectionInfo();
+  const trackVer = s.track.version || 1;
+  verBtn.disabled = false;
+  verBtn.textContent = `🕒 v${trackVer}`;
+  updateTrackTitle(s.track.title || s.track.originalName || 'Pjesma', s.analysis?.bpm || tl()?.bpm); browser.setActive(id); syncPlay(); setSaveState(`Spremljeno · v${trackVer} ☁️`, 'ok');
+  const initialTime = Number.isFinite(opts.startTimeSec)
+    ? opts.startTimeSec
+    : parseFloat(new URLSearchParams(window.location.search).get('t') || window.location.hash.slice(1));
   if (!isNaN(initialTime) && initialTime > 0) seek(initialTime);
   status(s.analysis ? `Analizirano · ${Math.round(s.analysis.bpm || 0)} BPM · ${s.analysis.sections?.length || 0} dionica · 4 stema.` : 'Pjesma čeka lokalnu analizu.');
   ensureSpectrum();
   if (!s.analysis) await analyze(id);
+  if (opts.autoPlay && token === s.token) {
+    if (audio.paused) {
+      await togglePlay();
+    }
+    liveSync?.sendLiveState?.({ takeover: true });
+  } else {
+    liveSync?.sendLiveState?.();
+  }
 }
 async function analyze(id) {
   status('Lokalna analiza traje. Nema slanja u cloud.');
@@ -615,35 +1069,110 @@ async function analyze(id) {
     const result = await libraryApi('analyze', { id });
     if (s.track?.id !== id) return;
     s.analysis = result.analysis; ensureSpectrum(); const timeline = normalizeTimeline(createAutoShow(s.analysis));
-    await libraryApi('timeline', { id, timeline }); store.replace(timeline);
-    playlist.fit(); playlist.renderHeads(); editor.render(); mixer.render(); updateGridButton(); browser.refresh();
+    await libraryApi('timeline', { id, timeline, clientId, author: clientName }); store.replace(timeline);
+    playlist.fit(); playlist.renderHeads(); editor.render(); mixer.render(); autoShowPanel?.render(); updateGridButton(); browser.refresh();
     updateTrackTitle(s.track.title || s.track.originalName || 'Pjesma', s.analysis?.bpm || tl()?.bpm);
     status(`Analiza gotova · ${Math.round(s.analysis.bpm)} BPM. Show je editabilan.`);
-  } catch (error) { status(`Analiza nije uspjela: ${error.message}`); toast(`Analiza nije uspjela: ${error.message}`, 'error'); }
+  } catch (error) {
+    reportClientLog('CLIENT_ERROR', 'ANALYZE_FAILED', { trackId: id, error: error.message });
+    status(`Analiza nije uspjela: ${error.message}`);
+    toast(`Analiza nije uspjela: ${error.message}`, 'error');
+  }
 }
 function generateShow(opts = {}) {
   if (!hasTrack()) return status('Najprije odaberi analiziranu pjesmu.');
-  const result = store.commit('Auto show', t => { const fresh = normalizeTimeline(createAutoShow(s.analysis, opts)); t.layers = fresh.layers; });
+  const mergedOpts = { ...(autoShowPanel?.getConfig?.() || {}), ...opts };
+  const selSecs = playlist.getSelectedSections?.() || [];
+  if (selSecs.length > 0) {
+    const result = store.commit(`Auto show (${selSecs.length} dionica)`, t => {
+      regenerateSectionClips(t, s.analysis, selSecs, mergedOpts);
+    });
+    if (result.error) return status(result.error);
+    playlist.redraw();
+    autoShowPanel?.render();
+    status(`Regenerirano ${selSecs.length} označenih dionica prema trenutnim postavkama. Poništi s ⌘Z.`);
+    return;
+  }
+  const result = store.commit('Auto show', t => { const fresh = normalizeTimeline(createAutoShow(s.analysis, mergedOpts)); t.layers = fresh.layers; });
   if (result.error) return status(result.error);
-  s.activeLayer = 0; playlist.setSelection([]); status('Auto show s temom je generiran. Poništi s ⌘Z ako ti se više sviđao prethodni.');
+  s.activeLayer = 0; playlist.setSelection([]); autoShowPanel?.render(); status('Auto show s temom je generiran prema fine-tuneanim dionicama. Poništi s ⌘Z.');
 }
 function addPreset(preset) {
   if (!hasTrack()) return status('Najprije odaberi pjesmu.');
   const layer = tl().layers[s.activeLayer]; if (!layer) return status('Dodaj sloj.');
   const start = Math.min(songTime(), duration() - .1), length = Math.min(snapStepSec('bar', tl(), s.analysis, start), duration() - start);
-  let ref; const result = store.commit('Novi clip', t => { ref = addClip(t, layer.id, { ...newClipSpec(layer), preset, startSec: start, durationSec: Math.max(.05, length) }); });
+  let ref; const result = store.commit('Novi clip', t => { ref = addClip(t, layer.id, { ...newClipSpec(layer, start), preset, startSec: start, durationSec: Math.max(.05, length) }); });
   if (result.error) return status(result.error);
   playlist.setSelection([ref]); status(`Clip „${PRESET_LABELS[preset]}” dodan na ${formatClock(start)}.`);
 }
 const browser = createBrowser(browserHost, {
-  status, selectTrack, generateShow, addPreset, getAnalysis: () => s.analysis, setLoop, seek,
+  status, selectTrack, generateShow, addPreset, getAnalysis: () => s.analysis, setLoop, seek, flushSave,
+  openAutoShowStudio: () => switchDock('autoshow'),
   onPresetClick: preset => s.dock === 'perform' && performDesk.assignPreset(preset),
   onPresetDrop: (preset, index) => s.dock === 'perform' && performDesk.assignPreset(preset, index),
   isPerforming: () => s.dock === 'perform',
   onToggleCollapse: () => toggleSidePanel('--browser-w', 260),
   reanalyze: async id => { if (s.track?.id !== id) await selectTrack(id); await analyze(id); },
-  onDeleted: id => { if (s.track?.id === id) { s.track = null; s.analysis = null; audio.pause(); audio.removeAttribute('src'); store.replace(emptyTimeline()); updateTrackTitle('Nema odabrane pjesme'); playlist.renderHeads(); editor.render(); syncPlay(); playlist.redraw(); } },
+  onDeleted: id => { if (s.track?.id === id) { s.track = null; s.analysis = null; audio.pause(); audio.removeAttribute('src'); store.replace(emptyTimeline()); updateTrackTitle('Nema odabrane pjesme'); playlist.renderHeads(); editor.render(); autoShowPanel?.render(); syncPlay(); playlist.redraw(); } },
   onRenamed: id => { if (s.track?.id === id) browser.refresh().then(tracks => { const t = tracks.find(x => x.id === id); if (t) { s.track = { ...s.track, ...t }; updateTrackTitle(t.title, s.analysis?.bpm || tl()?.bpm); playlist.renderHeads(); } }); }
+});
+
+const autoShowPanel = createAutoShowPanel(autoShowPane, {
+  getTrack: () => s.track,
+  getAnalysis: () => s.analysis,
+  getTimeline: () => tl(),
+  getShowOptions: () => browser?.getThemeOptions?.() || {},
+  getSelectedSections: () => playlist.getSelectedSections?.() || [],
+  setSelectedSections: indices => playlist.setSelectedSections?.(indices, false),
+  applyGeneratedPipeline: ({ timeline: nextTimeline, sections, label = 'Auto Show Studio', saveSections = false }) => {
+    if (!hasTrack()) return status('Najprije odaberi analiziranu pjesmu.');
+    if (Array.isArray(sections) && s.analysis) {
+      s.analysis.sections = sections;
+      if (saveSections && s.track?.id) {
+        libraryApi('sections', { id: s.track.id, sections }).catch(err => toast(err.message, 'error'));
+      }
+    }
+    const result = store.commit(label, t => {
+      const fresh = normalizeTimeline(nextTimeline);
+      t.layers = fresh.layers;
+    });
+    if (result.error) return status(result.error);
+    s.activeLayer = 0;
+    playlist.setSelection([]);
+    playlist.redraw();
+    status(`${label} primijenjen (${s.analysis?.sections?.length || 0} dionica). Poništi s ⌘Z.`);
+  },
+  onRegenerateSection: (sectionIndex, sectionType, config) => {
+    if (!hasTrack()) return status('Najprije odaberi analiziranu pjesmu.');
+    const secName = s.analysis?.sections?.[sectionIndex]?.name || `Dionica ${sectionIndex + 1}`;
+    const result = store.commit(`Regeneriraj: ${secName}`, t => {
+      regenerateSectionClips(t, s.analysis, sectionIndex, {
+        ...config,
+        sectionType,
+        palette: config.theme,
+        theme: config.theme
+      });
+    });
+    if (result.error) return status(result.error);
+    playlist.redraw();
+    status(`Regenerirana dionica „${secName}” (${sectionType}).`);
+  },
+  onUpdateSections: nextSections => {
+    if (!s.analysis) return;
+    s.analysis.sections = nextSections;
+    playlist.redraw();
+    if (s.track?.id) {
+      libraryApi('sections', { id: s.track.id, sections: nextSections }).catch(err => toast(err.message, 'error'));
+    }
+  },
+  onLoopSection: sec => {
+    setLoop({ start: sec.startSec, end: sec.endSec ?? (sec.startSec + sec.durationSec) });
+    seek(sec.startSec);
+  },
+  onStatus: (msg, isError = false) => {
+    status(msg);
+    if (isError) toast(msg, 'error');
+  }
 });
 
 /* -------------------------------------------------------------- tempo/grid */
@@ -651,6 +1180,8 @@ gridBtn.onclick = () => {
   const r = gridBtn.getBoundingClientRect(), manual = () => Boolean(hasTrack());
   const retime = (label, mutate) => { if (hasTrack()) { const result = store.commit(label, t => { mutate(t); t.gridMode = 'manual'; }); if (result.error) status(result.error); } };
   showMenu(r.left, r.bottom + 4, [
+    { label: 'TAP tempo (klikni u ritmu)', disabled: !manual(), onClick: () => bpmTapBtn.click() },
+    { separator: true },
     { label: 'Postavi Beat 1 na playhead (sinkronizacija)', disabled: !manual(), onClick: () => retime('Beat 1', t => { t.beatOffsetSec = songTime(); }) },
     { label: 'Nudge mrežu −10 ms (ranije)', disabled: !manual(), onClick: () => retime('Nudge −10ms', t => { t.beatOffsetSec = Math.max(0, (t.beatOffsetSec || 0) - 0.01); }) },
     { label: 'Nudge mrežu +10 ms (kasnije)', disabled: !manual(), onClick: () => retime('Nudge +10ms', t => { t.beatOffsetSec = (t.beatOffsetSec || 0) + 0.01; }) },
@@ -732,12 +1263,28 @@ const dockMinBtn = h('button', {
   onClick: () => toggleDock()
 }, '▾');
 
-const DOCKS = [['clip', 'Clip', clipPane], ['envelope', 'Envelope', envPane], ['driver', 'Audio driver (EQ)', driverPane], ['mixer', 'Mixer', mixerPane], ['perform', 'Live board', performancePane], ['live', 'Audio uživo', livePane], ['output', 'Izlaz', outputPane]];
+const ALL_DOCKS = [
+  ['clip', 'Clip', clipPane],
+  ['envelope', 'Envelope', envPane],
+  ['driver', 'Audio driver (EQ)', driverPane],
+  ['mixer', 'Mixer', mixerPane],
+  ['autoshow', '✦ Auto Show', autoShowPane],
+  ['perform', 'Live board', performancePane],
+  ['live', 'Audio uživo', livePane],
+  ['output', 'Izlaz', outputPane]
+];
+const DOCKS = [
+  ['clip', 'Clip', clipPane],
+  ['envelope', 'Envelope', envPane],
+  ['driver', 'Audio driver (EQ)', driverPane],
+  ['autoshow', '✦ Auto Show', autoShowPane],
+  ['perform', 'Live board', performancePane]
+];
 function switchDock(id) {
-  if (id === 'perform' && s.dock !== 'perform') {
+  if ((id === 'perform' || id === 'autoshow') && s.dock !== 'perform' && s.dock !== 'autoshow') {
     s.performPrevDock = getComputedStyle(document.documentElement).getPropertyValue('--dock-h').trim();
-    document.documentElement.style.setProperty('--dock-h', localStorage.getItem('ledicated-perform-dock-h') || `${Math.min(560, Math.max(330, innerHeight - 230))}px`);
-  } else if (s.dock === 'perform' && id !== 'perform' && s.performPrevDock) {
+    document.documentElement.style.setProperty('--dock-h', localStorage.getItem('ledicated-perform-dock-h') || `${Math.min(540, Math.max(360, innerHeight - 230))}px`);
+  } else if ((s.dock === 'perform' || s.dock === 'autoshow') && id !== 'perform' && id !== 'autoshow' && s.performPrevDock) {
     localStorage.setItem('ledicated-perform-dock-h', getComputedStyle(document.documentElement).getPropertyValue('--dock-h').trim());
     document.documentElement.style.setProperty('--dock-h', s.performPrevDock);
     localStorage.setItem('ledicated--dock-h', s.performPrevDock);
@@ -752,7 +1299,7 @@ function switchDock(id) {
     dockMinBtn.textContent = '▾';
     dockMinBtn.title = 'Minimiziraj urednik';
   }
-  for (const [key, , pane] of DOCKS) pane.hidden = key !== id;
+  for (const [key, , pane] of ALL_DOCKS) pane.hidden = key !== id;
   dockTabs.replaceChildren(
     ...DOCKS.map(([key, label]) => h('button', {
       type: 'button',
@@ -766,10 +1313,14 @@ function switchDock(id) {
     dockMinBtn
   );
   if (id === 'mixer') { mixer.render(); s.mixerStale = false; }
+  if (id === 'autoshow') { autoShowPanel?.render(); }
   if (id === 'clip' || id === 'driver' || id === 'envelope') editor.render();
+  performOpen.classList.toggle('is-open', id === 'perform');
+  autoShowOpenBtn.classList.toggle('is-open', id === 'autoshow');
 }
-document.getElementById('out-open').onclick = () => output.openSettings();
-const performOpen = h('button', { type: 'button', id: 'perform-open', class: 'txt-btn', title: 'Otvori izvedbeni board (tipka P)', onClick: () => switchDock('perform') }, 'LIVE BOARD');
+autoShowOpenBtn.onclick = () => switchDock('autoshow');
+outOpenBtn.onclick = () => output.openSettings();
+performOpen.onclick = () => switchDock('perform');
 const mobileDialog = h('dialog', { id: 'mobile-companion-dialog', class: 'help lan-modal', closedby: 'any', 'aria-label': 'iPhone Live Pad Companion' });
 document.body.append(mobileDialog);
 if (!('closedBy' in HTMLDialogElement.prototype)) {
@@ -833,8 +1384,8 @@ async function openMobileCompanionModal() {
         )
       ),
       h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: '#8499b2' } },
-        h('span', {}, mobilePeers.length
-          ? `🟢 Spojeni mobilni uređaji (${mobilePeers.length}): ${mobilePeers.map(p => p.name).join(', ')}`
+        h('span', {}, (lanState.companions?.length || mobilePeers.length)
+          ? `🟢 Spojeni mobilni uređaji (${lanState.companions?.length || mobilePeers.length}): ${(lanState.companions?.length ? lanState.companions : mobilePeers).map(p => `${p.name || 'iPhone'}${p.latencyMs != null ? ` (${p.latencyMs} ms)` : ''}`).join(', ')}`
           : '⚪ Čekam spajanje iPhonea na istoj Wi-Fi mreži…'),
         h('span', {}, 'Sinkronizacija: SSE + <3ms LAN')
       )
@@ -842,8 +1393,7 @@ async function openMobileCompanionModal() {
   );
   if (!mobileDialog.open) mobileDialog.showModal();
 }
-const mobileOpen = h('button', { type: 'button', id: 'mobile-open', class: 'txt-btn', title: 'Poveži iPhone Live Pad Companion aplikaciju', onClick: openMobileCompanionModal }, '📱 iPhone Pad');
-document.getElementById('out-open').before(performOpen, mobileOpen);
+mobileOpen.onclick = openMobileCompanionModal;
 switchDock('clip'); setTool('draw'); updateHistoryButtons(); updateGridButton();
 
 /* ------------------------------------------------------------ edit actions */
@@ -918,6 +1468,7 @@ const lanState = {
   nowPlaying: null,
   manuallyReleased: false,
   peers: [],
+  companions: [],
   remoteServers: [],
   lanUrls: [],
   hostname: '',
@@ -1064,44 +1615,75 @@ function renderStageLiveBanner() {
   );
 }
 
+function updateMobileCompanionPill() {
+  const companions = Array.isArray(lanState.companions) && lanState.companions.length
+    ? lanState.companions
+    : (lanState.peers || []).filter(p => p.source === 'pad' || p.source === 'ios');
+  livePadPill.classList.remove('iphone-offline', 'iphone-connected');
+  if (companions.length > 0) {
+    const primary = companions[0];
+    const delayStr = primary.latencyMs != null ? `${Math.round(primary.latencyMs)} ms` : 'LIVE';
+    const label = companions.length > 1 ? `${companions.length} iPhone · ${delayStr}` : `iPhone · ${delayStr}`;
+    mobileDataEl.textContent = label;
+    livePadPill.classList.add('iphone-connected');
+    mobileOpen.title = `iPhone Pad spojen (${companions.map(c => c.name || 'iPhone').join(', ')}) · Latencija: ${delayStr}`;
+  } else {
+    mobileDataEl.textContent = 'Offline';
+    livePadPill.classList.add('iphone-offline');
+    mobileOpen.title = 'iPhone Pad nije detektiran — klikni za povezivanje';
+  }
+}
+
 function updateLanBadge() {
-  const isMyStage = lanState.stageOwnerId === clientId && !lanState.isRemoteStageOwner;
-  const isFree = !lanState.stageOwnerId && !lanState.isRemoteStageOwner;
+  const isAmbient = lanState.outputMode === 'ambient' || output?.outputMode === 'ambient';
+  const isArmed = Boolean(output?.armed);
+  const isMyStage = !isAmbient && lanState.stageOwnerId === clientId && !lanState.isRemoteStageOwner;
+  const isFree = !isAmbient && !lanState.stageOwnerId && !lanState.isRemoteStageOwner;
   const canDrive = isMyStage || (isFree && !lanState.manuallyReleased);
   window.ledicatedIsStageOwner = canDrive;
   window.ledicatedRemoteStageOwner = Boolean(lanState.isRemoteStageOwner);
   const peerCount = Math.max(1, lanState.peers.length || 1);
   window.ledicatedPeerCount = peerCount;
-  const countLabel = peerCount > 1 ? ` · ${peerCount}` : '';
+  const peerSuffix = peerCount > 1 ? ` · ${peerCount} LAN` : '';
   const graceSec = getLiveGraceRemaining();
 
-  lanBtn.classList.remove('on-air', 'solo-mode', 'grace-mode');
-  if (isMyStage) {
+  outputStagePill.classList.remove('phase-sim', 'phase-on-air', 'phase-grace', 'phase-solo', 'phase-ambient');
+  badge.classList.toggle('live', isArmed);
+
+  if (isAmbient && !isArmed) {
+    outputStagePill.classList.add('phase-ambient');
+    badge.textContent = 'MENU BAR';
+    outputStageData.textContent = `Ured${peerSuffix}`;
+    lanBtn.title = 'Menu Bar (Uredska rasvjeta) upravlja kontrolerom — klikni za preuzimanje stagea.';
+  } else if ((!isMyStage && !isFree) || (isFree && lanState.manuallyReleased)) {
+    const ownerName = (!isFree && lanState.stageOwnerName) ? lanState.stageOwnerName : 'Preview';
+    outputStagePill.classList.add('phase-solo');
+    badge.textContent = 'SOLO';
+    outputStageData.textContent = `${ownerName}${peerSuffix}`;
+    lanBtn.title = isFree
+      ? 'Ti si u Solo Preview modu. Stage je slobodan — klikni za preuzimanje.'
+      : `Na stageu je ${ownerName}. Ti si u Solo Preview modu (klikni za preuzimanje stagea).`;
+  } else if (isArmed) {
     if (lanState.stageState === 'grace') {
-      lanBtn.textContent = `🌐 LAN${countLabel} · PAUZA (${graceSec}s)`;
-      lanBtn.classList.add('grace-mode');
-      lanBtn.title = `Pauzirano — Stage se drži za tebe još ${graceSec} s prije automatskog otpuštanja.`;
+      outputStagePill.classList.add('phase-grace');
+      badge.textContent = 'PAUZA';
+      outputStageData.textContent = `${graceSec}s${peerSuffix}`;
+      lanBtn.title = `Izlaz uključen (Pauza) — Stage se drži za tebe još ${graceSec} s.`;
     } else {
-      lanBtn.textContent = `🌐 LAN${countLabel} · ON AIR`;
-      lanBtn.classList.add('on-air');
-      lanBtn.title = `Ti si NA STAGEU (ON AIR)${peerCount > 1 ? ` · ${peerCount} povezanih uređaja na LAN-u` : ''}`;
-    }
-  } else if (isFree) {
-    if (lanState.manuallyReleased) {
-      lanBtn.textContent = `🌐 LAN${countLabel} · SOLO`;
-      lanBtn.classList.add('solo-mode');
-      lanBtn.title = 'Ti si u Solo Preview modu. Stage je trenutno slobodan.';
-    } else {
-      lanBtn.textContent = `🌐 LAN${countLabel} · SLOBODAN`;
-      lanBtn.classList.add('on-air');
-      lanBtn.title = 'Stage je slobodan — pritisni Play za automatsko preuzimanje izlaza.';
+      outputStagePill.classList.add('phase-on-air');
+      badge.textContent = 'ON AIR';
+      outputStageData.textContent = `IZLAZ${peerSuffix}`;
+      lanBtn.title = `Izlaz uključen · Ti si NA STAGEU (ON AIR)${peerCount > 1 ? ` · ${peerCount} uređaja na LAN-u` : ''}`;
     }
   } else {
-    const ownerName = lanState.stageOwnerName || 'Kolega';
-    lanBtn.textContent = `🌐 LAN${countLabel} · SOLO (${ownerName})`;
-    lanBtn.classList.add('solo-mode');
-    lanBtn.title = `Na stageu je ${ownerName}. Ti si u Solo Preview modu (klikni za preuzimanje stagea).`;
+    outputStagePill.classList.add('phase-sim');
+    badge.textContent = 'SIMULACIJA';
+    outputStageData.textContent = isMyStage
+      ? (lanState.stageState === 'grace' ? `Pauza ${graceSec}s` : `ON AIR${peerSuffix}`)
+      : (peerCount > 1 ? `${peerCount} LAN` : 'Lokalno');
+    lanBtn.title = 'Simulacija (WLED izlaz ugašen) — klikni za Stage / LAN kontrolu ili ikonu desno za WLED postavke.';
   }
+  updateMobileCompanionPill();
   renderStageLiveBanner();
 }
 
@@ -1132,6 +1714,7 @@ async function claimStage(release = false) {
 function applyLanPresence(data) {
   if (!data) return;
   if (Array.isArray(data.peers)) lanState.peers = data.peers;
+  if (Array.isArray(data.companions)) lanState.companions = data.companions;
   if (Array.isArray(data.remoteServers)) lanState.remoteServers = data.remoteServers;
   if ('stageOwnerId' in data) lanState.stageOwnerId = data.stageOwnerId;
   if ('stageOwnerName' in data) lanState.stageOwnerName = data.stageOwnerName;
@@ -1311,6 +1894,7 @@ function renderLanDialog() {
       lanState.syncBusy = true;
       renderLanDialog();
       try {
+        await flushSave();
         status(`Slanje paketa „${s.track.title}” na ${lanState.peerUrl}…`);
         const res = await fetch('/api/lan/push-pack', {
           method: 'POST',
@@ -1671,55 +2255,77 @@ setInterval(() => {
   if (audio.paused && !playPending && !scrubWasPlaying && extSyncAnchor.activeUntil > t && hasTrack()) {
     s.scrubSec = clamp(extSyncAnchor.songSec + Math.max(0, t - extSyncAnchor.wallSec) * extSyncAnchor.rate, 0, duration());
   }
-  const isActivelyPlaying = !audio.paused || performDesk.desk.active.size > 0 || Boolean(live.isExternalActive?.(t)) || extSyncAnchor.activeUntil > t;
+  const isActivelyPlaying = !audio.paused || performDesk.desk.active.size > 0 || performDesk.desk.touches.size > 0 || Boolean(live.isExternalActive?.(t)) || extSyncAnchor.activeUntil > t;
   if (!isActivelyPlaying) return;
   performDesk.tick(t);
   output.send(currentOutputFrame, t);
 }, 16);
+let lastTickErrorAt = 0;
+let lastIdleSendTime = 0;
+let lastIdleSendSig = '';
 function tick() {
-  const t = now();
-  lastTickTime = t;
-  live.tick(t);
-  const extSyncedPlaying = audio.paused && !playPending && !scrubWasPlaying && extSyncAnchor.activeUntil > t && hasTrack();
-  if (extSyncedPlaying) {
-    s.scrubSec = clamp(extSyncAnchor.songSec + Math.max(0, t - extSyncAnchor.wallSec) * extSyncAnchor.rate, 0, duration());
-    playlist.redraw();
+  try {
+    const t = now();
+    lastTickTime = t;
+    live.tick(t);
+    const extSyncedPlaying = audio.paused && !playPending && !scrubWasPlaying && extSyncAnchor.activeUntil > t && hasTrack();
+    if (extSyncedPlaying) {
+      s.scrubSec = clamp(extSyncAnchor.songSec + Math.max(0, t - extSyncAnchor.wallSec) * extSyncAnchor.rate, 0, duration());
+      playlist.redraw();
+    }
+    if (s.loopOn && s.loop && !audio.paused && audio.currentTime >= s.loop.end) {
+      if (recorder?.isRecording) recorder.handleLoopWrap(s.loop.start, s.loop.end);
+      audio.currentTime = s.loop.start;
+    }
+    performDesk.tick(t);
+    recorder?.tick(songTime());
+    if (hasTrack() && !live.engine.state.blackout) {
+      const effTl = effectiveTimeline();
+      showEngine.sync(effTl, s.analysis);
+      showEngine.warmLookahead(clamp((s.frozenSec ?? songTime()) + output.offsetSec, 0, duration()), (audio.paused && !extSyncedPlaying) ? 24 : 8, 2.5);
+    }
+    const performSignal = `${performDesk.desk.active.size + performDesk.desk.touches.size}|${performDesk.desk.pending.size}`;
+    if (performSignal !== lastPerformSignal) {
+      lastPerformSignal = performSignal;
+      const activeCount = performDesk.desk.active.size + performDesk.desk.touches.size, queuedCount = performDesk.desk.pending.size;
+      performPhaseEl.textContent = activeCount ? 'LIVE' : 'Pad';
+      performDataEl.textContent = activeCount ? `${activeCount} FX` : queuedCount ? `${queuedCount} čeka` : '12';
+      livePadPill.classList.toggle('phase-live', activeCount > 0);
+      livePadPill.classList.toggle('phase-waiting', queuedCount > 0 && !activeCount);
+      livePadPill.classList.toggle('phase-idle', !activeCount && !queuedCount);
+      performOpen.setAttribute('aria-label', activeCount ? `Live board, ${activeCount} aktivnih efekata` : queuedCount ? `Live board, ${queuedCount} efekata čeka beat` : 'Live board');
+    }
+    const frame = currentPreviewFrame(t);
+    if (output.config) preview.render(frame, output.config);
+    const time = songTime();
+    const isRealtimeActive = !audio.paused || extSyncedPlaying || performDesk.desk.active.size > 0 || performDesk.desk.touches.size > 0 || Boolean(live.isExternalActive?.(t)) || !hasTrack();
+    const idleSig = `${time.toFixed(3)}|${timelineVersion}|${masterKnob.value}|${live.engine.state.blackout ? 1 : 0}`;
+    if (isRealtimeActive || idleSig !== lastIdleSendSig || (t - lastIdleSendTime >= 0.25)) {
+      lastIdleSendSig = idleSig;
+      lastIdleSendTime = t;
+      output.send(output.offsetSec === 0 ? frame : currentOutputFrame, t);
+    }
+    const text = formatBBT(hasTrack() ? Math.max(0, beatPosition(time, tl(), s.analysis)) : 0) + '|' + formatClock(time);
+    if (text !== lastText) { lastText = text; const [bbt, clock] = text.split('|'); bbtEl.textContent = bbt; clockEl.textContent = clock; }
+    if (s.follow && (!audio.paused || extSyncedPlaying)) playlist.ensureVisible(time, true);
+    if (s.dock === 'envelope' && !audio.paused) clipEditor.draw();
+    if (s.dock === 'driver') driverEditor.tick();
+    if (t - s.lastLevels > .08) {
+      s.lastLevels = t;
+      if (s.dock === 'mixer') updateMeters(time);
+      updateTelemetry(frame);
+    }
+    if (t - s.lastActive > .15) { s.lastActive = t; if (hasTrack()) updateActiveNow(time); else if (!activeNow.firstChild || activeNow.dataset.mode !== 'live') { activeNow.dataset.mode = 'live'; updateActiveNow(time); } }
+  } catch (err) {
+    const nowMs = Date.now();
+    if (nowMs - lastTickErrorAt > 5000) {
+      lastTickErrorAt = nowMs;
+      console.error('Tick error:', err);
+      reportClientLog('CLIENT_ERROR', 'TICK_RENDER_ERROR', { message: err?.message || String(err), stack: err?.stack ? String(err.stack).slice(0, 500) : '' });
+    }
+  } finally {
+    requestAnimationFrame(tick);
   }
-  if (s.loopOn && s.loop && !audio.paused && audio.currentTime >= s.loop.end) {
-    if (recorder?.isRecording) recorder.handleLoopWrap(s.loop.start, s.loop.end);
-    audio.currentTime = s.loop.start;
-  }
-  performDesk.tick(t);
-  recorder?.tick(songTime());
-  if (hasTrack() && !live.engine.state.blackout) {
-    const effTl = effectiveTimeline();
-    showEngine.sync(effTl, s.analysis);
-    showEngine.warmLookahead(clamp((s.frozenSec ?? songTime()) + output.offsetSec, 0, duration()), (audio.paused && !extSyncedPlaying) ? 24 : 8, 2.5);
-  }
-  const performSignal = `${performDesk.desk.active.size}|${performDesk.desk.pending.size}`;
-  if (performSignal !== lastPerformSignal) {
-    lastPerformSignal = performSignal;
-    const activeCount = performDesk.desk.active.size, queuedCount = performDesk.desk.pending.size;
-    performOpen.textContent = activeCount ? `LIVE BOARD · ${activeCount}` : queuedCount ? `LIVE BOARD · ${queuedCount} ČEKA` : 'LIVE BOARD';
-    performOpen.classList.toggle('on-air', activeCount > 0);
-    performOpen.classList.toggle('waiting', queuedCount > 0 && !activeCount);
-    performOpen.setAttribute('aria-label', activeCount ? `Live board, ${activeCount} aktivnih efekata` : queuedCount ? `Live board, ${queuedCount} efekata čeka beat` : 'Live board');
-  }
-  const frame = currentPreviewFrame(t);
-  if (output.config) preview.render(frame, output.config);
-  output.send(output.offsetSec === 0 ? frame : currentOutputFrame, t);
-  const time = songTime(), text = formatBBT(hasTrack() ? Math.max(0, beatPosition(time, tl(), s.analysis)) : 0) + '|' + formatClock(time);
-  if (text !== lastText) { lastText = text; const [bbt, clock] = text.split('|'); bbtEl.textContent = bbt; clockEl.textContent = clock; }
-  if (s.follow && (!audio.paused || extSyncedPlaying)) playlist.ensureVisible(time, true);
-  if (s.dock === 'envelope' && !audio.paused) clipEditor.draw();
-  if (s.dock === 'driver') driverEditor.tick();
-  if (t - s.lastLevels > .08) {
-    s.lastLevels = t;
-    if (s.dock === 'mixer') updateMeters(time);
-    updateTelemetry(frame);
-  }
-  if (t - s.lastActive > .15) { s.lastActive = t; if (hasTrack()) updateActiveNow(time); else if (!activeNow.firstChild || activeNow.dataset.mode !== 'live') { activeNow.dataset.mode = 'live'; updateActiveNow(time); } }
-  requestAnimationFrame(tick);
 }
 
 await output.init();
@@ -1736,6 +2342,8 @@ function initLiveSync() {
       clientId,
       clientName,
       trackId: s.track?.id || null,
+      showId: s.track?.showId || null,
+      version: s.track?.version || 1,
       trackTitle: s.track?.title || s.track?.originalName || null,
       timeSec: time,
       durationSec: duration(),
@@ -1791,38 +2399,54 @@ function initLiveSync() {
     }
     if (cmd.type === 'timeline_updated') {
       if (cmd.trackId && cmd.trackId === s.track?.id && cmd.clientId !== clientId && cmd.timeline) {
+        if (cmd.version) {
+          s.track.version = cmd.version;
+          verBtn.textContent = `🕒 v${cmd.version}`;
+          setSaveState(`Spremljeno · v${cmd.version} ☁️`, 'ok');
+        }
         store.replace(normalizeTimeline(cmd.timeline));
         playlist.renderHeads();
         playlist.redraw();
         editor.render();
-        status(`Show uživo ažuriran od: ${cmd.author || 'LAN kolega'}`);
+        status(`Show uživo ažuriran od: ${cmd.author || 'LAN kolega'}${cmd.version ? ` (v${cmd.version})` : ''}`);
       }
       return;
     }
-    if (cmd.type === 'transport') {
-      if (cmd.action === 'play') { if (audio.paused) togglePlay(); }
-      else if (cmd.action === 'pause') { if (!audio.paused) togglePlay(); }
-      else if (cmd.action === 'stop') { stop(); }
-      else if (cmd.action === 'seek') {
+    if (cmd.type === 'transport' || cmd.type === 'play' || cmd.type === 'pause' || cmd.type === 'stop' || cmd.type === 'seek') {
+      const action = cmd.type === 'transport' ? cmd.action : cmd.type;
+      if (action === 'play') { if (audio.paused) togglePlay(); }
+      else if (action === 'pause') { if (!audio.paused) togglePlay(); }
+      else if (action === 'stop') { stop(); }
+      else if (action === 'seek') {
         const targetSec = Number.isFinite(cmd.timeSec) ? cmd.timeSec : (Number.isFinite(cmd.beat) ? timeAtBeat(cmd.beat, tl(), s.analysis) : 0);
         commitSeek(targetSec);
       }
-      else if (cmd.action === 'loop') {
+      else if (action === 'loop') {
         if (Number.isFinite(cmd.startSec) && Number.isFinite(cmd.endSec)) setLoop({ start: cmd.startSec, end: cmd.endSec });
         if (typeof cmd.enabled === 'boolean') { s.loopOn = cmd.enabled; syncLoop(); playlist.redraw(); }
       }
-      else if (cmd.action === 'record') {
+      else if (action === 'record') {
         if (cmd.armed !== undefined) { if (recorder.isArmed !== cmd.armed) recBtn.click(); }
         else recBtn.click();
       }
       sendLiveState();
     }
-    else if (cmd.type === 'select_track') {
-      if (cmd.trackId && cmd.trackId !== s.track?.id) selectTrack(cmd.trackId);
+    else if (cmd.type === 'select_track' || cmd.type === 'play_show') {
+      const wantAutoPlay = Boolean(cmd.autoPlay || cmd.type === 'play_show');
+      if (cmd.trackId) {
+        if (cmd.trackId !== s.track?.id) {
+          selectTrack(cmd.trackId, { autoPlay: wantAutoPlay, startTimeSec: cmd.timeSec });
+        } else {
+          if (Number.isFinite(cmd.timeSec)) commitSeek(cmd.timeSec);
+          if (wantAutoPlay && audio.paused) togglePlay();
+          sendLiveState({ takeover: wantAutoPlay });
+        }
+      }
     }
     else if (cmd.type === 'timeline_op') {
+      if (cmd.trackId && s.track?.id && cmd.trackId !== s.track.id) return;
       if (cmd.timeline) {
-        store.replace(cmd.timeline);
+        store.replace(normalizeTimeline(cmd.timeline));
         playlist.renderHeads();
         playlist.redraw();
         editor.render();
@@ -1842,14 +2466,70 @@ function initLiveSync() {
       sendLiveState();
     }
     else if (cmd.type === 'live_pad') {
+      if (cmd.clientId && cmd.clientId === clientId) return;
       if (cmd.action === 'clear' || cmd.action === 'stop_all') {
-        performDesk.clear();
+        performDesk.clear({ fromRemote: true });
         sendLiveState();
         return;
       }
       if (cmd.action === 'release_all') {
-        performDesk.releaseAll();
+        performDesk.releaseAll({ fromRemote: true });
         sendLiveState();
+        return;
+      }
+      if (cmd.action === 'touch_down') {
+        performDesk.touchDown?.(cmd.touchId ?? 'remote', {
+          x: Number(cmd.x),
+          y: Number(cmd.y),
+          color: Array.isArray(cmd.color) ? cmd.color : null,
+          intensity: Number.isFinite(Number(cmd.intensity)) ? Number(cmd.intensity) : null,
+          spread: Number.isFinite(Number(cmd.spread)) ? Number(cmd.spread) : null,
+          velocityGain: Number.isFinite(Number(cmd.velocityGain)) ? Number(cmd.velocityGain) : null,
+          effect: typeof cmd.effect === 'string' ? cmd.effect : null,
+          lockedCols: Array.isArray(cmd.lockedCols) ? cmd.lockedCols : null,
+          lockedRows: Array.isArray(cmd.lockedRows) ? cmd.lockedRows : null,
+          fromRemote: true
+        });
+        return;
+      }
+      if (cmd.action === 'touch_move') {
+        performDesk.touchMove?.(cmd.touchId ?? 'remote', {
+          x: Number(cmd.x),
+          y: Number(cmd.y),
+          velocityGain: Number.isFinite(Number(cmd.velocityGain)) ? Number(cmd.velocityGain) : undefined,
+          dragDown: Number.isFinite(Number(cmd.dragDown)) ? Number(cmd.dragDown) : undefined,
+          fromRemote: true
+        });
+        return;
+      }
+      if (cmd.action === 'touch_up') {
+        performDesk.touchUp?.(cmd.touchId ?? 'remote', {
+          cancel: Boolean(cmd.cancel),
+          fromRemote: true
+        });
+        return;
+      }
+      if (cmd.action === 'set_color' && Array.isArray(cmd.color)) {
+        performDesk.setColor?.(cmd.color, { fromRemote: true });
+        return;
+      }
+      if (cmd.action === 'set_intensity' && Number.isFinite(Number(cmd.intensity))) {
+        performDesk.setIntensity?.(Number(cmd.intensity), { fromRemote: true });
+        return;
+      }
+      if (cmd.action === 'set_spread' && Number.isFinite(Number(cmd.spread))) {
+        performDesk.setSpread?.(Number(cmd.spread), { fromRemote: true });
+        return;
+      }
+      if (cmd.action === 'set_locks') {
+        performDesk.setLocks?.({
+          lockedCols: Array.isArray(cmd.lockedCols) ? cmd.lockedCols : undefined,
+          lockedRows: Array.isArray(cmd.lockedRows) ? cmd.lockedRows : undefined
+        });
+        return;
+      }
+      if (cmd.action === 'set_effect' && typeof cmd.effect === 'string') {
+        performDesk.setEffect?.(cmd.effect, { fromRemote: true });
         return;
       }
       if (cmd.action === 'quantize') {
@@ -1864,26 +2544,30 @@ function initLiveSync() {
         return;
       }
       let idx = -1;
-      if (typeof cmd.pad === 'number') idx = cmd.pad;
+      if (Number.isInteger(cmd.index)) idx = cmd.index;
+      else if (typeof cmd.pad === 'number') idx = cmd.pad;
       else if (typeof cmd.pad === 'string') {
         const lower = cmd.pad.toLowerCase();
         idx = PAD_KEYS.indexOf(lower);
         if (idx < 0 && !isNaN(Number(cmd.pad))) idx = Number(cmd.pad);
+      } else if (typeof cmd.key === 'string') {
+        idx = PAD_KEYS.indexOf(cmd.key.toLowerCase());
       }
       if (idx >= 0 && idx < 12) {
+        const patchObj = cmd.effect || cmd.patch || (cmd.pad && typeof cmd.pad === 'object' ? cmd.pad : null);
         if (cmd.action === 'press') {
-          performDesk.press(idx, { select: false });
+          performDesk.press(idx, { select: false, fromRemote: true });
         } else if (cmd.action === 'release') {
-          performDesk.release(idx, { cancel: Boolean(cmd.cancel) });
+          performDesk.release(idx, { cancel: Boolean(cmd.cancel), fromRemote: true });
         } else if (cmd.action === 'trigger' || cmd.action === 'hit' || !cmd.action) {
-          performDesk.trigger(idx, { select: false });
+          performDesk.trigger(idx, { select: false, fromRemote: true });
         } else if (cmd.action === 'loop') {
           if (performDesk.desk.pads[idx] && performDesk.desk.pads[idx].mode !== 'loop') {
             performDesk.setPadConfig?.(idx, { mode: 'loop' }, { fromRemote: true });
           }
-          performDesk.trigger(idx, { select: false });
-        } else if (cmd.action === 'set' && (cmd.effect || cmd.patch)) {
-          performDesk.setPadConfig?.(idx, cmd.effect || cmd.patch, { fromRemote: true });
+          performDesk.trigger(idx, { select: false, fromRemote: true });
+        } else if (cmd.action === 'set' && patchObj) {
+          performDesk.setPadConfig?.(idx, patchObj, { fromRemote: true });
         } else if (cmd.action === 'remove') {
           performDesk.removePadConfig?.(idx, { fromRemote: true });
         }
@@ -1916,7 +2600,12 @@ function initLiveSync() {
       bpmTapBtn.click();
       sendLiveState();
     }
+    else if (cmd.type === 'ambient_light_sync') {
+      if (cmd.ambientLight) renderRoomLightUI(cmd.ambientLight);
+      if (cmd.state) output.syncServerState?.(cmd.state);
+    }
     else if (cmd.type === 'hardware_sync') {
+      if (cmd.state?.ambientLight) renderRoomLightUI(cmd.state.ambientLight);
       output.syncServerState?.(cmd.state);
       sendLiveState();
     }

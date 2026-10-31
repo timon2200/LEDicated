@@ -38,6 +38,9 @@ export function createBrowser(host, ctx) {
     tracks: [],
     sets: [],
     setSelection: [],
+    activeSetId: '',
+    setName: '',
+    setsOpen: null,
     tab: 'songs',
     filter: '',
     activeId: null,
@@ -138,28 +141,33 @@ export function createBrowser(host, ctx) {
     setTimeout(() => a.remove(), 500);
   }
 
-  function exportTrackPack(trackId) {
+  async function exportTrackPack(trackId) {
     if (!trackId) return toast('Najprije odaberi pjesmu.', 'error');
+    await ctx.flushSave?.();
     const author = (typeof window !== 'undefined' && window.ledicatedClientName) || '';
     triggerDownload(`/api/library/export-pack/${encodeURIComponent(trackId)}?author=${encodeURIComponent(author)}`);
     toast('Izvoz .ledpack paketa (audio + analiza + show)…', 'ok');
   }
 
-  function exportTrackShow(trackId) {
+  async function exportTrackShow(trackId) {
     if (!trackId) return toast('Najprije odaberi pjesmu.', 'error');
+    await ctx.flushSave?.();
     const author = (typeof window !== 'undefined' && window.ledicatedClientName) || '';
     triggerDownload(`/api/library/export-show/${encodeURIComponent(trackId)}?author=${encodeURIComponent(author)}`);
     toast('Izvoz .ledshow.json datoteke…', 'ok');
   }
 
-  async function shareTrackToGit(trackId, trackTitle = '') {
+  async function shareTrackToGit(trackId, trackTitle = '', note = '') {
     if (!trackId) return toast('Najprije odaberi pjesmu.', 'error');
     try {
+      await ctx.flushSave?.();
       const author = (typeof window !== 'undefined' && window.ledicatedClientName) || '';
-      const res = await libraryApi('share-to-git', { trackId, author });
-      toast(`Spremljeno u shared-shows/${res.filename} (spremno za git commit/push)`, 'ok');
-      ctx.status(`Show „${trackTitle || res.filename}” spremljen u shared-shows/${res.filename}`);
-      launcher.refresh?.();
+      const clientId = (typeof window !== 'undefined' && window.ledicatedClientId) || '';
+      const res = await libraryApi('share-to-git', { trackId, author, clientId, note, forceNewVersion: Boolean(note) });
+      const verBadge = res.version ? ` · v${res.version}` : '';
+      toast(`☁️ Sinkronizirano u Cloud i shared-shows/${res.filename}${verBadge}`, 'ok');
+      ctx.status(`Show „${trackTitle || res.filename}” objavljen u Cloud (${res.filename}${verBadge})`);
+      await refresh();
     } catch (error) {
       toast(error.message, 'error');
     }
@@ -192,10 +200,11 @@ export function createBrowser(host, ctx) {
     showMenu(x, y, [
       { label: 'Otvori u studiju', onClick: () => ctx.selectTrack(track.id) },
       { label: 'Otvori u galeriji (Launcher)…', onClick: () => launcher.open() },
+      { label: `🕒 Povijest verzija i vraćanje (v${track.version || 1})…`, onClick: () => launcher.openVersionHistory?.(track) },
       { separator: true },
       { label: '📦 Izvezi paket pjesma + show (.ledpack)', onClick: () => exportTrackPack(track.id) },
       { label: '✦ Izvezi samo show (.ledshow.json)', onClick: () => exportTrackShow(track.id) },
-      { label: '🌐 Spremi show u Git (shared-shows)', onClick: () => shareTrackToGit(track.id, track.title) },
+      { label: '☁️ Objavi show u Cloud + Git (shared-shows)', onClick: () => shareTrackToGit(track.id, track.title) },
       { separator: true },
       { label: 'Preimenuj…', onClick: async () => { const title = prompt('Novi naziv pjesme', track.title || track.originalName); if (title?.trim()) { try { await libraryApi('track', { id: track.id, patch: { title: title.trim() } }); await refresh(); ctx.onRenamed?.(track.id); } catch (error) { toast(error.message, 'error'); } } } },
       { label: 'Ponovno analiziraj', onClick: () => ctx.reanalyze(track.id) },
@@ -212,7 +221,7 @@ export function createBrowser(host, ctx) {
       onClick: () => launcher.open()
     },
       h('span', { class: 'og-icon' }, '⊞'),
-      h('span', { class: 'og-text' }, 'Galerija & Launcher'),
+      h('span', { class: 'og-text' }, 'Galerija & Cloud Katalog'),
       h('span', { class: 'og-badge' }, String(s.tracks.length))
     );
 
@@ -228,26 +237,36 @@ export function createBrowser(host, ctx) {
       list.replaceChildren(...ordered.filter(t => !needle || (t.title || t.originalName || '').toLowerCase().includes(needle)).map((track, index) => {
         const check = h('input', { type: 'checkbox', checked: s.setSelection.includes(track.id), title: 'Uključi u set', 'aria-label': `Uključi ${track.title} u set`, onChange: () => { s.setSelection = check.checked ? [...s.setSelection, track.id] : s.setSelection.filter(id => id !== track.id); } });
         const { artist, title } = parseTrackTitle(track.title || track.originalName);
-        const row = h('div', { class: `track-row${track.id === s.activeId ? ' active' : ''}`, role: 'option', 'aria-selected': String(track.id === s.activeId) }, check,
+        const thumbWrap = h('span', { class: 'track-row-thumb-wrap' }, createTrackThumb(track, 'track-row-thumb'));
+        const verStr = track.hasTimeline ? ` · v${track.version || 1}` : '';
+        const authorStr = (track.updatedBy || track.author) ? ` · ${track.updatedBy || track.author}` : '';
+        const row = h('div', { class: `track-row${track.id === s.activeId ? ' active' : ''}`, role: 'option', 'aria-selected': String(track.id === s.activeId) }, check, thumbWrap,
           h('button', { type: 'button', class: 'track-main', onClick: () => ctx.selectTrack(track.id).catch(error => ctx.status(error.message)) },
             h('b', {}, `${activeSet ? `${index + 1}. ` : ''}${title}`),
-            h('small', {}, `${artist ? artist + ' · ' : ''}${(track.sizeBytes / 1048576).toFixed(1)} MB · ${track.hasAnalysis ? 'analizirano' : 'čeka analizu'}${track.hasTimeline ? ' · show' : ''}`)));
+            h('small', {}, `${artist ? artist + ' · ' : ''}${(track.sizeBytes / 1048576).toFixed(1)} MB · ${track.hasAnalysis ? 'analizirano' : 'čeka analizu'}${verStr}${authorStr}`)));
         row.addEventListener('contextmenu', e => { e.preventDefault(); trackMenu(track, e.clientX, e.clientY); });
         return row;
       }));
       if (!list.children.length) list.append(h('div', { class: 'empty small' }, s.tracks.length ? 'Nema rezultata.' : 'Biblioteka je prazna. Povuci pjesmu u prozor.'));
     };
-    const setName = h('input', { placeholder: 'Naziv seta', 'aria-label': 'Naziv seta' });
-    const setSelect = h('select', { 'aria-label': 'Spremljeni set', onChange: () => { const set = s.sets.find(i => i.id === setSelect.value); s.setSelection = set ? [...set.trackIds] : []; setName.value = set?.name || ''; renderList(); } }, h('option', { value: '' }, 'Sve pjesme'), ...s.sets.map(set => h('option', { value: set.id }, set.name)));
+    const setName = h('input', { placeholder: 'Naziv seta', 'aria-label': 'Naziv seta', value: s.setName, onInput: () => { s.setName = setName.value; } });
+    if (s.activeSetId && !s.sets.some(item => item.id === s.activeSetId)) {
+      s.activeSetId = '';
+    }
+    const setSelect = h('select', { 'aria-label': 'Spremljeni set', onChange: () => { s.activeSetId = setSelect.value; const set = s.sets.find(i => i.id === setSelect.value); s.setSelection = set ? [...set.trackIds] : []; s.setName = set?.name || ''; setName.value = s.setName; renderList(); } }, h('option', { value: '', selected: !s.activeSetId }, 'Sve pjesme'), ...s.sets.map(set => h('option', { value: set.id, selected: set.id === s.activeSetId }, set.name)));
+    setSelect.value = s.activeSetId;
     const run = async (fn, ok) => { try { await fn(); await refresh(); ctx.status(ok); } catch (error) { ctx.status(error.message); toast(error.message, 'error'); } };
     const sets = h('details', { class: 'sets' }, h('summary', {}, 'Setovi'), setName, h('div', { class: 'row' },
-      h('button', { type: 'button', onClick: () => { const name = setName.value.trim(); if (!name) return ctx.status('Upiši naziv seta.'); if (!s.setSelection.length) return ctx.status('Označi pjesme kvačicama za novi set.'); run(() => libraryApi('set', { name, trackIds: s.setSelection }), 'Set spremljen.'); } }, 'Spremi novi'),
-      h('button', { type: 'button', onClick: () => { if (!setSelect.value) return ctx.status('Odaberi set za ažuriranje.'); run(() => libraryApi('set-update', { id: setSelect.value, patch: { name: setName.value.trim(), trackIds: s.setSelection } }), 'Set ažuriran.'); } }, 'Ažuriraj'),
-      h('button', { type: 'button', class: 'danger', onClick: () => { if (!setSelect.value) return ctx.status('Odaberi set za uklanjanje.'); const id = setSelect.value; run(async () => { await libraryApi('set-delete', { id }); s.setSelection = []; }, 'Set uklonjen.'); } }, 'Ukloni')));
-    sets.open = Boolean(s.sets.length);
+      h('button', { type: 'button', onClick: () => { const name = setName.value.trim(); if (!name) return ctx.status('Upiši naziv seta.'); if (!s.setSelection.length) return ctx.status('Označi pjesme kvačicama za novi set.'); run(async () => { const res = await libraryApi('set', { name, trackIds: s.setSelection }); if (res?.set?.id) { s.activeSetId = res.set.id; s.setName = res.set.name || name; } }, 'Set spremljen.'); } }, 'Spremi novi'),
+      h('button', { type: 'button', onClick: () => { if (!setSelect.value) return ctx.status('Odaberi set za ažuriranje.'); run(async () => { const nextName = setName.value.trim(); await libraryApi('set-update', { id: setSelect.value, patch: { name: nextName, trackIds: s.setSelection } }); s.setName = nextName; }, 'Set ažuriran.'); } }, 'Ažuriraj'),
+      h('button', { type: 'button', class: 'danger', onClick: () => { if (!setSelect.value) return ctx.status('Odaberi set za uklanjanje.'); const id = setSelect.value; run(async () => { await libraryApi('set-delete', { id }); s.setSelection = []; s.activeSetId = ''; s.setName = ''; }, 'Set uklonjen.'); } }, 'Ukloni')));
+    sets.open = s.setsOpen !== null ? s.setsOpen : Boolean(s.sets.length);
+    sets.addEventListener('toggle', () => { s.setsOpen = sets.open; });
+    const prevScrollTop = body.scrollTop || 0;
     body.replaceChildren(openGalleryBtn, drop, search, setSelect, list, sets);
     renderList();
     if (setSelect.value === '' && s.sets.length === 0) setSelect.hidden = true;
+    if (prevScrollTop > 0) body.scrollTop = prevScrollTop;
   }
 
   /* ------------------------------------------------------------ presets */
@@ -439,6 +458,7 @@ export function createBrowser(host, ctx) {
           const rawE = Number(energy.value);
           s.energy = clamp(Number.isFinite(rawE) ? (rawE > 1 ? rawE / 100 : rawE) : 0.8, 0, 1);
           ctx.generateShow({
+            ...(s.pipelineConfig || {}),
             palette: palette.value,
             theme: palette.value,
             energy: s.energy,
@@ -447,6 +467,13 @@ export function createBrowser(host, ctx) {
           });
         }
       }, 'Generiraj show s temom'),
+      ...(typeof ctx.openAutoShowStudio === 'function' ? [
+        h('button', {
+          type: 'button',
+          class: 'ghost wide',
+          onClick: () => ctx.openAutoShowStudio()
+        }, '✦ Otvori Auto Show & Pipeline Studio')
+      ] : []),
       secBox,
       h('small', { class: 'hint' }, '4 izolirana frekvencijska stema: bubnjevi, bas, vokal i ostalo.')
     );
@@ -460,16 +487,32 @@ export function createBrowser(host, ctx) {
     exportTrackPack,
     exportTrackShow,
     shareTrackToGit,
+    openVersionHistory: item => launcher.openVersionHistory?.(item),
     setActive(id) { s.activeId = id; if (s.tab === 'songs') renderBody(); },
     get tracks() { return s.tracks; },
     getThemeOptions,
-    openLauncher: () => launcher.open(),
+    openLauncher: tab => launcher.open(tab),
     closeLauncher: () => launcher.close(),
     isLauncherOpen: () => launcher.isOpen()
   };
 }
 
 /* -------------------------------------------------------------- helpers */
+export function fmtRelativeTime(isoString) {
+  if (!isoString) return '';
+  const ts = new Date(isoString).getTime();
+  if (!Number.isFinite(ts) || ts <= 0) return '';
+  const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 45) return 'upravo sada';
+  const mins = Math.floor(diffSec / 60);
+  if (mins < 60) return `prije ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `prije ${hours} h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `prije ${days} d`;
+  return new Date(ts).toLocaleDateString('hr-HR');
+}
+
 export function parseTrackTitle(rawTitle) {
   if (!rawTitle) return { artist: '', title: 'Nepoznato' };
   const parts = rawTitle.split(/\s+[-–—]\s+/);
@@ -486,7 +529,54 @@ export function fmtDuration(seconds) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export function drawCardBanner(canvas, track, analysis, isAuditioning = false) {
+export function extractYouTubeId(text) {
+  if (typeof text !== 'string' || !text) return null;
+  const m = /(?:youtube\.com\/watch\?(?:[^&\s]*&)*v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/.exec(text);
+  return m ? m[1] : null;
+}
+
+export function getTrackThumbnailUrls(track) {
+  if (!track || typeof track !== 'object') return [];
+  const urls = [];
+  const videoId = track.videoId || extractYouTubeId(track.sourceUrl);
+  if (track.id) {
+    urls.push(`/api/library/artwork/${encodeURIComponent(track.id)}`);
+  }
+  if (videoId) {
+    urls.push(`https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`);
+  }
+  return urls;
+}
+
+export function createTrackThumb(track, className = 'sc-thumb-img', onStatus = null) {
+  const urls = getTrackThumbnailUrls(track);
+  if (!urls.length) return null;
+  let idx = 0;
+  const img = h('img', {
+    class: className,
+    src: urls[0],
+    alt: '',
+    loading: 'lazy',
+    decoding: 'async',
+    referrerPolicy: 'no-referrer'
+  });
+  img.addEventListener('load', () => {
+    img.classList.add('is-loaded');
+    onStatus?.(true);
+  });
+  img.addEventListener('error', () => {
+    idx += 1;
+    if (idx < urls.length) {
+      img.src = urls[idx];
+    } else {
+      img.classList.add('is-broken');
+      onStatus?.(false);
+    }
+  });
+  return img;
+}
+
+export function drawCardBanner(canvas, track, analysis, isAuditioning = false, hasThumb = false) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const w = canvas.width, h = canvas.height;
@@ -494,50 +584,51 @@ export function drawCardBanner(canvas, track, analysis, isAuditioning = false) {
 
   const bpm = analysis?.bpm || 120;
 
-  // Background gradient based on tempo and energy
-  const grad = ctx.createLinearGradient(0, 0, w, h);
-  if (bpm >= 145) {
-    // Hard Techno / Club Banger (e.g. Klangkuenstler)
-    grad.addColorStop(0, '#10061e');
-    grad.addColorStop(0.5, '#2c0838');
-    grad.addColorStop(1, '#051426');
-  } else if (bpm >= 120) {
-    // House / Club Groove
-    grad.addColorStop(0, '#061326');
-    grad.addColorStop(0.6, '#131e38');
-    grad.addColorStop(1, '#1b0e2b');
-  } else {
-    // Chill / Melodic
-    grad.addColorStop(0, '#04171a');
-    grad.addColorStop(0.5, '#0a2328');
-    grad.addColorStop(1, '#0f172a');
-  }
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
+  if (!hasThumb) {
+    // Background gradient based on tempo and energy when no thumbnail is loaded
+    const grad = ctx.createLinearGradient(0, 0, w, h);
+    if (bpm >= 145) {
+      grad.addColorStop(0, '#10061e');
+      grad.addColorStop(0.5, '#2c0838');
+      grad.addColorStop(1, '#051426');
+    } else if (bpm >= 120) {
+      grad.addColorStop(0, '#061326');
+      grad.addColorStop(0.6, '#131e38');
+      grad.addColorStop(1, '#1b0e2b');
+    } else {
+      grad.addColorStop(0, '#04171a');
+      grad.addColorStop(0.5, '#0a2328');
+      grad.addColorStop(1, '#0f172a');
+    }
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
 
-  // Subtle studio grid lines in background
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-  ctx.lineWidth = 1;
-  for (let x = 16; x < w; x += 20) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    // Subtle studio grid lines in background
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+    ctx.lineWidth = 1;
+    for (let x = 16; x < w; x += 20) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    }
   }
 
   // Audio energy / waveform profile
   const env = analysis?.envelopes?.energy || analysis?.envelopes?.drums;
-  const waveGrad = ctx.createLinearGradient(0, h * 0.15, 0, h);
+  const waveGrad = ctx.createLinearGradient(0, h * (hasThumb ? 0.55 : 0.15), 0, h);
   if (bpm >= 145) {
-    waveGrad.addColorStop(0, '#ff007f');
-    waveGrad.addColorStop(0.6, '#b026ff');
-    waveGrad.addColorStop(1, 'rgba(0, 245, 212, 0.25)');
+    waveGrad.addColorStop(0, hasThumb ? 'rgba(255, 42, 133, 0.92)' : '#ff007f');
+    waveGrad.addColorStop(0.6, hasThumb ? 'rgba(176, 38, 255, 0.72)' : '#b026ff');
+    waveGrad.addColorStop(1, 'rgba(0, 245, 212, 0.22)');
   } else {
-    waveGrad.addColorStop(0, '#38bdf8');
-    waveGrad.addColorStop(0.7, '#6366f1');
-    waveGrad.addColorStop(1, 'rgba(245, 165, 36, 0.15)');
+    waveGrad.addColorStop(0, hasThumb ? 'rgba(76, 195, 255, 0.92)' : '#38bdf8');
+    waveGrad.addColorStop(0.7, hasThumb ? 'rgba(99, 102, 241, 0.72)' : '#6366f1');
+    waveGrad.addColorStop(1, 'rgba(245, 165, 36, 0.18)');
   }
   ctx.fillStyle = waveGrad;
 
-  const barCount = 44;
+  const barCount = 48;
   const barWidth = w / barCount;
+  const maxBarRatio = hasThumb ? 0.34 : 0.65;
+  const baselineRatio = hasThumb ? 0.96 : 0.88;
   for (let i = 0; i < barCount; i++) {
     let val = 0.2;
     if (env && env.length) {
@@ -546,9 +637,9 @@ export function drawCardBanner(canvas, track, analysis, isAuditioning = false) {
     } else {
       val = 0.2 + 0.3 * Math.abs(Math.sin(i * 0.45 + (track.title?.length || 5)));
     }
-    const barH = val * (h * 0.65);
+    const barH = val * (h * maxBarRatio);
     const x = i * barWidth + 1.5;
-    const y = h * 0.88 - barH;
+    const y = h * baselineRatio - barH;
     ctx.fillRect(x, y, Math.max(1, barWidth - 2.5), barH);
   }
 
@@ -570,6 +661,22 @@ export function createSongLauncher(ctx) {
     'aria-label': 'Katalog pjesama i show launcher'
   });
 
+  const versionDialog = h('dialog', {
+    id: 'version-history-dialog',
+    class: 'version-history-modal',
+    closedby: 'any',
+    'aria-labelledby': 'vh-modal-title'
+  });
+  if (typeof HTMLDialogElement !== 'undefined' && !('closedBy' in HTMLDialogElement.prototype)) {
+    const isOutside = (e, dlg) => {
+      const r = dlg.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    };
+    let pressedOutside = false;
+    versionDialog.addEventListener('pointerdown', e => { pressedOutside = isOutside(e, versionDialog); });
+    versionDialog.addEventListener('pointerup', e => { if (pressedOutside && isOutside(e, versionDialog)) versionDialog.close(); });
+  }
+
   const auditionAudio = typeof Audio === 'function'
     ? new Audio()
     : { preload: 'none', paused: true, currentTime: 0, duration: 0, pause() {}, load() {}, play: async () => {}, addEventListener() {}, removeAttribute() {} };
@@ -577,13 +684,20 @@ export function createSongLauncher(ctx) {
 
   const state = {
     open: false,
+    catalogTab: 'local', // 'local' | 'cloud'
     tracks: [],
     sets: [],
     sharedShows: [],
+    presence: [],
+    activity: [],
+    cloudConnected: false,
+    projectId: 'ledicated-studio-vz',
     installingShowFile: null,
+    syncingAll: false,
     details: new Map(), // trackId -> { track, analysis, timeline }
     query: '',
-    filter: 'all', // 'all' | 'ready' | 'high_bpm' | 'mid_bpm' | 'shared_git' | set:<id>
+    filter: 'all', // 'all' | 'ready' | 'updates' | 'high_bpm' | 'mid_bpm' | 'shared_git' | set:<id>
+    cloudFilter: 'cloud_all', // 'cloud_all' | 'cloud_missing' | 'cloud_updates' | 'cloud_installed'
     sortBy: 'recent', // 'recent' | 'name' | 'bpm_desc' | 'bpm_asc' | 'duration'
     viewMode: (typeof localStorage !== 'undefined' && localStorage.getItem('ledicated-launcher-view')) || 'grid',
     auditionTrackId: null,
@@ -604,27 +718,68 @@ export function createSongLauncher(ctx) {
     stopAudition();
   });
 
-  async function loadData() {
+  function findCloudShowForTrack(track) {
+    if (!track) return null;
+    return state.sharedShows.find(sh =>
+      (track.showId && sh.showId === track.showId) ||
+      (track.videoId && sh.videoId === track.videoId) ||
+      (track.sha256 && sh.sha256 === track.sha256) ||
+      (track.title && sh.title && track.title.trim().toLowerCase() === sh.title.trim().toLowerCase())
+    ) || null;
+  }
+
+  function findLocalTrackForCloudShow(sh) {
+    if (!sh) return null;
+    return state.tracks.find(t =>
+      (sh.showId && t.showId === sh.showId) ||
+      (sh.videoId && t.videoId === sh.videoId) ||
+      (sh.sha256 && t.sha256 === sh.sha256) ||
+      (sh.title && t.title && t.title.trim().toLowerCase() === sh.title.trim().toLowerCase())
+    ) || null;
+  }
+
+  function findLiveEditors(trackOrShow) {
+    if (!trackOrShow || !state.presence.length) return [];
+    const myId = typeof window !== 'undefined' ? window.ledicatedClientId : '';
+    const titleLower = (trackOrShow.title || trackOrShow.originalName || '').trim().toLowerCase();
+    return state.presence.filter(p => {
+      if (p.clientId && p.clientId === myId) return false;
+      if (trackOrShow.showId && p.showId === trackOrShow.showId) return true;
+      if (trackOrShow.id && p.trackId === trackOrShow.id) return true;
+      if (titleLower && (p.trackTitle || '').trim().toLowerCase() === titleLower) return true;
+      return false;
+    });
+  }
+
+  async function loadData(forceCloudRefresh = false) {
     try {
       const [res, sharedRes] = await Promise.all([
         libraryApi('tracks'),
-        libraryApi('shared-shows').catch(() => ({ shows: [] }))
+        libraryApi(forceCloudRefresh ? 'shared-shows?refresh=1' : 'shared-shows').catch(() => ({ shows: [], presence: [], activity: [] }))
       ]);
       state.tracks = res.tracks || [];
       state.sets = res.sets || [];
       state.sharedShows = sharedRes.shows || [];
-      // Concurrently fetch analysis details for tracks with analysis
-      await Promise.all(state.tracks.map(async t => {
-        if (t.hasAnalysis && !state.details.has(t.id)) {
-          try {
-            const d = await fetch(`/api/library/track/${t.id}`).then(r => r.json());
-            state.details.set(t.id, d);
-          } catch {}
-        }
-      }));
+      state.presence = sharedRes.presence || [];
+      state.activity = sharedRes.activity || [];
+      state.cloudConnected = Boolean(sharedRes.cloudConnected);
+      if (sharedRes.projectId) state.projectId = sharedRes.projectId;
+      const activeId = ctx.getActiveId?.();
+      const activeAnalysis = ctx.getAnalysis?.();
+      if (activeId && activeAnalysis) {
+        state.details.set(activeId, { analysis: activeAnalysis });
+      }
     } catch (err) {
       toast(`Greška pri učitavanju kataloga: ${err.message}`, 'error');
     }
+  }
+
+  function hasCloudUpdate(track) {
+    const cloud = findCloudShowForTrack(track);
+    if (!cloud) return false;
+    const localVer = Number(track.version) || 1;
+    const cloudVer = Number(cloud.version) || 1;
+    return cloudVer > localVer;
   }
 
   function filterAndSortTracks() {
@@ -633,22 +788,26 @@ export function createSongLauncher(ctx) {
     if (q) {
       list = list.filter(t => {
         const d = state.details.get(t.id);
-        const bpm = d?.analysis?.bpm ? String(Math.round(d.analysis.bpm)) : '';
+        const bpmVal = t.bpm || d?.analysis?.bpm;
+        const bpm = bpmVal ? String(Math.round(bpmVal)) : '';
         const title = (t.title || t.originalName || '').toLowerCase();
-        return title.includes(q) || bpm.includes(q);
+        const author = (t.updatedBy || t.author || '').toLowerCase();
+        return title.includes(q) || bpm.includes(q) || author.includes(q);
       });
     }
 
     if (state.filter === 'ready') {
       list = list.filter(t => t.hasTimeline && t.hasAnalysis);
+    } else if (state.filter === 'updates') {
+      list = list.filter(t => hasCloudUpdate(t));
     } else if (state.filter === 'high_bpm') {
       list = list.filter(t => {
-        const bpm = state.details.get(t.id)?.analysis?.bpm || 0;
+        const bpm = t.bpm || state.details.get(t.id)?.analysis?.bpm || 0;
         return bpm >= 140;
       });
     } else if (state.filter === 'mid_bpm') {
       list = list.filter(t => {
-        const bpm = state.details.get(t.id)?.analysis?.bpm || 0;
+        const bpm = t.bpm || state.details.get(t.id)?.analysis?.bpm || 0;
         return bpm >= 100 && bpm < 140;
       });
     } else if (state.filter.startsWith('set:')) {
@@ -660,13 +819,13 @@ export function createSongLauncher(ctx) {
     if (state.sortBy === 'name') {
       list.sort((a, b) => (a.title || a.originalName || '').localeCompare(b.title || b.originalName || ''));
     } else if (state.sortBy === 'bpm_desc') {
-      list.sort((a, b) => (state.details.get(b.id)?.analysis?.bpm || 0) - (state.details.get(a.id)?.analysis?.bpm || 0));
+      list.sort((a, b) => (b.bpm || state.details.get(b.id)?.analysis?.bpm || 0) - (a.bpm || state.details.get(a.id)?.analysis?.bpm || 0));
     } else if (state.sortBy === 'bpm_asc') {
-      list.sort((a, b) => (state.details.get(a.id)?.analysis?.bpm || 0) - (state.details.get(b.id)?.analysis?.bpm || 0));
+      list.sort((a, b) => (a.bpm || state.details.get(a.id)?.analysis?.bpm || 0) - (b.bpm || state.details.get(b.id)?.analysis?.bpm || 0));
     } else if (state.sortBy === 'duration') {
-      list.sort((a, b) => (state.details.get(b.id)?.analysis?.durationSec || 0) - (state.details.get(a.id)?.analysis?.durationSec || 0));
+      list.sort((a, b) => (b.durationSec || state.details.get(b.id)?.analysis?.durationSec || 0) - (a.durationSec || state.details.get(a.id)?.analysis?.durationSec || 0));
     } else { // 'recent'
-      list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      list.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
     }
     return list;
   }
@@ -729,6 +888,182 @@ export function createSongLauncher(ctx) {
     }
   }
 
+  async function installOrSyncShow(sh, localMatch = null, version = null) {
+    const key = sh.showId || sh.filename;
+    state.installingShowFile = key;
+    renderContent();
+    try {
+      ctx.status(`Preuzimanje i sinkronizacija: ${sh.title}${version ? ` (v${version})` : ''}…`);
+      const res = await libraryApi('install-shared-show', {
+        filename: sh.filename,
+        showId: sh.showId,
+        trackId: localMatch?.id,
+        version
+      });
+      await ctx.refresh?.();
+      await loadData();
+      state.installingShowFile = null;
+      toast(`☁️ Show „${sh.title}” (v${res.version || sh.version || 1}) spreman u studiju!`, 'ok');
+      if (res.track?.id) await selectAndLoad(res.track.id);
+    } catch (err) {
+      state.installingShowFile = null;
+      renderContent();
+      toast(err.message, 'error');
+    }
+  }
+
+  async function openVersionHistory(target) {
+    if (!target) return;
+    if (!document.body.contains(versionDialog)) document.body.append(versionDialog);
+    const localTrack = target.id ? target : findLocalTrackForCloudShow(target);
+    const cloudShow = target.showId && !target.id ? target : findCloudShowForTrack(target);
+    const showId = target.showId || localTrack?.showId || cloudShow?.showId || '';
+    const trackId = localTrack?.id || '';
+    const title = target.title || localTrack?.title || cloudShow?.title || 'Show';
+
+    versionDialog.replaceChildren(
+      h('div', { class: 'vh-header' },
+        h('div', {},
+          h('h2', { id: 'vh-modal-title' }, `🕒 Povijest verzija · ${title}`),
+          h('small', { class: 'vh-subtitle' }, 'Učitavam verzije iz Firebase oblaka i lokalne povijesti…')
+        ),
+        h('button', { type: 'button', class: 'launcher-close-btn', onClick: () => versionDialog.close() }, '✕')
+      ),
+      h('div', { class: 'vh-body' },
+        h('div', { class: 'vh-empty' }, '⏳ Dohvaćanje povijesti verzija…')
+      )
+    );
+    if (!versionDialog.open) versionDialog.showModal();
+
+    let versions = [];
+    let resolvedShowId = showId;
+    try {
+      const qs = new URLSearchParams();
+      if (showId) qs.set('showId', showId);
+      if (trackId) qs.set('trackId', trackId);
+      const res = await libraryApi(`versions?${qs.toString()}`);
+      versions = res.versions || [];
+      if (res.showId) resolvedShowId = res.showId;
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+
+    const noteInput = h('input', {
+      type: 'text',
+      class: 'vh-note-input',
+      placeholder: 'Opcionalna bilješka uz novu verziju (npr. „Jači strobe na dropu 1:15”)…',
+      autofocus: true
+    });
+
+    const saveNewVerBtn = localTrack
+      ? h('button', {
+          type: 'button',
+          class: 'sc-btn-primary vh-save-btn',
+          onClick: async () => {
+            saveNewVerBtn.disabled = true;
+            saveNewVerBtn.textContent = '⏳ Objavljujem…';
+            try {
+              await ctx.shareTrackToGit?.(localTrack.id, localTrack.title, noteInput.value.trim() || 'Ručno spremljena verzija');
+              await loadData(true);
+              render();
+              await openVersionHistory(state.tracks.find(t => t.id === localTrack.id) || localTrack);
+            } finally {
+              saveNewVerBtn.disabled = false;
+              saveNewVerBtn.textContent = '☁️ Spremi novu verziju';
+            }
+          }
+        }, '☁️ Spremi novu verziju')
+      : null;
+
+    const saveBox = localTrack
+      ? h('div', { class: 'vh-save-box' },
+          noteInput,
+          saveNewVerBtn
+        )
+      : null;
+
+    const currentVer = localTrack?.version || cloudShow?.version || versions[0]?.version || 1;
+    const versionRows = versions.length
+      ? versions.map((v, idx) => {
+          const isCurrent = Number(v.version) === Number(currentVer) && idx === 0;
+          const dateStr = v.createdAt ? new Date(v.createdAt).toLocaleString('hr-HR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+          const relStr = fmtRelativeTime(v.createdAt);
+          const restoreBtn = h('button', {
+            type: 'button',
+            class: isCurrent ? 'sc-btn-secondary vh-restore-btn' : 'sc-btn-primary vh-restore-btn',
+            onClick: async () => {
+              restoreBtn.disabled = true;
+              restoreBtn.textContent = '⏳ Vraćam…';
+              try {
+                const author = (typeof window !== 'undefined' && window.ledicatedClientName) || 'Studio';
+                const clientId = (typeof window !== 'undefined' && window.ledicatedClientId) || '';
+                if (localTrack) {
+                  const res = await libraryApi('restore-version', {
+                    showId: resolvedShowId,
+                    version: v.version,
+                    trackId: localTrack.id,
+                    author,
+                    clientId
+                  });
+                  await ctx.refresh?.();
+                  await loadData(true);
+                  render();
+                  toast(`↺ Vraćena verzija v${v.version} (spremljeno kao v${res.version})!`, 'ok');
+                  versionDialog.close();
+                  if (res.track?.id) await selectAndLoad(res.track.id);
+                } else if (cloudShow) {
+                  versionDialog.close();
+                  await installOrSyncShow(cloudShow, null, v.version);
+                }
+              } catch (err) {
+                restoreBtn.disabled = false;
+                restoreBtn.textContent = '↺ Vrati ovu verziju';
+                toast(err.message, 'error');
+              }
+            }
+          }, localTrack
+            ? (isCurrent ? '↺ Ponovno učitaj v' + v.version : `↺ Vrati na v${v.version}`)
+            : `📥 Preuzmi v${v.version}`);
+
+          return h('div', { class: `vh-item${isCurrent ? ' is-latest' : ''}` },
+            h('div', { class: 'vh-item-left' },
+              h('div', { class: 'vh-ver-row' },
+                h('span', { class: `vh-ver-badge${isCurrent ? ' current' : ''}` }, `v${v.version}`),
+                isCurrent ? h('span', { class: 'vh-latest-tag' }, 'ZADNJA VERZIJA') : null,
+                h('strong', { class: 'vh-author' }, `👤 ${v.author || 'Studio'}`),
+                h('span', { class: 'vh-time', title: dateStr }, `${relStr ? `${relStr} · ` : ''}${dateStr}`)
+              ),
+              h('div', { class: 'vh-summary' }, v.summary || 'Spremljen show'),
+              h('div', { class: 'vh-meta-tags' },
+                h('span', { class: 'sc-tag' }, `✦ ${v.clipCount ?? 0} clipova`),
+                h('span', { class: 'sc-tag' }, `📄 ${v.layerCount ?? 3} slojeva`),
+                v.action === 'restore' ? h('span', { class: 'sc-tag tag-restore' }, '↺ Vraćena verzija') : null
+              )
+            ),
+            h('div', { class: 'vh-item-right' }, restoreBtn)
+          );
+        })
+      : [
+          h('div', { class: 'vh-empty' },
+            'Za ovu pjesmu još nema zabilježenih verzija u oblaku. Klikni „☁️ Spremi novu verziju” iznad kako bi stvorio v1.'
+          )
+        ];
+
+    versionDialog.replaceChildren(
+      h('div', { class: 'vh-header' },
+        h('div', {},
+          h('h2', { id: 'vh-modal-title' }, `🕒 Povijest verzija · ${title}`),
+          h('small', { class: 'vh-subtitle' },
+            `Show ID: ${resolvedShowId || 'lokalni'} · Trenutno: v${currentVer} · Svako spremanje čuva sigurnosnu točku u Firebase oblaku i shared-shows/`
+          )
+        ),
+        h('button', { type: 'button', class: 'launcher-close-btn', onClick: () => versionDialog.close() }, '✕')
+      ),
+      saveBox,
+      h('div', { class: 'vh-body' }, ...versionRows)
+    );
+  }
+
   const container = h('div', { class: 'launcher-container' });
   const header = h('div', { class: 'launcher-header' });
   const toolbar = h('div', { class: 'launcher-toolbar' });
@@ -770,15 +1105,92 @@ export function createSongLauncher(ctx) {
 
   function renderHeader() {
     const totalCount = state.tracks.length;
+    const cloudCount = state.sharedShows.length;
+    const updatesCount = state.tracks.filter(t => hasCloudUpdate(t)).length;
+    const activePeersCount = state.presence.length;
+    const currentAuthor = (typeof window !== 'undefined' && window.ledicatedClientName) || 'Studio';
+
     const titleGroup = h('div', { class: 'launcher-title-group' },
       h('div', { class: 'launcher-icon-mark' }, '⊞'),
       h('div', {},
         h('h2', {}, 'KATALOG PJESAMA & SHOW LAUNCHER'),
-        h('p', { class: 'launcher-subtitle' }, 'Odabir pjesme, analiza stemova, auto-show i brzi pregled za 3×3 matricu')
+        h('p', { class: 'launcher-subtitle' }, 'Zajednička biblioteka, verzije showova (Firebase Cloud + Git) i brzi pregled za 3×3 matricu')
       )
     );
+
+    // Top-level tabs: Local Library vs. Cloud Catalog
+    const mainTabs = h('div', { class: 'launcher-main-tabs', role: 'tablist', 'aria-label': 'Izvor kataloga' },
+      h('button', {
+        type: 'button',
+        role: 'tab',
+        'aria-selected': String(state.catalogTab === 'local'),
+        class: `lmt-tab${state.catalogTab === 'local' ? ' on' : ''}`,
+        onClick: () => {
+          state.catalogTab = 'local';
+          if (state.filter === 'shared_git') state.filter = 'all';
+          render();
+        }
+      },
+        h('span', { class: 'lmt-icon' }, '💾'),
+        h('span', {}, 'Moja biblioteka (Preuzeto)'),
+        h('span', { class: 'lmt-badge' }, String(totalCount)),
+        updatesCount > 0 ? h('span', { class: 'lmt-badge update', title: 'Dostupne nove verzije u oblaku' }, `🔄 ${updatesCount}`) : null
+      ),
+      h('button', {
+        type: 'button',
+        role: 'tab',
+        'aria-selected': String(state.catalogTab === 'cloud'),
+        class: `lmt-tab cloud${state.catalogTab === 'cloud' ? ' on' : ''}`,
+        onClick: () => {
+          state.catalogTab = 'cloud';
+          render();
+        }
+      },
+        h('span', { class: 'lmt-icon' }, '☁️'),
+        h('span', {}, 'Cloud Katalog & Aktivnost'),
+        h('span', { class: 'lmt-badge' }, String(cloudCount)),
+        activePeersCount > 0 ? h('span', { class: 'lmt-badge live', title: 'Aktivni prijatelji u studiju' }, `🟢 ${activePeersCount}`) : null
+      )
+    );
+
+    const authorBtn = h('button', {
+      type: 'button',
+      class: 'launcher-author-chip',
+      title: 'Klikni za promjenu svog potpisa (imena autora na novim verzijama)',
+      onClick: () => {
+        const next = prompt('Tvoje ime / nadimak (potpisuje se uz svako spremanje i verziju u oblaku):', currentAuthor);
+        if (next && next.trim()) {
+          const clean = next.trim().slice(0, 40);
+          if (typeof window !== 'undefined') window.ledicatedClientName = clean;
+          try { localStorage.setItem('ledicated-user-name', clean); } catch {}
+          fetch('/api/lan/profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientId: window.ledicatedClientId || '', name: clean })
+          }).catch(() => {});
+          toast(`Potpis postavljen na: ${clean}`, 'ok');
+          renderHeader();
+        }
+      }
+    }, `👤 ${currentAuthor} ✎`);
+
+    const refreshCloudBtn = h('button', {
+      type: 'button',
+      class: 'launcher-refresh-btn',
+      title: 'Osvježi Cloud katalog i aktivnost iz Firebasea',
+      onClick: async () => {
+        refreshCloudBtn.classList.add('spinning');
+        await loadData(true);
+        refreshCloudBtn.classList.remove('spinning');
+        render();
+        toast('☁️ Cloud katalog osvježen.', 'ok');
+      }
+    }, '↻');
+
     const headerRight = h('div', { class: 'launcher-header-right' },
-      h('span', { class: 'launcher-stats-chip' }, `${totalCount} ${totalCount === 1 ? 'pjesma' : 'pjesme'} · Apple M3 Max DSP`),
+      mainTabs,
+      authorBtn,
+      refreshCloudBtn,
       h('button', {
         type: 'button',
         class: 'launcher-close-btn',
@@ -794,7 +1206,9 @@ export function createSongLauncher(ctx) {
     const searchInput = h('input', {
       type: 'search',
       class: 'launcher-search-input',
-      placeholder: 'Pretraži po nazivu, izvođaču, tempu (BPM)... (Esc za izlaz)',
+      placeholder: state.catalogTab === 'cloud'
+        ? 'Pretraži Cloud showove po nazivu, autoru, BPM-u... (Esc za izlaz)'
+        : 'Pretraži preuzete pjesme po nazivu, izvođaču, autoru, BPM-u... (Esc za izlaz)',
       value: state.query,
       onInput: e => {
         state.query = e.target.value;
@@ -823,19 +1237,94 @@ export function createSongLauncher(ctx) {
     );
     const searchRow = h('div', { class: 'launcher-search-row' }, searchBox);
 
-    // Filters row
+    if (state.catalogTab === 'cloud') {
+      const totalCloud = state.sharedShows.length;
+      const missingCount = state.sharedShows.filter(sh => !findLocalTrackForCloudShow(sh)).length;
+      const updatesCount = state.sharedShows.filter(sh => {
+        const lt = findLocalTrackForCloudShow(sh);
+        return lt && (Number(sh.version) || 1) > (Number(lt.version) || 1);
+      }).length;
+      const installedCount = totalCloud - missingCount;
+
+      const cloudPills = [
+        { id: 'cloud_all', label: '☁️ Svi u oblaku', count: totalCloud },
+        { id: 'cloud_missing', label: '📥 Nije preuzeto', count: missingCount },
+        { id: 'cloud_updates', label: '🔄 Nova verzija', count: updatesCount },
+        { id: 'cloud_installed', label: '✓ Preuzeto lokalno', count: installedCount }
+      ];
+
+      const pillsWrap = h('div', { class: 'launcher-filter-pills' },
+        ...cloudPills.map(p => h('button', {
+          type: 'button',
+          class: `launcher-pill${state.cloudFilter === p.id ? ' on' : ''}`,
+          onClick: () => {
+            state.cloudFilter = p.id;
+            renderToolbar();
+            renderContent();
+          }
+        }, h('span', {}, p.label), h('span', { class: 'pill-count' }, String(p.count))))
+      );
+
+      const syncAllBtn = (missingCount > 0 || updatesCount > 0)
+        ? h('button', {
+            type: 'button',
+            class: 'add-song-btn cloud-sync-all-btn',
+            disabled: state.syncingAll,
+            title: 'Preuzmi i sinkroniziraj sve nove showove iz oblaka',
+            onClick: async () => {
+              state.syncingAll = true;
+              renderToolbar();
+              try {
+                const toSync = state.sharedShows.filter(sh => {
+                  const lt = findLocalTrackForCloudShow(sh);
+                  return !lt || (Number(sh.version) || 1) > (Number(lt.version) || 1);
+                });
+                let done = 0;
+                for (const sh of toSync) {
+                  done++;
+                  ctx.status(`Sinkronizacija (${done}/${toSync.length}): ${sh.title}…`);
+                  const lt = findLocalTrackForCloudShow(sh);
+                  await libraryApi('install-shared-show', {
+                    filename: sh.filename,
+                    showId: sh.showId,
+                    trackId: lt?.id
+                  }).catch(() => {});
+                }
+                await ctx.refresh?.();
+                await loadData(true);
+                toast(`☁️ Sinkronizirano ${done} showova iz oblaka!`, 'ok');
+              } finally {
+                state.syncingAll = false;
+                render();
+              }
+            }
+          }, state.syncingAll ? '⏳ Sinkroniziram sve…' : `☁️ Preuzmi / Ažuriraj sve (${missingCount + updatesCount})`)
+        : null;
+
+      const cloudStatusBadge = h('span', { class: `cloud-conn-badge${state.cloudConnected ? ' online' : ''}` },
+        state.cloudConnected ? `🟢 Firebase Cloud (${state.projectId})` : '📁 Git shared-shows (Offline mod)'
+      );
+
+      const controlsRight = h('div', { class: 'launcher-controls-right' }, cloudStatusBadge, syncAllBtn);
+      const filtersRow = h('div', { class: 'launcher-filters-row' }, pillsWrap, controlsRight);
+      toolbar.replaceChildren(searchRow, filtersRow);
+      return;
+    }
+
+    // Local Library Filters row
     const total = state.tracks.length;
     const readyCount = state.tracks.filter(t => t.hasTimeline && t.hasAnalysis).length;
-    const highBpmCount = state.tracks.filter(t => (state.details.get(t.id)?.analysis?.bpm || 0) >= 140).length;
+    const updatesCount = state.tracks.filter(t => hasCloudUpdate(t)).length;
+    const highBpmCount = state.tracks.filter(t => (t.bpm || state.details.get(t.id)?.analysis?.bpm || 0) >= 140).length;
     const midBpmCount = state.tracks.filter(t => {
-      const b = state.details.get(t.id)?.analysis?.bpm || 0;
+      const b = t.bpm || state.details.get(t.id)?.analysis?.bpm || 0;
       return b >= 100 && b < 140;
     }).length;
 
     const pills = [
-      { id: 'all', label: 'Sve pjesme', count: total },
+      { id: 'all', label: 'Sve preuzete', count: total },
       { id: 'ready', label: 'Spremne za show', count: readyCount },
-      { id: 'shared_git', label: '🌐 Dijeljeni showovi (Git)', count: state.sharedShows.length },
+      ...(updatesCount > 0 ? [{ id: 'updates', label: '🔄 Nova verzija u oblaku', count: updatesCount }] : []),
       { id: 'high_bpm', label: 'Visoki BPM (>140)', count: highBpmCount },
       { id: 'mid_bpm', label: 'Umjereni BPM', count: midBpmCount }
     ];
@@ -864,7 +1353,7 @@ export function createSongLauncher(ctx) {
         renderContent();
       }
     },
-      h('option', { value: 'recent', selected: state.sortBy === 'recent' }, 'Sortiraj: Najnovije dodano'),
+      h('option', { value: 'recent', selected: state.sortBy === 'recent' }, 'Sortiraj: Zadnje mijenjano'),
       h('option', { value: 'name', selected: state.sortBy === 'name' }, 'Sortiraj: Naziv (A–Z)'),
       h('option', { value: 'bpm_desc', selected: state.sortBy === 'bpm_desc' }, 'Sortiraj: BPM (najbrži prvo)'),
       h('option', { value: 'bpm_asc', selected: state.sortBy === 'bpm_asc' }, 'Sortiraj: BPM (najsporiji prvo)'),
@@ -924,15 +1413,134 @@ export function createSongLauncher(ctx) {
     toolbar.replaceChildren(searchRow, filtersRow);
   }
 
-  function renderSharedGitShows() {
+  function openTrackContextMenu(track, triggerBtn) {
+    const r = triggerBtn.getBoundingClientRect();
+    const ver = track.version || 1;
+    showMenu(r.left, r.bottom + 6, [
+      { label: 'Otvori u studiju', onClick: () => selectAndLoad(track.id) },
+      { label: `🕒 Povijest verzija i vraćanje (v${ver})…`, onClick: () => openVersionHistory(track) },
+      { separator: true },
+      { label: '☁️ Objavi novu verziju u Cloud + Git (shared-shows)', onClick: async () => {
+        const note = prompt('Kratki opis izmjene za ovu verziju (opcionalno):', '');
+        if (note === null) return;
+        await ctx.shareTrackToGit?.(track.id, track.title, note.trim());
+        await loadData(true);
+        render();
+      }},
+      { label: '📦 Izvezi paket pjesma + show (.ledpack)', onClick: () => ctx.exportTrackPack?.(track.id) },
+      { label: '✦ Izvezi samo show (.ledshow.json)', onClick: () => ctx.exportTrackShow?.(track.id) },
+      { separator: true },
+      { label: 'Preimenuj…', onClick: async () => {
+        const newTitle = prompt('Novi naziv pjesme', track.title || track.originalName);
+        if (newTitle?.trim()) {
+          try {
+            await libraryApi('track', { id: track.id, patch: { title: newTitle.trim() } });
+            await loadData();
+            render();
+            ctx.onRenamed?.(track.id);
+          } catch (err) { toast(err.message, 'error'); }
+        }
+      }},
+      { label: 'Ponovno analiziraj stemove', onClick: async () => {
+        await ctx.reanalyze?.(track.id);
+        await loadData();
+        render();
+      }},
+      { separator: true },
+      { label: 'Ukloni iz biblioteke…', danger: true, onClick: async () => {
+        if (!confirm(`Ukloniti „${track.title || track.originalName}”? Audio kopija i timeline se brišu.`)) return;
+        try {
+          if (state.auditionTrackId === track.id) stopAudition();
+          await libraryApi('track-delete', { id: track.id });
+          state.details.delete(track.id);
+          await loadData();
+          render();
+          ctx.onDeleted?.(track.id);
+        } catch (err) { toast(err.message, 'error'); }
+      }}
+    ], r);
+  }
+
+  function renderCloudRadar() {
+    const peers = state.presence || [];
+    const activities = (state.activity || []).slice(0, 6);
+
+    const presenceCards = peers.length
+      ? peers.map(p => {
+          const isMe = typeof window !== 'undefined' && p.clientId === window.ledicatedClientId;
+          const timeStr = p.timeSec > 0 ? ` · ${fmtDuration(p.timeSec)}` : '';
+          const verStr = p.version ? ` · v${p.version}` : '';
+          return h('div', { class: `radar-peer-chip${p.isPlaying ? ' playing' : ''}` },
+            h('span', { class: 'radar-dot' }, p.isPlaying ? '🟢' : '🟡'),
+            h('div', { class: 'radar-peer-text' },
+              h('strong', {}, `${p.name || 'Studio'}${isMe ? ' (Ti)' : ''}`),
+              h('small', {}, p.trackTitle ? `${p.isPlaying ? '▶ ' : '✎ '}${p.trackTitle}${timeStr}${verStr}` : 'Pregledava katalog')
+            )
+          );
+        })
+      : [h('small', { class: 'radar-empty' }, 'Trenutno samo ti radiš u studiju. Kad prijatelji pokrenu npm start, vidjet ćeš ih ovdje uživo.')];
+
+    const activityRows = activities.length
+      ? activities.map(act => {
+          const rel = fmtRelativeTime(act.createdAt);
+          const cloudMatch = state.sharedShows.find(s => s.showId === act.showId || s.title === act.title);
+          const localMatch = findLocalTrackForCloudShow(cloudMatch || { showId: act.showId, title: act.title });
+          return h('div', { class: 'radar-activity-row' },
+            h('span', { class: 'vh-ver-badge' }, `v${act.version || 1}`),
+            h('strong', { class: 'radar-act-author' }, `👤 ${act.author || 'Studio'}`),
+            h('span', { class: 'radar-act-title', title: act.title }, act.title || act.showId),
+            h('span', { class: 'radar-act-summary', title: act.summary }, act.summary || 'Spremljen show'),
+            h('span', { class: 'radar-act-time' }, rel),
+            h('button', {
+              type: 'button',
+              class: 'mini-btn radar-act-btn',
+              onClick: () => openVersionHistory(localMatch || cloudMatch || { showId: act.showId, title: act.title, version: act.version })
+            }, '🕒 Verzije')
+          );
+        })
+      : [h('small', { class: 'radar-empty' }, 'Još nema zabilježenih izmjena.')];
+
+    return h('div', { class: 'cloud-radar-panel' },
+      h('div', { class: 'radar-col presence-col' },
+        h('div', { class: 'radar-col-title' }, '🟢 TKO TRENUTNO RADI U STUDIJU (UŽIVO)'),
+        h('div', { class: 'radar-peers-wrap' }, ...presenceCards)
+      ),
+      h('div', { class: 'radar-col activity-col' },
+        h('div', { class: 'radar-col-title' }, '🕒 ZADNJE SPREMLJENE VERZIJE & IZMJENE'),
+        h('div', { class: 'radar-activity-list' }, ...activityRows)
+      )
+    );
+  }
+
+  function renderSharedCloudShows() {
     const q = state.query.trim().toLowerCase();
-    const filtered = state.sharedShows.filter(sh => !q || (sh.title || '').toLowerCase().includes(q) || (sh.author || '').toLowerCase().includes(q));
+    let filtered = state.sharedShows.filter(sh =>
+      !q ||
+      (sh.title || '').toLowerCase().includes(q) ||
+      (sh.author || '').toLowerCase().includes(q) ||
+      (sh.updatedBy || '').toLowerCase().includes(q)
+    );
+
+    if (state.cloudFilter === 'cloud_missing') {
+      filtered = filtered.filter(sh => !findLocalTrackForCloudShow(sh));
+    } else if (state.cloudFilter === 'cloud_updates') {
+      filtered = filtered.filter(sh => {
+        const lt = findLocalTrackForCloudShow(sh);
+        return lt && (Number(sh.version) || 1) > (Number(lt.version) || 1);
+      });
+    } else if (state.cloudFilter === 'cloud_installed') {
+      filtered = filtered.filter(sh => Boolean(findLocalTrackForCloudShow(sh)));
+    }
+
+    const radar = renderCloudRadar();
+
     if (!filtered.length) {
       content.replaceChildren(
+        radar,
         h('div', { class: 'launcher-empty' },
-          h('div', { class: 'launcher-empty-icon' }, '🌐'),
-          h('h3', {}, 'Nema dijeljenih Git showova'),
-          h('p', {}, 'Spremi show na bilo kojoj pjesmi putem „••• → 🌐 Spremi show u Git (shared-shows)” kako bi ga prijatelji dobili nakon git pull-a.')
+          h('div', { class: 'launcher-empty-icon' }, '☁️'),
+          h('h3', {}, 'Nema showova za odabrani filter u Cloud katalogu'),
+          h('p', {}, 'Svako spremanje (⌘S) u studiju automatski šalje novu verziju showa u Firebase Cloud i shared-shows/.')
         )
       );
       return;
@@ -940,76 +1548,88 @@ export function createSongLauncher(ctx) {
 
     const grid = h('div', { class: 'launcher-grid' });
     for (const sh of filtered) {
-      const localMatch = state.tracks.find(t =>
-        (sh.videoId && t.videoId === sh.videoId) ||
-        (sh.sha256 && t.sha256 === sh.sha256) ||
-        (sh.title && (t.title || '').toLowerCase() === sh.title.toLowerCase())
-      );
-      const isInstalling = state.installingShowFile === sh.filename;
+      const localMatch = findLocalTrackForCloudShow(sh);
+      const isInstalling = state.installingShowFile === (sh.showId || sh.filename);
+      const cloudVer = Number(sh.version) || 1;
+      const localVer = localMatch ? (Number(localMatch.version) || 1) : 0;
+      const hasNewer = localMatch && cloudVer > localVer;
+      const liveEditors = findLiveEditors(sh);
       const { artist, title } = parseTrackTitle(sh.title || sh.filename);
-      const card = h('div', { class: `song-card${localMatch ? ' active' : ''}` });
+      const card = h('div', { class: `song-card${localMatch ? ' active' : ''}${hasNewer ? ' has-update' : ''}` });
 
-      const canvas = h('canvas', { class: 'sc-canvas', width: 310, height: 102 });
-      requestAnimationFrame(() => drawCardBanner(canvas, { title: sh.title }, { bpm: sh.bpm || 128 }, false));
+      const thumbSource = localMatch || { videoId: sh.videoId || sh.track?.videoId, sourceUrl: sh.sourceUrl || sh.track?.sourceUrl };
+      const canvas = h('canvas', { class: 'sc-canvas', width: 320, height: 142 });
+      const banner = h('div', { class: 'sc-banner' });
+      const thumbImg = createTrackThumb(thumbSource, 'sc-thumb-img', ok => {
+        banner.classList.toggle('has-thumb', ok);
+        drawCardBanner(canvas, { title: sh.title }, { bpm: sh.bpm || 128 }, false, ok);
+      });
+      if (thumbImg) banner.classList.add('has-thumb');
+      requestAnimationFrame(() => drawCardBanner(canvas, { title: sh.title }, { bpm: sh.bpm || 128 }, false, Boolean(thumbImg)));
 
+      const vignette = h('div', { class: 'sc-banner-vignette' });
       const pillsLeft = h('div', { class: 'sc-pills-left' },
-        h('span', { class: 'sc-pill pill-show' }, `✦ ${sh.clipCount || 0} KLIPOVA`),
-        localMatch ? h('span', { class: 'sc-pill pill-active' }, '✓ U BIBLIOTECI') : null
+        h('span', { class: 'sc-pill pill-ver' }, `☁️ v${cloudVer}`),
+        hasNewer
+          ? h('span', { class: 'sc-pill pill-update' }, `🔄 NOVA VERZIJA (lokalno v${localVer})`)
+          : localMatch
+            ? h('span', { class: 'sc-pill pill-active' }, '✓ PREUZETO')
+            : h('span', { class: 'sc-pill pill-show' }, `✦ ${sh.clipCount || 0} CLIPOVA`),
+        liveEditors.length
+          ? h('span', { class: 'sc-pill pill-live-edit' }, `🟢 ${liveEditors[0].name} uređuje`)
+          : null
       );
       const pillsRight = h('div', { class: 'sc-pills-right' },
         sh.bpm ? h('span', { class: 'sc-pill pill-bpm' }, `⚡ ${Number(sh.bpm).toFixed(1)} BPM`) : null,
         sh.durationSec ? h('span', { class: 'sc-pill pill-dur' }, `⏱ ${fmtDuration(sh.durationSec)}`) : null
       );
-      const banner = h('div', { class: 'sc-banner' }, canvas, pillsLeft, pillsRight);
+      banner.append(thumbImg, vignette, canvas, pillsLeft, pillsRight);
 
-      const artistEl = artist ? h('div', { class: 'sc-artist', title: artist }, artist) : null;
+      const lastAuthor = sh.updatedBy || sh.author || 'Studio';
+      const relTime = fmtRelativeTime(sh.updatedAt);
+      const displayArtist = artist || lastAuthor;
+      const artistEl = h('div', { class: 'sc-artist', title: displayArtist }, displayArtist);
       const titleEl = h('div', { class: 'sc-title', title }, title);
+      const summaryEl = sh.lastSummary
+        ? h('div', { class: 'sc-summary-line', title: sh.lastSummary }, `📝 ${sh.lastSummary}`)
+        : null;
       const tags = h('div', { class: 'sc-tags' },
-        h('span', { class: 'sc-tag' }, `📄 ${sh.layerCount || 3} slojeva`),
-        sh.author ? h('span', { class: 'sc-tag' }, `👤 ${sh.author}`) : null,
-        sh.videoId ? h('span', { class: 'sc-tag' }, '▶ YouTube auto-audio') : h('span', { class: 'sc-tag' }, 'Lokalni MP3/WAV')
+        h('span', { class: 'sc-tag tag-author' }, `👤 ${lastAuthor}${relTime ? ` · ${relTime}` : ''}`),
+        h('span', { class: 'sc-tag' }, `✦ ${sh.clipCount || 0} clipova · ${sh.layerCount || 3} sloja`),
+        sh.audioUrl ? h('span', { class: 'sc-tag tag-cloud-audio' }, '⚡ Izravni Cloud MP3') : ((sh.videoId || sh.track?.videoId) ? h('span', { class: 'sc-tag tag-yt' }, '▶ YouTube') : null)
       );
-      const body = h('div', { class: 'sc-body' }, artistEl, titleEl, tags);
+      const body = h('div', { class: 'sc-body' }, artistEl, titleEl, summaryEl, tags);
 
-      const installBtn = h('button', {
+      const primaryBtn = h('button', {
         type: 'button',
-        class: 'sc-btn-primary',
+        class: `sc-btn-primary${hasNewer ? ' btn-update' : ''}`,
         disabled: isInstalling,
-        onClick: async () => {
-          state.installingShowFile = sh.filename;
-          renderContent();
-          try {
-            ctx.status(`Instalacija dijeljenog showa: ${sh.title}…`);
-            const res = await libraryApi('install-shared-show', { filename: sh.filename, trackId: localMatch?.id });
-            await ctx.refresh?.();
-            await loadData();
-            state.installingShowFile = null;
-            toast(`Show „${sh.title}” spreman u studiju!`, 'ok');
-            if (res.track?.id) await selectAndLoad(res.track.id);
-          } catch (err) {
-            state.installingShowFile = null;
-            renderContent();
-            toast(err.message, 'error');
-          }
-        }
+        onClick: () => installOrSyncShow(sh, localMatch)
       }, isInstalling
         ? '⏳ Preuzimanje…'
-        : localMatch
-          ? '✦ Učitaj / Sinkroniziraj show'
-          : sh.videoId
-            ? '📥 Preuzmi pjesmu + show'
-            : '✦ Primijeni na aktivnu pjesmu');
+        : hasNewer
+          ? `🔄 Ažuriraj na v${cloudVer}`
+          : localMatch
+            ? '✦ Sinkroniziraj i otvori'
+            : `📥 Preuzmi pjesmu + show (v${cloudVer})`);
 
-      const footer = h('div', { class: 'sc-footer' }, installBtn);
+      const versionsBtn = h('button', {
+        type: 'button',
+        class: 'sc-btn-secondary',
+        title: 'Pogledaj sve verzije, tko je što mijenjao i vrati bilo koju verziju',
+        onClick: () => openVersionHistory(sh)
+      }, `🕒 v${cloudVer}`);
+
+      const footer = h('div', { class: 'sc-footer' }, primaryBtn, versionsBtn);
       card.append(banner, body, footer);
       grid.append(card);
     }
-    content.replaceChildren(grid);
+    content.replaceChildren(radar, grid);
   }
 
   function renderContent() {
-    if (state.filter === 'shared_git') {
-      renderSharedGitShows();
+    if (state.catalogTab === 'cloud' || state.filter === 'shared_git') {
+      renderSharedCloudShows();
       return;
     }
     const list = filterAndSortTracks();
@@ -1017,8 +1637,10 @@ export function createSongLauncher(ctx) {
       content.replaceChildren(
         h('div', { class: 'launcher-empty' },
           h('div', { class: 'launcher-empty-icon' }, '🔍'),
-          h('h3', {}, state.tracks.length ? 'Nema pronađenih pjesama' : 'Biblioteka je prazna'),
-          h('p', {}, state.tracks.length ? 'Pokušaj prilagoditi filtere ili upit za pretragu, ili otvori tab „🌐 Dijeljeni showovi (Git)”.' : 'Povuci MP3, WAV ili .ledpack datoteke ovdje, ili klikni na „🌐 Dijeljeni showovi (Git)” iznad.')
+          h('h3', {}, state.tracks.length ? 'Nema pronađenih pjesama' : 'Tvoja lokalna biblioteka je prazna'),
+          h('p', {}, state.tracks.length
+            ? 'Pokušaj prilagoditi filtere ili upit za pretragu, ili prebaci na karticu „☁️ Cloud Katalog & Aktivnost”.'
+            : 'Klikni na karticu „☁️ Cloud Katalog & Aktivnost” na vrhu kako bi u 1 kliku preuzeo pjesme i showove iz zajedničkog oblaka!')
         )
       );
       return;
@@ -1037,25 +1659,40 @@ export function createSongLauncher(ctx) {
 
     for (const track of list) {
       const details = state.details.get(track.id);
-      const analysis = details?.analysis;
-      const bpm = analysis?.bpm;
-      const durationSec = analysis?.durationSec || 0;
+      const analysis = details?.analysis || (track.bpm || track.durationSec ? { bpm: track.bpm, durationSec: track.durationSec } : null);
+      const bpm = track.bpm || analysis?.bpm;
+      const durationSec = track.durationSec || analysis?.durationSec || 0;
       const sections = analysis?.sections || [];
       const isActive = track.id === activeId;
       const isAuditioning = state.auditionTrackId === track.id && state.auditionPlaying;
+      const cloudShow = findCloudShowForTrack(track);
+      const localVer = Number(track.version) || 1;
+      const cloudVer = Number(cloudShow?.version) || localVer;
+      const hasNewer = Boolean(cloudShow && cloudVer > localVer);
+      const liveEditors = findLiveEditors(track);
       const { artist, title } = parseTrackTitle(track.title || track.originalName);
 
       // Card element
-      const card = h('div', { class: `song-card${isActive ? ' active' : ''}${isAuditioning ? ' auditioning' : ''}` });
+      const card = h('div', { class: `song-card${isActive ? ' active' : ''}${isAuditioning ? ' auditioning' : ''}${hasNewer ? ' has-update' : ''}` });
 
-      // Banner Canvas
-      const canvas = h('canvas', { class: 'sc-canvas', width: 310, height: 102 });
-      requestAnimationFrame(() => drawCardBanner(canvas, track, analysis, isAuditioning));
+      // Banner with real Track Artwork + Vignette + Waveform Canvas
+      const canvas = h('canvas', { class: 'sc-canvas', width: 320, height: 142 });
+      const banner = h('div', { class: 'sc-banner' });
+      const thumbImg = createTrackThumb(track, 'sc-thumb-img', ok => {
+        banner.classList.toggle('has-thumb', ok);
+        drawCardBanner(canvas, track, analysis, isAuditioning, ok);
+      });
+      if (thumbImg) banner.classList.add('has-thumb');
+      requestAnimationFrame(() => drawCardBanner(canvas, track, analysis, isAuditioning, Boolean(thumbImg)));
+
+      const vignette = h('div', { class: 'sc-banner-vignette' });
 
       // Overlaid Badges
       const pillsLeft = h('div', { class: 'sc-pills-left' });
       if (isActive) pillsLeft.append(h('span', { class: 'sc-pill pill-active' }, '● AKTIVNA'));
-      if (track.hasTimeline) pillsLeft.append(h('span', { class: 'sc-pill pill-show' }, '✦ SHOW'));
+      if (track.hasTimeline) pillsLeft.append(h('span', { class: 'sc-pill pill-ver' }, `✦ SHOW · v${localVer}`));
+      if (hasNewer) pillsLeft.append(h('span', { class: 'sc-pill pill-update' }, `🔄 OBLAK v${cloudVer}`));
+      if (liveEditors.length) pillsLeft.append(h('span', { class: 'sc-pill pill-live-edit' }, `🟢 ${liveEditors[0].name} uređuje`));
 
       const pillsRight = h('div', { class: 'sc-pills-right' });
       if (bpm) pillsRight.append(h('span', { class: 'sc-pill pill-bpm' }, `⚡ ${bpm.toFixed(1)} BPM`));
@@ -1071,10 +1708,13 @@ export function createSongLauncher(ctx) {
         }
       }, isAuditioning ? '⏸' : '▶');
 
-      const banner = h('div', { class: 'sc-banner' }, canvas, pillsLeft, pillsRight, playOverlay);
+      banner.append(thumbImg, vignette, canvas, pillsLeft, pillsRight, playOverlay);
 
       // Card Body
-      const artistEl = artist ? h('div', { class: 'sc-artist', title: artist }, artist) : null;
+      const lastAuthor = track.updatedBy || track.author || cloudShow?.updatedBy || cloudShow?.author || '';
+      const relTime = fmtRelativeTime(track.updatedAt || cloudShow?.updatedAt);
+      const displayArtist = artist || lastAuthor || (track.videoId ? 'YouTube Studio' : 'Lokalna zbirka');
+      const artistEl = h('div', { class: 'sc-artist', title: displayArtist }, displayArtist);
       const titleEl = h('div', { class: 'sc-title', title }, title);
 
       // Section Miniature Bar
@@ -1090,25 +1730,39 @@ export function createSongLauncher(ctx) {
           }));
         }
       } else {
-        sectionsBar.append(h('div', { class: 'sc-sec-seg', style: { width: '100%', background: 'rgba(255,255,255,0.08)' } }));
+        sectionsBar.append(h('div', { class: 'sc-sec-seg', style: { width: '100%', background: 'linear-gradient(90deg, rgba(56,189,248,0.45), rgba(168,85,247,0.45), rgba(245,165,36,0.45))' } }));
       }
 
       // Tags
       const tags = h('div', { class: 'sc-tags' },
+        lastAuthor ? h('span', { class: 'sc-tag tag-author' }, `👤 ${lastAuthor}${relTime ? ` · ${relTime}` : ''}`) : null,
         h('span', { class: 'sc-tag' }, '🥁 4 stema'),
-        h('span', { class: 'sc-tag' }, sections.length ? `${sections.length} dionica` : 'Cijeli show'),
-        track.author ? h('span', { class: 'sc-tag' }, `👤 ${track.author}`) : null,
+        track.videoId ? h('span', { class: 'sc-tag tag-yt' }, '▶ YT') : null,
         h('span', { class: 'sc-tag' }, `${(track.sizeBytes / 1048576).toFixed(1)} MB`)
       );
 
       const body = h('div', { class: 'sc-body' }, artistEl, titleEl, sectionsBar, tags);
 
       // Card Footer
-      const loadBtn = h('button', {
+      const loadBtn = hasNewer
+        ? h('button', {
+            type: 'button',
+            class: 'sc-btn-primary btn-update',
+            title: `Preuzmi noviju verziju v${cloudVer} iz oblaka`,
+            onClick: () => installOrSyncShow(cloudShow, track)
+          }, `🔄 Ažuriraj na v${cloudVer}`)
+        : h('button', {
+            type: 'button',
+            class: 'sc-btn-primary',
+            onClick: () => selectAndLoad(track.id)
+          }, isActive ? '✓ Aktivna u studiju' : '▶ Učitaj show');
+
+      const verBtn = h('button', {
         type: 'button',
-        class: 'sc-btn-primary',
-        onClick: () => selectAndLoad(track.id)
-      }, isActive ? '✓ Aktivna u studiju' : '▶ Učitaj show');
+        class: 'sc-btn-secondary',
+        title: 'Povijest verzija i vraćanje na prethodno stanje',
+        onClick: () => openVersionHistory(track)
+      }, `🕒 v${localVer}`);
 
       const auditionBtn = h('button', {
         type: 'button',
@@ -1121,53 +1775,14 @@ export function createSongLauncher(ctx) {
         type: 'button',
         class: 'sc-btn-menu',
         title: 'Opcije pjesme i dijeljenje',
+        'aria-haspopup': 'menu',
         onClick: e => {
           e.stopPropagation();
-          const r = menuBtn.getBoundingClientRect();
-          showMenu(r.left, r.bottom + 4, [
-            { label: 'Otvori u studiju', onClick: () => selectAndLoad(track.id) },
-            { separator: true },
-            { label: '📦 Izvezi paket pjesma + show (.ledpack)', onClick: () => ctx.exportTrackPack?.(track.id) },
-            { label: '✦ Izvezi samo show (.ledshow.json)', onClick: () => ctx.exportTrackShow?.(track.id) },
-            { label: '🌐 Spremi show u Git (shared-shows)', onClick: async () => {
-              await ctx.shareTrackToGit?.(track.id, track.title);
-              await loadData();
-              render();
-            }},
-            { separator: true },
-            { label: 'Preimenuj…', onClick: async () => {
-              const newTitle = prompt('Novi naziv pjesme', track.title || track.originalName);
-              if (newTitle?.trim()) {
-                try {
-                  await libraryApi('track', { id: track.id, patch: { title: newTitle.trim() } });
-                  await loadData();
-                  render();
-                  ctx.onRenamed?.(track.id);
-                } catch (err) { toast(err.message, 'error'); }
-              }
-            }},
-            { label: 'Ponovno analiziraj stemove', onClick: async () => {
-              await ctx.reanalyze?.(track.id);
-              await loadData();
-              render();
-            }},
-            { separator: true },
-            { label: 'Ukloni iz biblioteke…', danger: true, onClick: async () => {
-              if (!confirm(`Ukloniti „${track.title || track.originalName}”? Audio kopija i timeline se brišu.`)) return;
-              try {
-                if (state.auditionTrackId === track.id) stopAudition();
-                await libraryApi('track-delete', { id: track.id });
-                state.details.delete(track.id);
-                await loadData();
-                render();
-                ctx.onDeleted?.(track.id);
-              } catch (err) { toast(err.message, 'error'); }
-            }}
-          ]);
+          openTrackContextMenu(track, menuBtn);
         }
       }, '•••');
 
-      const footer = h('div', { class: 'sc-footer' }, loadBtn, auditionBtn, menuBtn);
+      const footer = h('div', { class: 'sc-footer' }, loadBtn, verBtn, auditionBtn, menuBtn);
 
       card.append(banner, body, footer);
       grid.append(card);
@@ -1180,11 +1795,14 @@ export function createSongLauncher(ctx) {
     const rows = list.map((track, idx) => {
       const details = state.details.get(track.id);
       const analysis = details?.analysis;
-      const bpm = analysis?.bpm;
-      const durationSec = analysis?.durationSec || 0;
+      const bpm = track.bpm || analysis?.bpm;
+      const durationSec = track.durationSec || analysis?.durationSec || 0;
       const sections = analysis?.sections || [];
       const isActive = track.id === activeId;
       const isAuditioning = state.auditionTrackId === track.id && state.auditionPlaying;
+      const localVer = Number(track.version) || 1;
+      const lastAuthor = track.updatedBy || track.author || '';
+      const relTime = fmtRelativeTime(track.updatedAt);
       const { artist, title } = parseTrackTitle(track.title || track.originalName);
 
       const secBar = h('div', { class: 'tbl-sec-bar' });
@@ -1193,22 +1811,50 @@ export function createSongLauncher(ctx) {
           const w = Math.max(1, (sec.durationSec / durationSec) * 100);
           secBar.append(h('div', { style: { width: `${w}%`, background: sec.color || '#3a86ff', height: '100%' } }));
         }
+      } else {
+        secBar.append(h('div', { style: { width: '100%', background: 'linear-gradient(90deg, rgba(56,189,248,0.45), rgba(168,85,247,0.45))', height: '100%' } }));
       }
+
+      const tblThumbWrap = h('div', { class: 'tbl-thumb-wrap' },
+        createTrackThumb(track, 'tbl-thumb-img'),
+        h('span', { class: 'tbl-thumb-fallback' }, '♫')
+      );
+      const displayArtist = artist || lastAuthor || '';
+      const tblMenuBtn = h('button', {
+        type: 'button',
+        class: 'sc-btn-menu tbl-menu-btn',
+        title: 'Opcije pjesme i dijeljenje',
+        'aria-haspopup': 'menu',
+        onClick: e => {
+          e.stopPropagation();
+          openTrackContextMenu(track, tblMenuBtn);
+        }
+      }, '•••');
 
       const tr = h('tr', {
         class: `${isActive ? 'active' : ''}`,
         onDblClick: () => selectAndLoad(track.id)
       },
         h('td', {}, String(idx + 1)),
-        h('td', {}, isActive ? h('span', { class: 'sc-pill pill-active' }, 'AKTIVNA') : (track.hasTimeline ? '✦' : '·')),
-        h('td', { class: 'tbl-title-cell' }, h('b', {}, title), artist ? h('small', {}, artist) : null),
+        h('td', {}, isActive ? h('span', { class: 'sc-pill pill-active' }, 'AKTIVNA') : (track.hasTimeline ? h('span', { class: 'sc-pill pill-ver' }, `v${localVer}`) : '·')),
+        h('td', { class: 'tbl-title-cell' },
+          h('div', { class: 'tbl-title-inner' },
+            tblThumbWrap,
+            h('div', { class: 'tbl-title-text' },
+              h('b', {}, title),
+              displayArtist ? h('small', {}, `${displayArtist}${relTime ? ` · ${relTime}` : ''}`) : null
+            )
+          )
+        ),
         h('td', {}, bpm ? `${bpm.toFixed(1)} BPM` : '—'),
         h('td', {}, fmtDuration(durationSec)),
         h('td', {}, secBar),
         h('td', {}, `${(track.sizeBytes / 1048576).toFixed(1)} MB`),
-        h('td', {},
-          h('button', { type: 'button', class: 'sc-btn-secondary', style: { height: '26px', padding: '0 8px', marginRight: '6px' }, onClick: () => toggleAudition(track.id) }, isAuditioning ? '⏸' : '♫'),
-          h('button', { type: 'button', class: 'sc-btn-primary', style: { height: '26px', padding: '0 10px' }, onClick: () => selectAndLoad(track.id) }, isActive ? 'Otvoreno' : 'Učitaj')
+        h('td', { class: 'tbl-actions-cell' },
+          h('button', { type: 'button', class: 'sc-btn-secondary', style: { height: '28px', padding: '0 8px' }, title: 'Povijest verzija', onClick: () => openVersionHistory(track) }, `🕒 v${localVer}`),
+          h('button', { type: 'button', class: 'sc-btn-secondary', style: { height: '28px', padding: '0 9px' }, onClick: () => toggleAudition(track.id) }, isAuditioning ? '⏸' : '♫'),
+          h('button', { type: 'button', class: 'sc-btn-primary', style: { height: '28px', padding: '0 12px', flex: 'none' }, onClick: () => selectAndLoad(track.id) }, isActive ? 'Otvoreno' : 'Učitaj'),
+          tblMenuBtn
         )
       );
       return tr;
@@ -1218,8 +1864,8 @@ export function createSongLauncher(ctx) {
       h('thead', {},
         h('tr', {},
           h('th', {}, '#'),
-          h('th', {}, 'Status'),
-          h('th', {}, 'Naziv i izvođač'),
+          h('th', {}, 'Verzija'),
+          h('th', {}, 'Naziv i zadnja izmjena'),
           h('th', {}, 'BPM'),
           h('th', {}, 'Trajanje'),
           h('th', {}, 'Struktura'),
@@ -1247,7 +1893,10 @@ export function createSongLauncher(ctx) {
     }
     const { artist, title } = parseTrackTitle(track.title || track.originalName);
 
-    const disc = h('div', { class: 'audition-disc' }, '♫');
+    const disc = h('div', { class: 'audition-disc' },
+      createTrackThumb(track, 'audition-thumb-img'),
+      h('span', { class: 'audition-disc-icon' }, '♫')
+    );
     const meta = h('div', { class: 'audition-meta' },
       h('span', { class: 'audition-title', title }, title),
       h('span', { class: 'audition-artist', title: artist || 'LEDicated' }, artist || 'Lokalna zbirka')
@@ -1315,11 +1964,17 @@ export function createSongLauncher(ctx) {
     renderAuditionBar();
   }
 
-  async function open() {
+  async function open(initialTab = null) {
     state.open = true;
+    if (initialTab === 'cloud' || initialTab === 'local') {
+      state.catalogTab = initialTab;
+    }
     if (!document.body.contains(dialog)) document.body.append(dialog);
     if (!dialog.open) dialog.showModal();
     await loadData();
+    if (!initialTab && state.tracks.length === 0 && state.sharedShows.length > 0) {
+      state.catalogTab = 'cloud';
+    }
     render();
     const searchInput = dialog.querySelector('.launcher-search-input');
     if (searchInput) searchInput.focus();
@@ -1334,10 +1989,12 @@ export function createSongLauncher(ctx) {
   return {
     open,
     close,
+    openVersionHistory,
     isOpen: () => state.open,
     refresh: async () => {
+      if (!state.open) return;
       await loadData();
-      if (state.open) render();
+      render();
     }
   };
 }
