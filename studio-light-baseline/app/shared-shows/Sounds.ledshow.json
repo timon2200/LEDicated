@@ -1,7 +1,7 @@
 {
   "format": "ledicated-show",
-  "version": 10,
-  "exportedAt": "2026-10-31T16:42:39.304Z",
+  "version": 13,
+  "exportedAt": "2026-11-01T17:03:18.864Z",
   "author": "Mortu",
   "track": {
     "id": "638fd61e-1f6d-47da-9216-abdf396dcb38",
@@ -3395,7 +3395,7 @@
               0.8,
               0.87
             ],
-            "driver": "vocals",
+            "driver": "band",
             "driverGain": 1,
             "speed": 1,
             "direction": "ltr",
@@ -3498,7 +3498,16 @@
                 "timeSec": 11.612903225806448,
                 "value": 1
               }
-            ]
+            ],
+            "band": {
+              "source": "bass",
+              "lowHz": 40.15264951492894,
+              "highHz": 120.45794854478683,
+              "threshold": 0.45,
+              "ceiling": 1,
+              "mode": "follow",
+              "releaseSec": 0.2
+            }
           },
           {
             "preset": "chase",
@@ -4163,7 +4172,7 @@
   },
   "showId": "sounds-35f793b7",
   "updatedBy": "Mortu",
-  "updatedAt": "2026-10-31T16:42:39.295Z",
-  "summary": "+1 novi clip [pulse] · ukupno 57 clipova",
+  "updatedAt": "2026-11-01T17:03:18.848Z",
+  "summary": "izmijenjeno 1 [sweep] · ukupno 57 clipova",
   "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/df9bc9af913eb62867f1f4a79305626aa642e976107578cc8287a3e2eff59025.mp3"
 }

@@ -586,8 +586,8 @@ for (const bar of document.querySelectorAll('.splitter')) {
   const set = size => { const value = `${clamp(size, Number(min), Number(max))}px`; document.documentElement.style.setProperty(variable, value); localStorage.setItem(`ledicated${variable}`, value); };
   bar.addEventListener('pointerdown', event => { start = event[axis]; startSize = currentSize(); bar.setPointerCapture(event.pointerId); bar.classList.add('active'); });
   bar.addEventListener('pointermove', event => { if (bar.hasPointerCapture(event.pointerId)) set(startSize + (event[axis] - start) * Number(dir)); });
-  const stop = event => { if (bar.hasPointerCapture(event.pointerId)) bar.releasePointerCapture(event.pointerId); bar.classList.remove('active'); };
-  bar.addEventListener('pointerup', stop); bar.addEventListener('pointercancel', stop);
+  const stop = event => { if (event?.pointerId !== undefined && bar.hasPointerCapture?.(event.pointerId)) bar.releasePointerCapture(event.pointerId); bar.classList.remove('active'); };
+  bar.addEventListener('pointerup', stop); bar.addEventListener('pointercancel', stop); bar.addEventListener('lostpointercapture', () => bar.classList.remove('active'));
   bar.addEventListener('keydown', event => { const d = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key]; if (d) { event.preventDefault(); set(currentSize() + d * 16 * Number(dir)); } });
   bar.addEventListener('dblclick', () => {
     if (variable === '--browser-w') toggleSidePanel('--browser-w', 260);
@@ -605,7 +605,34 @@ const s = { track: null, analysis: null, scrubSec: 0, playFrom: 0, loop: null, l
 const tl = () => store.timeline;
 const hasTrack = () => Boolean(s.track && s.analysis);
 const duration = () => s.analysis?.durationSec || tl().durationSec || audio.duration || 60;
-const songTime = () => audio.paused ? s.scrubSec : audio.currentTime;
+const audioClockAnchor = { rawTime: -1, perfSec: 0, lastReturned: 0 };
+const resetAudioClockAnchor = (sec = 0) => {
+  audioClockAnchor.rawTime = -1;
+  audioClockAnchor.perfSec = 0;
+  audioClockAnchor.lastReturned = Math.max(0, Number(sec) || 0);
+};
+const songTime = () => {
+  if (audio.paused) return s.scrubSec;
+  const rawTime = Number(audio.currentTime) || 0;
+  const perfSec = performance.now() / 1000;
+  if (rawTime !== audioClockAnchor.rawTime) {
+    const jumpedBackward = rawTime < audioClockAnchor.lastReturned - 0.04;
+    const jumpedForward = rawTime > audioClockAnchor.lastReturned + 0.08;
+    audioClockAnchor.rawTime = rawTime;
+    audioClockAnchor.perfSec = perfSec;
+    if (jumpedBackward || jumpedForward) {
+      audioClockAnchor.lastReturned = rawTime;
+      return rawTime;
+    }
+  }
+  const rate = Number(audio.playbackRate) || 1;
+  const elapsed = Math.max(0, perfSec - audioClockAnchor.perfSec) * rate;
+  // Smoothly interpolate within the ~20ms media-element update quantum without ever drifting
+  const interpolated = elapsed <= 0.036 ? rawTime + elapsed : rawTime;
+  const smooth = clamp(Math.max(audioClockAnchor.lastReturned, interpolated), 0, duration());
+  audioClockAnchor.lastReturned = smooth;
+  return smooth;
+};
 const snapMode = () => snapSelect.value === 'none' || snapSelect.value === 'bar' ? snapSelect.value : Number(snapSelect.value);
 
 const liveHost = h('div', { class: 'live-grid' }); livePane.append(liveHost);
@@ -700,6 +727,7 @@ function seek(sec, isScrubbing = false) {
   live.clearExternal?.();
   if (recorder?.isRecording) recorder.handleSeek(sec);
   s.scrubSec = clamp(sec || 0, 0, duration());
+  resetAudioClockAnchor(s.scrubSec);
   if (isScrubbing && !audio.paused) {
     scrubWasPlaying = true;
     audio.pause();
@@ -746,16 +774,20 @@ function commitSeek(sec) {
 
 async function togglePlay() {
   if (!s.track) return;
+  playlist?.endScrub?.();
+  if (audioSeekTimer) { clearTimeout(audioSeekTimer); audioSeekTimer = null; }
+  scrubWasPlaying = false;
   live.clearExternal?.();
   stemsEngine.ensureContext();
   if (audio.paused) {
     if (!lanState.stageOwnerId && !lanState.isRemoteStageOwner) {
       lanState.manuallyReleased = false;
     }
-    if ((lanState.outputMode === 'ambient' || output.outputMode === 'ambient') && !live.engine.state.blackout && !lanState.isRemoteStageOwner) {
+    if ((!output.armed || lanState.outputMode === 'ambient' || output.outputMode === 'ambient') && !live.engine.state.blackout && !lanState.isRemoteStageOwner && !lanState.manuallyReleased) {
       claimStage(false).catch(() => {});
     }
     s.playFrom = s.scrubSec; audio.currentTime = s.scrubSec;
+    resetAudioClockAnchor(s.scrubSec);
     playPending = true;
     try {
       await audio.play();
@@ -774,6 +806,9 @@ async function togglePlay() {
   syncPlay();
 }
 function stop() {
+  playlist?.endScrub?.();
+  if (audioSeekTimer) { clearTimeout(audioSeekTimer); audioSeekTimer = null; }
+  scrubWasPlaying = false;
   live.clearExternal?.();
   if (recorder?.isRecording) recorder.stopRecording();
   if (!audio.paused) { audio.pause(); seek(s.playFrom); } else seek(0);
@@ -1217,8 +1252,9 @@ async function ensureSpectrum() {
   const id = s.track?.id, analysis = s.analysis; if (!id || !analysis || analysis.spectrum) return;
   if (spectrumCache.has(id)) {
     const cached = spectrumCache.get(id);
-    analysis.spectrum = cached.spectrum;
+    if (cached._stemSpectrums) analysis._stemSpectrums = cached._stemSpectrums;
     if (cached.stemSpectrums) analysis.stemSpectrums = cached.stemSpectrums;
+    analysis.spectrum = cached.spectrum;
     s.spectrumState = 'ready';
     editor.render();
     return;
@@ -1230,12 +1266,23 @@ async function ensureSpectrum() {
     const decoded = await new Ctor(1, 1, 44100).decodeAudioData(await response.arrayBuffer());
     if (s.track?.id !== id) return;
     const mono = new Float32Array(decoded.length), channels = decoded.numberOfChannels;
-    for (let c = 0; c < channels; c++) { const data = decoded.getChannelData(c); for (let i = 0; i < mono.length; i++) mono[i] += data[i] / channels; }
+    const mixChunk = 262144;
+    for (let start = 0; start < mono.length; start += mixChunk) {
+      const end = Math.min(mono.length, start + mixChunk);
+      for (let c = 0; c < channels; c++) {
+        const data = decoded.getChannelData(c);
+        for (let i = start; i < end; i++) mono[i] += data[i] / channels;
+      }
+      if (end < mono.length) {
+        await new Promise(r => setTimeout(r, 0));
+        if (s.track?.id !== id) return;
+      }
+    }
     s.analysis.pcmMono = mono; s.analysis.pcmSampleRate = decoded.sampleRate; playlist.redraw();
     const spectrum = await computeSpectrum(mono, decoded.sampleRate, { onProgress: p => { s.spectrumProgress = p; if (performance.now() - spectrumDraw > 250) { spectrumDraw = performance.now(); if (!driverPane.hidden) driverEditor.draw(); } } });
     if (s.track?.id !== id) return;
     // Pre-build stem spectrums across macrotask turns BEFORE exposing analysis.spectrum so render frames never stall
-    const tempAnalysis = { ...s.analysis, spectrum, stemSpectrums: {} };
+    const tempAnalysis = { ...s.analysis, spectrum, stemSpectrums: {}, _stemSpectrums: new Map() };
     for (const stemKey of ['drums', 'bass', 'vocals', 'other']) {
       await new Promise(r => setTimeout(r, 0));
       if (s.track?.id !== id) return;
@@ -1245,8 +1292,9 @@ async function ensureSpectrum() {
       const oldestKey = spectrumCache.keys().next().value;
       if (oldestKey !== undefined) spectrumCache.delete(oldestKey);
     }
-    spectrumCache.set(id, { spectrum, stemSpectrums: tempAnalysis.stemSpectrums });
+    spectrumCache.set(id, { spectrum, stemSpectrums: tempAnalysis.stemSpectrums, _stemSpectrums: tempAnalysis._stemSpectrums });
     s.analysis.stemSpectrums = tempAnalysis.stemSpectrums;
+    s.analysis._stemSpectrums = tempAnalysis._stemSpectrums;
     s.analysis.spectrum = spectrum;
     s.spectrumState = 'ready';
     editor.render();
@@ -2276,13 +2324,15 @@ function tick() {
     if (s.loopOn && s.loop && !audio.paused && audio.currentTime >= s.loop.end) {
       if (recorder?.isRecording) recorder.handleLoopWrap(s.loop.start, s.loop.end);
       audio.currentTime = s.loop.start;
+      resetAudioClockAnchor(s.loop.start);
     }
     performDesk.tick(t);
-    recorder?.tick(songTime());
-    if (hasTrack() && !live.engine.state.blackout) {
+    const time = songTime();
+    recorder?.tick(time);
+    const hasActiveTrack = hasTrack() && !live.engine.state.blackout;
+    if (hasActiveTrack) {
       const effTl = effectiveTimeline();
       showEngine.sync(effTl, s.analysis);
-      showEngine.warmLookahead(clamp((s.frozenSec ?? songTime()) + output.offsetSec, 0, duration()), (audio.paused && !extSyncedPlaying) ? 24 : 8, 2.5);
     }
     const performSignal = `${performDesk.desk.active.size + performDesk.desk.touches.size}|${performDesk.desk.pending.size}`;
     if (performSignal !== lastPerformSignal) {
@@ -2297,13 +2347,15 @@ function tick() {
     }
     const frame = currentPreviewFrame(t);
     if (output.config) preview.render(frame, output.config);
-    const time = songTime();
     const isRealtimeActive = !audio.paused || extSyncedPlaying || performDesk.desk.active.size > 0 || performDesk.desk.touches.size > 0 || Boolean(live.isExternalActive?.(t)) || !hasTrack();
     const idleSig = `${time.toFixed(3)}|${timelineVersion}|${masterKnob.value}|${live.engine.state.blackout ? 1 : 0}`;
     if (isRealtimeActive || idleSig !== lastIdleSendSig || (t - lastIdleSendTime >= 0.25)) {
       lastIdleSendSig = idleSig;
       lastIdleSendTime = t;
-      output.send(output.offsetSec === 0 ? frame : currentOutputFrame, t);
+      output.send(sendNow => (output.offsetSec === 0 && sendNow === t) ? frame : currentOutputFrame(sendNow), t);
+    }
+    if (hasActiveTrack) {
+      showEngine.warmLookahead(clamp((s.frozenSec ?? time) + output.offsetSec, 0, duration()), (audio.paused && !extSyncedPlaying) ? 24 : 6, 1.8);
     }
     const text = formatBBT(hasTrack() ? Math.max(0, beatPosition(time, tl(), s.analysis)) : 0) + '|' + formatClock(time);
     if (text !== lastText) { lastText = text; const [bbt, clock] = text.split('|'); bbtEl.textContent = bbt; clockEl.textContent = clock; }
@@ -2334,8 +2386,12 @@ browser.refresh().then(tracks => { if (tracks.length) return selectTrack(tracks[
 requestAnimationFrame(tick);
 function initLiveSync() {
   let liveStateInFlight = false;
+  let liveStatePending = false;
   function sendLiveState() {
-    if (liveStateInFlight) return;
+    if (liveStateInFlight) {
+      liveStatePending = true;
+      return;
+    }
     const time = songTime();
     const payload = {
       connected: true,
@@ -2345,7 +2401,9 @@ function initLiveSync() {
       showId: s.track?.showId || null,
       version: s.track?.version || 1,
       trackTitle: s.track?.title || s.track?.originalName || null,
-      timeSec: time,
+      timeSec: songTime(),
+      offsetSec: Number(output.offsetSec) || 0,
+      clientSentAtMs: Date.now(),
       durationSec: duration(),
       isPlaying: !audio.paused,
       isRecording: recorder?.isRecording || false,
@@ -2384,6 +2442,10 @@ function initLiveSync() {
       .finally(() => {
         clearTimeout(tid);
         liveStateInFlight = false;
+        if (liveStatePending) {
+          liveStatePending = false;
+          sendLiveState();
+        }
       });
   }
 

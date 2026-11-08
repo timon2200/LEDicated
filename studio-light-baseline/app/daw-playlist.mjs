@@ -509,6 +509,14 @@ export function createPlaylist(host, ctx) {
 
   /* ------------------------------------------------------------ gestures */
   const localPoint = event => { const r = canvas.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; };
+  const safeSetPointerCapture = (el, pointerId) => {
+    if (pointerId === undefined || pointerId === null) return;
+    try { el.setPointerCapture?.(pointerId); } catch {}
+  };
+  const safeReleasePointerCapture = (el, pointerId) => {
+    if (pointerId === undefined || pointerId === null) return;
+    try { if (el.hasPointerCapture?.(pointerId)) el.releasePointerCapture(pointerId); } catch {}
+  };
 
   // PointerEvent.detail is always 0, so double clicks are detected by timing.
   let lastDown = { t: 0, x: 0, y: 0 };
@@ -523,7 +531,7 @@ export function createPlaylist(host, ctx) {
     const dbl = event.button === 0 && isDouble(event);
     const { x, y } = localPoint(event), t = tAt(x);
     let hit = hitTest(x, y);
-    if (event.button === 1 || state.spaceDown || (event.altKey && hit.type !== 'clip' && hit.type !== 'keyframe' && hit.type !== 'automation')) { state.gesture = { mode: 'pan', x: event.clientX, scroll: state.scrollSec }; canvas.setPointerCapture(event.pointerId); canvas.classList.add('panning'); return; }
+    if (event.button === 1 || state.spaceDown || (event.altKey && hit.type !== 'clip' && hit.type !== 'keyframe' && hit.type !== 'automation')) { state.gesture = { mode: 'pan', pointerId: event.pointerId, x: event.clientX, scroll: state.scrollSec }; safeSetPointerCapture(canvas, event.pointerId); canvas.classList.add('panning'); return; }
     if (event.button === 2) {
       if (hit.type === 'keyframe') {
         const { ref, keyframeIndex, clip } = hit;
@@ -548,8 +556,8 @@ export function createPlaylist(host, ctx) {
     }
     if (event.button !== 0 || !tl().layers.length) return;
     if (hit.type === 'audio' || hit.type === 'analysis' || hit.type === 'playhead') {
-      state.gesture = { mode: 'scrub', startX: x, moved: false };
-      canvas.setPointerCapture(event.pointerId);
+      state.gesture = { mode: 'scrub', pointerId: event.pointerId, startX: x, moved: false };
+      safeSetPointerCapture(canvas, event.pointerId);
       const curT = tAt(clamp(x, 0, stageWidth()));
       ctx.seek(curT, true);
       requestDraw();
@@ -564,6 +572,7 @@ export function createPlaylist(host, ctx) {
       const r = clipRect(hit.layerIndex, hit.clip), headH = 20, autoH = r.h - headH - 2;
       state.gesture = {
         mode: 'drag-keyframe',
+        pointerId: event.pointerId,
         ref: hit.ref,
         clip: hit.clip,
         layerIndex: hit.layerIndex,
@@ -575,7 +584,7 @@ export function createPlaylist(host, ctx) {
         autoH,
         moved: false
       };
-      canvas.setPointerCapture(event.pointerId);
+      safeSetPointerCapture(canvas, event.pointerId);
       requestDraw();
       return;
     }
@@ -608,7 +617,7 @@ export function createPlaylist(host, ctx) {
         if (out.error || !parts) ctx.status('Podjela mora biti unutar clipa, barem 50 ms od ruba.'); else setSelection(parts);
         ctx.onStructure?.(); requestDraw(); return;
       }
-      if (tool === 'erase') { store.begin(); state.gesture = { mode: 'erase' }; canvas.setPointerCapture(event.pointerId); store.update(tlm => deleteClips(tlm, [hit.ref])); pruneSelection(); requestDraw(); return; }
+      if (tool === 'erase') { store.begin(); state.gesture = { mode: 'erase', pointerId: event.pointerId }; safeSetPointerCapture(canvas, event.pointerId); store.update(tlm => deleteClips(tlm, [hit.ref])); pruneSelection(); requestDraw(); return; }
       if (event.metaKey || event.ctrlKey) {
         setSelection(isSelected(hit.ref) ? state.selection.filter(s => refKey(s) !== refKey(hit.ref)) : [...state.selection, hit.ref]); return;
       }
@@ -630,6 +639,7 @@ export function createPlaylist(host, ctx) {
       const isShift = Boolean(event.shiftKey || state.shiftDown);
       state.gesture = {
         mode: hit.zone === 'body' ? 'move' : hit.zone,
+        pointerId: event.pointerId,
         x0: x,
         y0: y,
         items,
@@ -644,7 +654,7 @@ export function createPlaylist(host, ctx) {
         shiftLock: isShift,
         dl: 0
       };
-      canvas.setPointerCapture(event.pointerId); return;
+      safeSetPointerCapture(canvas, event.pointerId); return;
     }
     // empty lane or void
     const layerIndex = hit.type === 'lane' ? hit.layerIndex : -1;
@@ -652,7 +662,7 @@ export function createPlaylist(host, ctx) {
     if (tool === 'draw' && layerIndex >= 0 && !dbl) {
       const start = snap(t); store.begin();
       let ref; store.update(tlm => { ref = addClip(tlm, tl().layers[layerIndex].id, { ...ctx.newClipSpec(tl().layers[layerIndex], start), startSec: start, durationSec: Math.min(barLength(start), Math.max(MIN_CLIP_SEC, duration() - start)) }); });
-      setSelection([ref]); state.gesture = { mode: 'draw', ref, start, x0: x, moved: false }; canvas.setPointerCapture(event.pointerId); requestDraw(); return;
+      setSelection([ref]); state.gesture = { mode: 'draw', pointerId: event.pointerId, ref, start, x0: x, moved: false }; safeSetPointerCapture(canvas, event.pointerId); requestDraw(); return;
     }
     if (dbl && layerIndex >= 0) {
       const start = snap(t), ref = createClipAt(layerIndex, start, Math.min(barLength(start), Math.max(MIN_CLIP_SEC, duration() - start)));
@@ -661,10 +671,17 @@ export function createPlaylist(host, ctx) {
     }
     const base = event.shiftKey ? [...state.selection] : [];
     if (!event.shiftKey) setSelection([]);
-    state.gesture = { mode: 'marquee', x0: x, y0: y, t0: t, base }; canvas.setPointerCapture(event.pointerId);
+    state.gesture = { mode: 'marquee', pointerId: event.pointerId, x0: x, y0: y, t0: t, base }; safeSetPointerCapture(canvas, event.pointerId);
   });
 
   canvas.addEventListener('pointermove', event => {
+    if (state.gesture && typeof event.buttons === 'number') {
+      const requiredMask = state.gesture.mode === 'pan' && !state.spaceDown ? 5 : 1;
+      const isUnpressed = state.gesture.mode === 'pan' && state.spaceDown ? false : (event.buttons & requiredMask) === 0;
+      if (isUnpressed) {
+        finishGesture(event, { staleHover: true });
+      }
+    }
     const { x, y } = localPoint(event), g = state.gesture;
     if (!g) {
       const hit = hitTest(x, y), tool = ctx.getTool();
@@ -833,10 +850,10 @@ export function createPlaylist(host, ctx) {
     }
   });
 
-  const finishGesture = event => {
+  const finishGesture = (event = {}, { staleHover = false } = {}) => {
     const g = state.gesture; if (!g) return;
     state.gesture = null; state.marquee = null; canvas.classList.remove('panning');
-    if (canvas.hasPointerCapture?.(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    safeReleasePointerCapture(canvas, event?.pointerId ?? g.pointerId);
     if (g.mode === 'drag-keyframe') {
       if (g.moved) store.end('Pomakni točku');
       else if (store.discardGesture) store.discardGesture();
@@ -845,10 +862,14 @@ export function createPlaylist(host, ctx) {
       return;
     }
     if (g.mode === 'scrub') {
-      if (!g.moved && ctx.getSnap() !== 'none' && !event.altKey) {
-        ctx.seek(snap(tAt(g.startX)), false);
+      if (!staleHover) {
+        if (!g.moved && ctx.getSnap() !== 'none' && !event?.altKey) {
+          ctx.seek(snap(tAt(g.startX)), false);
+        }
+        ctx.commitSeek?.();
+      } else if (!ctx.isPlaying()) {
+        ctx.commitSeek?.();
       }
-      ctx.commitSeek?.();
       requestDraw();
       return;
     }
@@ -876,8 +897,9 @@ export function createPlaylist(host, ctx) {
     }
     if (g.mode === 'erase') { store.end('Obriši clipove'); ctx.onStructure?.(); requestDraw(); }
   };
-  canvas.addEventListener('pointerup', finishGesture);
+  canvas.addEventListener('pointerup', event => finishGesture(event));
   canvas.addEventListener('pointercancel', event => { if (state.gesture?.mode && ['move', 'start', 'end', 'draw', 'erase', 'drag-keyframe'].includes(state.gesture.mode)) store.cancel(); finishGesture(event); });
+  canvas.addEventListener('lostpointercapture', event => finishGesture(event));
   canvas.addEventListener('pointerleave', () => { if (!state.gesture) { state.hover = null; state.ghost = null; requestDraw(); } });
   canvas.addEventListener('dblclick', event => { const { x, y } = localPoint(event), hit = hitTest(x, y); if (hit.type === 'clip' && ctx.getTool() !== 'slice') ctx.openEditor?.(); });
 
@@ -1122,9 +1144,8 @@ export function createPlaylist(host, ctx) {
   }
 
   ruler.addEventListener('pointerdown', event => {
-    if (event.button === 2) return;
+    if (event.button !== 0) return;
     const r = ruler.getBoundingClientRect(), x = event.clientX - r.left, y = event.clientY - r.top;
-    ruler.setPointerCapture(event.pointerId);
     const px = Math.round(xAt(ctx.getTime()));
     const nearPlayhead = Math.abs(x - px) <= 8;
     if (y >= RULER_BARS + RULER_LOOP && !nearPlayhead) {
@@ -1136,6 +1157,7 @@ export function createPlaylist(host, ctx) {
         store.begin?.();
         rulerGesture = {
           mode: 'section-drag',
+          pointerId: event.pointerId,
           index: bIdx,
           startX: x,
           moved: false,
@@ -1144,6 +1166,7 @@ export function createPlaylist(host, ctx) {
           origCurEnd: curSec.endSec,
           origLayers: structuredClone(tl().layers)
         };
+        safeSetPointerCapture(ruler, event.pointerId);
         requestDraw();
         return;
       }
@@ -1192,19 +1215,24 @@ export function createPlaylist(host, ctx) {
       return;
     }
     if (nearPlayhead || y < RULER_BARS) {
-      rulerGesture = { mode: 'seek', startX: x, moved: false };
+      rulerGesture = { mode: 'seek', pointerId: event.pointerId, startX: x, moved: false };
+      safeSetPointerCapture(ruler, event.pointerId);
       const t = tAt(clamp(x, 0, stageWidth()));
       ctx.seek(t, true);
       requestDraw();
       return;
     }
     const loop = ctx.getLoop(), a = loop ? xAt(loop.start) : -99, b = loop ? xAt(loop.end) : -99;
-    if (loop && Math.abs(x - a) < 6) rulerGesture = { mode: 'loop-start' };
-    else if (loop && Math.abs(x - b) < 6) rulerGesture = { mode: 'loop-end' };
-    else if (loop && x > a && x < b) rulerGesture = { mode: 'loop-move', t0: tAt(x), start: loop.start, end: loop.end };
-    else rulerGesture = { mode: 'loop-new', t0: snap(tAt(x)), moved: false };
+    if (loop && Math.abs(x - a) < 6) rulerGesture = { mode: 'loop-start', pointerId: event.pointerId };
+    else if (loop && Math.abs(x - b) < 6) rulerGesture = { mode: 'loop-end', pointerId: event.pointerId };
+    else if (loop && x > a && x < b) rulerGesture = { mode: 'loop-move', pointerId: event.pointerId, t0: tAt(x), start: loop.start, end: loop.end };
+    else rulerGesture = { mode: 'loop-new', pointerId: event.pointerId, t0: snap(tAt(x)), moved: false };
+    safeSetPointerCapture(ruler, event.pointerId);
   });
   ruler.addEventListener('pointermove', event => {
+    if (rulerGesture && typeof event.buttons === 'number' && (event.buttons & 1) === 0) {
+      rulerUp(event, { staleHover: true });
+    }
     const r = ruler.getBoundingClientRect(), x = event.clientX - r.left, y = event.clientY - r.top, g = rulerGesture;
     const px = Math.round(xAt(ctx.getTime()));
     const nearPlayhead = Math.abs(x - px) <= 8;
@@ -1301,9 +1329,13 @@ export function createPlaylist(host, ctx) {
     else if (g.mode === 'loop-end') ctx.setLoop({ start: ctx.getLoop().start, end: Math.max(t, ctx.getLoop().start + .1) });
     else if (g.mode === 'loop-move') { const len = g.end - g.start, s = clamp(snap(g.start + tAt(x) - g.t0), 0, duration() - len); ctx.setLoop({ start: s, end: s + len }); }
   });
-  const rulerUp = event => {
-    if (rulerGesture?.mode === 'section-drag') {
-      if (rulerGesture.moved) {
+  const rulerUp = (event = {}, { staleHover = false } = {}) => {
+    const g = rulerGesture;
+    if (!g) return;
+    rulerGesture = null;
+    safeReleasePointerCapture(ruler, event?.pointerId ?? g.pointerId);
+    if (g.mode === 'section-drag') {
+      if (g.moved) {
         store.end?.('Pomak granice dionice');
       } else if (store.discardGesture) {
         store.discardGesture();
@@ -1313,22 +1345,26 @@ export function createPlaylist(host, ctx) {
       const a = analysis();
       if (a?.sections) {
         relabelSections(a.sections);
-        ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: null, boundaryMoved: rulerGesture.moved });
+        ctx.onSectionsChange?.(a.sections, { regenerateSectionIndex: null, boundaryMoved: g.moved });
       }
       requestDraw();
     }
-    if (rulerGesture?.mode === 'seek') {
-      if (!rulerGesture.moved && ctx.getSnap() !== 'none' && !event.altKey) {
-        ctx.seek(snap(tAt(rulerGesture.startX)), false);
+    if (g.mode === 'seek') {
+      if (!staleHover) {
+        if (!g.moved && ctx.getSnap() !== 'none' && !event?.altKey) {
+          ctx.seek(snap(tAt(g.startX)), false);
+        }
+        ctx.commitSeek?.();
+      } else if (!ctx.isPlaying()) {
+        ctx.commitSeek?.();
       }
-      ctx.commitSeek?.();
       requestDraw();
     }
-    if (rulerGesture?.mode === 'loop-new' && !rulerGesture.moved) ctx.setLoop(null);
-    rulerGesture = null;
-    if (ruler.hasPointerCapture?.(event.pointerId)) ruler.releasePointerCapture(event.pointerId);
+    if (g.mode === 'loop-new' && !g.moved) ctx.setLoop(null);
   };
-  ruler.addEventListener('pointerup', rulerUp); ruler.addEventListener('pointercancel', rulerUp);
+  ruler.addEventListener('pointerup', event => rulerUp(event));
+  ruler.addEventListener('pointercancel', event => rulerUp(event));
+  ruler.addEventListener('lostpointercapture', event => rulerUp(event));
   ruler.addEventListener('pointerleave', () => {
     if (hoverSectionBoundary !== null && !rulerGesture) {
       hoverSectionBoundary = null;
@@ -1375,7 +1411,8 @@ export function createPlaylist(host, ctx) {
   const ovMove = event => {
     const r = overview.getBoundingClientRect(), d = duration();
     const t = clamp((event.clientX - r.left) / r.width * d, 0, d);
-    if (event.shiftKey || (event.buttons === 1 && Math.abs(event.clientX - r.left - (ctx.getTime() / d * r.width)) < 12)) {
+    if (event.shiftKey || ((event.buttons === undefined || (event.buttons & 1) !== 0) && Math.abs(event.clientX - r.left - (ctx.getTime() / d * r.width)) < 12)) {
+      if (ovGesture) ovGesture.seeked = true;
       ctx.seek(t, true);
     } else {
       state.scrollSec = t - visibleSec() / 2;
@@ -1384,13 +1421,31 @@ export function createPlaylist(host, ctx) {
     requestDraw();
     ctx.onView?.();
   };
-  overview.addEventListener('pointerdown', event => { ovGesture = true; overview.setPointerCapture(event.pointerId); ovMove(event); });
-  overview.addEventListener('pointermove', event => { if (ovGesture) ovMove(event); });
-  overview.addEventListener('pointerup', () => {
+  const ovUp = (event = {}, { staleHover = false } = {}) => {
+    const g = ovGesture;
+    if (!g) return;
     ovGesture = null;
-    ctx.commitSeek?.();
+    safeReleasePointerCapture(overview, event?.pointerId ?? g.pointerId);
+    if (g.seeked && (!staleHover || !ctx.isPlaying())) ctx.commitSeek?.();
     requestDraw();
+  };
+  overview.addEventListener('pointerdown', event => {
+    if (event.button !== undefined && event.button !== 0) return;
+    ovGesture = { pointerId: event.pointerId, seeked: false };
+    safeSetPointerCapture(overview, event.pointerId);
+    ovMove(event);
   });
+  overview.addEventListener('pointermove', event => {
+    if (!ovGesture) return;
+    if (typeof event.buttons === 'number' && (event.buttons & 1) === 0) {
+      ovUp(event, { staleHover: true });
+      return;
+    }
+    ovMove(event);
+  });
+  overview.addEventListener('pointerup', event => ovUp(event));
+  overview.addEventListener('pointercancel', event => ovUp(event));
+  overview.addEventListener('lostpointercapture', event => ovUp(event));
   overview.addEventListener('wheel', event => {
     event.preventDefault();
     if (event.ctrlKey || event.metaKey) {
@@ -2212,6 +2267,33 @@ export function createPlaylist(host, ctx) {
     }
   }
 
+  const waveStripCanvas = h('canvas');
+  let waveStripKey = '';
+  const overviewBgCanvas = h('canvas');
+  let overviewBgKey = '';
+
+  function drawWaveAndStems(targetG, width, a) {
+    drawWave(targetG, width, 0, AUDIO_H);
+    targetG.fillStyle = '#0a0e14'; targetG.fillRect(0, AUDIO_H, width, ANALYSIS_H);
+    if (a?.features) {
+      const stems = [
+        { data: a.stems?.drums || a.features.drums, color: '#ff9a3acc' },
+        { data: a.stems?.bass || a.features.bass, color: '#b25cffcc' },
+        { data: a.stems?.vocals || a.features.vocals, color: '#37d4ffcc' },
+        { data: a.stems?.other || a.features.other, color: '#59ff9bcc' }
+      ];
+      const hEach = Math.floor((ANALYSIS_H - 3) / 4);
+      stems.forEach((stem, idx) => {
+        if (stem.data) {
+          const sy = AUDIO_H + idx * (hEach + 1);
+          drawFeature(targetG, width, sy, hEach, stem.data, stem.color, a.features);
+          if (idx < 3) { targetG.fillStyle = '#ffffff0a'; targetG.fillRect(0, sy + hEach, width, 1); }
+        }
+      });
+    }
+    targetG.fillStyle = '#05080c'; targetG.fillRect(0, AUDIO_H - 1, width, 1); targetG.fillRect(0, layersTop() - 1, width, 1);
+  }
+
   function draw() {
     const height = bodyHeight(), t = tl(), a = analysis(), nowSec = ctx.getTime();
     stageHeightSync(height);
@@ -2261,25 +2343,19 @@ export function createPlaylist(host, ctx) {
         g.restore();
       }
     }
-    drawWave(g, width, 0, AUDIO_H);
-    g.fillStyle = '#0a0e14'; g.fillRect(0, AUDIO_H, width, ANALYSIS_H);
-    if (a?.features) {
-      const stems = [
-        { data: a.stems?.drums || a.features.drums, color: '#ff9a3acc' },
-        { data: a.stems?.bass || a.features.bass, color: '#b25cffcc' },
-        { data: a.stems?.vocals || a.features.vocals, color: '#37d4ffcc' },
-        { data: a.stems?.other || a.features.other, color: '#59ff9bcc' }
-      ];
-      const hEach = Math.floor((ANALYSIS_H - 3) / 4);
-      stems.forEach((stem, idx) => {
-        if (stem.data) {
-          const sy = AUDIO_H + idx * (hEach + 1);
-          drawFeature(g, width, sy, hEach, stem.data, stem.color, a.features);
-          if (idx < 3) { g.fillStyle = '#ffffff0a'; g.fillRect(0, sy + hEach, width, 1); }
-        }
-      });
+    const peaks = computePeaks();
+    const stripH = AUDIO_H + ANALYSIS_H;
+    const nextWaveKey = `${width}|${stripH}|${state.pps}|${state.scrollSec.toFixed(4)}|${ctx.hasTrack() ? 1 : 0}|${peaks ? peaks.abs.length : 0}|${peaks?.pcmMono ? peaks.pcmMono.length : 0}|${a?.features ? 1 : 0}|${a?.stems ? 1 : 0}|${devicePixelRatio || 1}`;
+    if (typeof g.drawImage === 'function') {
+      if (waveStripKey !== nextWaveKey) {
+        waveStripKey = nextWaveKey;
+        const sg = sizeCanvas(waveStripCanvas, width, stripH);
+        drawWaveAndStems(sg, width, a);
+      }
+      g.drawImage(waveStripCanvas, 0, 0, width, stripH);
+    } else {
+      drawWaveAndStems(g, width, a);
     }
-    g.fillStyle = '#05080c'; g.fillRect(0, AUDIO_H - 1, width, 1); g.fillRect(0, layersTop() - 1, width, 1);
     // grid
     for (const line of gridLines(width)) {
       g.fillStyle = line.kind === 'bar' ? '#ffffff20' : line.kind === 'beat' ? '#ffffff0d' : '#ffffff06';
@@ -2322,17 +2398,33 @@ export function createPlaylist(host, ctx) {
   let lastHeight = 0;
   function stageHeightSync(height) { if (height !== lastHeight) { canvas.style.height = `${height}px`; heads.style.height = `${height}px`; lastHeight = height; } }
 
-  function drawOverview(stageW, nowSec = ctx.getTime()) {
-    const width = stageW || overview.clientWidth || 600, height = 30, g = sizeCanvas(overview, width, height), peaks = computePeaks(), d = duration(), a = analysis();
-    g.fillStyle = '#0a0e14'; g.fillRect(0, 0, width, height);
+  function drawOverviewStatic(targetG, width, height, peaks, d, a) {
+    targetG.fillStyle = '#0a0e14'; targetG.fillRect(0, 0, width, height);
     if (a?.sections?.length) {
       for (const s of a.sections) {
-        g.fillStyle = `${s.color}66`;
-        g.fillRect(s.startSec / d * width, 0, Math.max(1, s.durationSec / d * width), 3);
+        targetG.fillStyle = `${s.color}66`;
+        targetG.fillRect(s.startSec / d * width, 0, Math.max(1, s.durationSec / d * width), 3);
       }
     }
-    if (peaks) { g.fillStyle = '#2c6f95'; for (let x = 0; x < width; x++) { const i0 = Math.floor(x / width * peaks.abs.length), i1 = Math.max(i0, Math.floor((x + 1) / width * peaks.abs.length) - 1); let m = 0; for (let i = i0; i <= i1; i++) m = Math.max(m, peaks.abs[i]); const a = m * (height / 2 - 2); g.fillRect(x, height / 2 - a, 1, Math.max(1, a * 2)); } }
-    tl().layers.forEach((layer, li) => layer.clips.forEach(clip => { const [r, gg, b] = clipUiColor(clip.color); g.fillStyle = `rgba(${r},${gg},${b},.75)`; g.fillRect(clip.startSec / d * width, 4 + (li % 6) * 4, Math.max(1, clip.durationSec / d * width), 3); }));
+    if (peaks) { targetG.fillStyle = '#2c6f95'; for (let x = 0; x < width; x++) { const i0 = Math.floor(x / width * peaks.abs.length), i1 = Math.max(i0, Math.floor((x + 1) / width * peaks.abs.length) - 1); let m = 0; for (let i = i0; i <= i1; i++) m = Math.max(m, peaks.abs[i]); const amp = m * (height / 2 - 2); targetG.fillRect(x, height / 2 - amp, 1, Math.max(1, amp * 2)); } }
+    tl().layers.forEach((layer, li) => layer.clips.forEach(clip => { const [r, gg, b] = clipUiColor(clip.color); targetG.fillStyle = `rgba(${r},${gg},${b},.75)`; targetG.fillRect(clip.startSec / d * width, 4 + (li % 6) * 4, Math.max(1, clip.durationSec / d * width), 3); }));
+  }
+
+  function drawOverview(stageW, nowSec = ctx.getTime()) {
+    const width = stageW || overview.clientWidth || 600, height = 30, g = sizeCanvas(overview, width, height), peaks = computePeaks(), d = duration(), a = analysis();
+    const t = tl();
+    const clipTotal = t.layers.reduce((acc, l) => acc + l.clips.length, 0);
+    const nextOverviewKey = `${width}|${height}|${d}|${peaks ? peaks.abs.length : 0}|${a?.sections?.length || 0}|${t._v || 0}|${t.layers.length}|${clipTotal}|${devicePixelRatio || 1}`;
+    if (typeof g.drawImage === 'function') {
+      if (overviewBgKey !== nextOverviewKey) {
+        overviewBgKey = nextOverviewKey;
+        const og = sizeCanvas(overviewBgCanvas, width, height);
+        drawOverviewStatic(og, width, height, peaks, d, a);
+      }
+      g.drawImage(overviewBgCanvas, 0, 0, width, height);
+    } else {
+      drawOverviewStatic(g, width, height, peaks, d, a);
+    }
     const vx = state.scrollSec / d * width, vw = visibleSec() / d * width;
     g.fillStyle = '#ffffff18'; g.fillRect(vx, 0, vw, height); g.strokeStyle = '#ffffffaa'; g.strokeRect(vx + .5, .5, Math.max(2, vw) - 1, height - 1);
     const ox = Math.round(nowSec / d * width);
@@ -2400,14 +2492,36 @@ export function createPlaylist(host, ctx) {
     }
     if (event.code === 'Space') state.spaceDown = false;
   });
+  function endScrub() {
+    if (state.gesture?.mode === 'scrub') finishGesture({}, { staleHover: true });
+    if (rulerGesture?.mode === 'seek') rulerUp({}, { staleHover: true });
+    if (ovGesture) ovUp({}, { staleHover: true });
+  }
+
+  addEventListener('pointerup', event => {
+    if (state.gesture) finishGesture(event);
+    if (rulerGesture) rulerUp(event);
+    if (ovGesture) ovUp(event);
+  });
+  addEventListener('pointercancel', event => {
+    if (state.gesture) {
+      if (['move', 'start', 'end', 'draw', 'erase', 'drag-keyframe'].includes(state.gesture.mode)) store.cancel();
+      finishGesture(event, { staleHover: true });
+    }
+    if (rulerGesture) rulerUp(event, { staleHover: true });
+    if (ovGesture) ovUp(event, { staleHover: true });
+  });
   addEventListener('blur', () => {
     state.shiftDown = false;
     state.spaceDown = false;
+    if (state.gesture) finishGesture({}, { staleHover: true });
+    if (rulerGesture) rulerUp({}, { staleHover: true });
+    if (ovGesture) ovUp({}, { staleHover: true });
   });
 
   renderHeads(); clampView();
   return {
-    redraw: requestDraw, draw, computePeaks, renderHeads, updateActiveHead, fit, zoomAround, centerOn, ensureVisible, setSelection, pruneSelection,
+    redraw: requestDraw, draw, computePeaks, renderHeads, updateActiveHead, fit, zoomAround, centerOn, ensureVisible, setSelection, pruneSelection, endScrub,
     toggleExpandLayer, get expandedLayerId() { return state.expandedLayerId; },
     get selection() { return [...state.selection]; }, get solo() { return state.solo; },
     setLaneSize(size) { state.laneSize = size; renderHeads(); requestDraw(); },

@@ -1,8 +1,8 @@
 {
   "format": "ledicated-show",
-  "version": 1,
-  "exportedAt": "2026-10-28T23:52:11.699Z",
-  "author": "Timon",
+  "version": 2,
+  "exportedAt": "2026-11-05T19:33:21.650Z",
+  "author": "Mortu",
   "track": {
     "id": "12f110db-ca50-44ff-965a-5b54bf553c2c",
     "title": "Klangkuenstler, Ski Aggu - Sonne Geht Auf (full track)",
@@ -12367,14 +12367,53 @@
                 "value": 0.9
               }
             ]
+          },
+          {
+            "preset": "pulse",
+            "targets": "all",
+            "color": [
+              1,
+              0.3607843137254902,
+              0.5411764705882353,
+              0
+            ],
+            "driver": "band",
+            "driverGain": 1.45,
+            "speed": 1,
+            "direction": "ltr",
+            "timing": "beat",
+            "motionMode": "serial",
+            "params": {},
+            "band": {
+              "source": "drums",
+              "lowHz": 180,
+              "highHz": 450,
+              "threshold": 0.6,
+              "ceiling": 1,
+              "mode": "gate",
+              "releaseSec": 0.12
+            },
+            "startSec": 61.354,
+            "durationSec": 1.5320000000000036,
+            "id": "clip-mw3y13611vaw",
+            "keyframes": [
+              {
+                "timeSec": 0,
+                "value": 1
+              },
+              {
+                "timeSec": 1.5320000000000036,
+                "value": 1
+              }
+            ]
           }
         ]
       }
     ]
   },
   "showId": "klangkuenstler-ski-aggu-sonne-geht-auf-full-track-625e1d93",
-  "updatedBy": "Timon",
-  "updatedAt": "2026-10-28T23:52:11.696Z",
-  "summary": "Početni klupski show u oblaku (5 slojeva · 263 clipova)",
+  "updatedBy": "Mortu",
+  "updatedAt": "2026-11-05T19:33:21.640Z",
+  "summary": "+1 novi clip [pulse] · ukupno 264 clipova",
   "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/a9b30e582814d7e73bd9181b873a5d6165a888f9055c7556c41dc1afe4ddf259.mp3"
 }

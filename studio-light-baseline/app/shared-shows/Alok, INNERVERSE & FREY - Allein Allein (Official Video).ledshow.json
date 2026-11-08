@@ -1,8 +1,8 @@
 {
   "format": "ledicated-show",
-  "version": 1,
-  "exportedAt": "2026-10-28T23:52:11.998Z",
-  "author": "Timon",
+  "version": 3,
+  "exportedAt": "2026-11-05T19:36:49.196Z",
+  "author": "Mortu",
   "track": {
     "id": "f17570fc-5ca7-4578-a959-16cddb10ec67",
     "title": "Alok, INNERVERSE & FREY - Allein Allein (Official Video)",
@@ -2829,45 +2829,6 @@
             ]
           },
           {
-            "id": "bass-drop-3",
-            "startSec": 44.72,
-            "durationSec": 46.44,
-            "preset": "pulse",
-            "targets": [
-              "L3",
-              "C3",
-              "R3"
-            ],
-            "color": [
-              0.025,
-              1,
-              1,
-              0.45
-            ],
-            "driver": "bass",
-            "driverGain": 1.45,
-            "speed": 1,
-            "timing": "beat",
-            "params": {
-              "floor": 0.2,
-              "curve": "punch"
-            },
-            "keyframes": [
-              {
-                "timeSec": 0,
-                "value": 1
-              },
-              {
-                "timeSec": 46.26,
-                "value": 1
-              },
-              {
-                "timeSec": 46.44,
-                "value": 0.9
-              }
-            ]
-          },
-          {
             "id": "bass-bld-chL-5",
             "startSec": 164.0660371517028,
             "durationSec": 3.715170278637771,
@@ -3431,50 +3392,6 @@
               {
                 "timeSec": 3.715170278637771,
                 "value": 0.88
-              }
-            ]
-          },
-          {
-            "id": "rhy-drop-kick-3",
-            "startSec": 44.72,
-            "durationSec": 46.44,
-            "preset": "pulse",
-            "targets": "all",
-            "color": [
-              1,
-              0.025,
-              0.775,
-              0.42
-            ],
-            "driver": "band",
-            "driverGain": 1.45,
-            "speed": 1,
-            "timing": "beat",
-            "params": {
-              "floor": 0.25,
-              "curve": "punch"
-            },
-            "band": {
-              "source": "drums",
-              "lowHz": 40,
-              "highHz": 110,
-              "threshold": 0.55,
-              "ceiling": 1,
-              "mode": "gate",
-              "releaseSec": 0.14
-            },
-            "keyframes": [
-              {
-                "timeSec": 0,
-                "value": 1
-              },
-              {
-                "timeSec": 46.26,
-                "value": 1
-              },
-              {
-                "timeSec": 46.44,
-                "value": 0.9
               }
             ]
           },
@@ -7103,8 +7020,8 @@
     ]
   },
   "showId": "alok-innerverse-frey-allein-allein-official-video-f4b5b9d9",
-  "updatedBy": "Timon",
-  "updatedAt": "2026-10-28T23:52:11.997Z",
-  "summary": "Početni klupski show u oblaku (5 slojeva · 152 clipova)",
+  "updatedBy": "Mortu",
+  "updatedAt": "2026-11-05T19:36:49.190Z",
+  "summary": "−1 obrisan · ukupno 150 clipova",
   "audioUrl": "https://github.com/timon2200/LEDicated/releases/download/cloud-audio-v1/709b34a81dfc8eafd66d455bbc85c6568774ccc99bf8d796ca64b08b635077e7.mp3"
 }

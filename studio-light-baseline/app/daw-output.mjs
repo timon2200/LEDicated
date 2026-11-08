@@ -443,23 +443,38 @@ export function createOutput(host, { badge, status, isBlackout, onConfig, onStat
       return { bars: Object.fromEntries(BAR_IDS.map(id => [id, Array.from({ length: 12 }, () => [0, 0, 0, white])])) };
     },
     send(frameOrGetter, t = performance.now() / 1000) {
-      if (!s.armed || window.ledicatedIsStageOwner === false) { s.pendingFrame = null; return; }
-      s.pendingFrame = frameOrGetter;
-      if (s.sending || s.flushTimer) return;
-      const minInterval = 1 / 65;
-      const elapsed = t - s.lastSent;
-      if (elapsed < minInterval) {
-        s.flushTimer = setTimeout(() => {
-          s.flushTimer = 0;
-          if (s.armed && s.pendingFrame) this.send(s.pendingFrame, performance.now() / 1000);
-        }, Math.max(1, Math.ceil((minInterval - elapsed) * 1000)));
+      if (!s.armed || window.ledicatedIsStageOwner === false) {
+        if (s.flushTimer) { clearTimeout(s.flushTimer); s.flushTimer = 0; }
+        s.pendingFrame = null;
         return;
+      }
+      s.pendingFrame = frameOrGetter;
+      if (s.sending) return;
+      const nowSec = performance.now() / 1000;
+      const minInterval = 1 / 95;
+      const elapsed = nowSec - s.lastSent;
+      if (elapsed < minInterval) {
+        if (!s.flushTimer) {
+          s.flushTimer = setTimeout(() => {
+            s.flushTimer = 0;
+            if (s.armed && s.pendingFrame && !s.sending) {
+              this.send(s.pendingFrame, performance.now() / 1000);
+            }
+          }, 18);
+        }
+        return;
+      }
+      if (s.flushTimer) {
+        clearTimeout(s.flushTimer);
+        s.flushTimer = 0;
       }
       const nextSource = s.pendingFrame;
       s.pendingFrame = null;
-      const next = typeof nextSource === 'function' ? nextSource(t) : nextSource;
+      const evalTime = typeof nextSource === 'function' ? (Math.abs(nowSec - t) < 0.002 ? t : nowSec) : nowSec;
+      const next = typeof nextSource === 'function' ? nextSource(evalTime) : nextSource;
       if (!next?.bars) return;
-      s.sending = true; s.lastSent = t;
+      s.sending = true;
+      s.lastSent = nowSec;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 1500);
       fetch('/api/frame', {
@@ -467,7 +482,6 @@ export function createOutput(host, { badge, status, isBlackout, onConfig, onStat
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           bars: next.bars,
-          previewBars: next.unscaledBars || undefined,
           clientId: window.ledicatedClientId || undefined,
           clientName: window.ledicatedClientName || undefined
         }),

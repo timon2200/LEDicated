@@ -149,7 +149,7 @@ test('Live Board adds onto cached timeline animation on targeted bars without ov
   assert.ok(liveFrame.bars.L1[0][1] > 50, 'Live Board green channel must be added on L1');
 });
 
-test('e8-columns profile routes O1 to L1-L3, O3 to R1-R3, and O5 to C2-C3 (with empty C1 at tail)', () => {
+test('e8-columns profile routes O1 to L1-L3, O3 to R1-R3, and O7 to C2-C3 (with empty C1 at tail)', () => {
   const cfg = defaultConfig('e8-columns');
   const routes = routesForNode(cfg, 'E8-1');
   assert.deepEqual(
@@ -161,9 +161,9 @@ test('e8-columns profile routes O1 to L1-L3, O3 to R1-R3, and O5 to C2-C3 (with 
       ['R1', 3, 4, 36],
       ['R2', 3, 4, 48],
       ['R3', 3, 4, 60],
-      ['C2', 5, 17, 72],
-      ['C3', 5, 17, 84],
-      ['C1', 5, 17, 96]
+      ['C2', 7, 33, 72],
+      ['C3', 7, 33, 84],
+      ['C1', 7, 33, 96]
     ]
   );
 });

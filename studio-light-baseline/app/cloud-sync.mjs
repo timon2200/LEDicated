@@ -6,7 +6,7 @@
  * while keeping `shared-shows/*.ledshow.json` in Git and `data/versions/` on disk as offline backups.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { compactAnalysisForShow, decodeShowJson, encodeShowJson, extractTrackManifest, sanitizeFilename } from './show-bundle.mjs';
 
@@ -252,13 +252,21 @@ export function createCloudSync({
     } catch {}
   }
 
+  const gitShowFileCache = new Map();
+
   /** Scan `shared-shows/*.ledshow.json` on disk so offline Git shows are always part of the catalog. */
   async function loadGitSharedShows() {
     await mkdir(sharedShowsDir, { recursive: true, mode: 0o755 }).catch(() => {});
     const files = (await readdir(sharedShowsDir).catch(() => [])).filter(f => f.endsWith('.ledshow.json')).sort();
     for (const filename of files) {
       try {
-        const raw = await readFile(join(sharedShowsDir, filename), 'utf8');
+        const filePath = join(sharedShowsDir, filename);
+        const st = await stat(filePath);
+        const cachedFile = gitShowFileCache.get(filename);
+        if (cachedFile && cachedFile.mtimeMs === st.mtimeMs && cachedFile.size === st.size && showsById.has(cachedFile.showId)) {
+          continue;
+        }
+        const raw = await readFile(filePath, 'utf8');
         const rawObj = JSON.parse(raw);
         const parsed = decodeShowJson(rawObj);
         const showId = rawObj.showId || computeShowId({
@@ -297,6 +305,7 @@ export function createCloudSync({
             track: parsed.track
           });
         }
+        gitShowFileCache.set(filename, { mtimeMs: st.mtimeMs, size: st.size, showId });
       } catch {}
     }
   }
@@ -326,12 +335,19 @@ export function createCloudSync({
     return initPromise;
   }
 
+  const SHOW_META_FIELDS = [
+    'showId', 'filename', 'title', 'author', 'updatedBy', 'version', 'updatedAt', 'createdAt',
+    'bpm', 'durationSec', 'layerCount', 'clipCount', 'sectionCount', 'videoId', 'sourceUrl',
+    'sha256', 'audioUrl', 'summary', 'timelineHash', 'trackJson'
+  ];
+  const SHOWS_LIST_QUERY = `/shows?pageSize=100&${SHOW_META_FIELDS.map(f => `mask.fieldPaths=${f}`).join('&')}`;
+
   /** Pull latest catalog, online presence, and activity feed from Firestore. */
   async function pullFromFirestore() {
     if (!enabled) return false;
     try {
       const [showsRes, presenceRes, activityRes] = await Promise.all([
-        firestoreRequest('/shows?pageSize=100'),
+        firestoreRequest(SHOWS_LIST_QUERY),
         firestoreRequest('/presence?pageSize=50').catch(() => null),
         firestoreRequest('/activity?pageSize=50').catch(() => null)
       ]);
@@ -396,10 +412,20 @@ export function createCloudSync({
 
       // Sync any newer cloud shows down to `shared-shows/` on disk so local Git backup stays fresh
       for (const item of changedShows) {
-        if (item.timelineJson) {
+        let timelineJson = item.timelineJson;
+        let analysisJson = item.analysisJson;
+        if (!timelineJson) {
+          const fullDocRaw = await firestoreRequest(`/shows/${encodeURIComponent(item.showId)}`).catch(() => null);
+          const fullDoc = fromFirestoreDoc(fullDocRaw);
+          if (fullDoc) {
+            timelineJson = fullDoc.timelineJson;
+            analysisJson = fullDoc.analysisJson;
+          }
+        }
+        if (timelineJson) {
           try {
-            const timeline = JSON.parse(item.timelineJson);
-            const analysis = item.analysisJson ? JSON.parse(item.analysisJson) : null;
+            const timeline = JSON.parse(timelineJson);
+            const analysis = analysisJson ? JSON.parse(analysisJson) : null;
             const showObj = {
               ...encodeShowJson({
                 track: item.entry.track,

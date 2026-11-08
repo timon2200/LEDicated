@@ -118,8 +118,9 @@ struct WledWinStatus {
         let rawDs = extractTag("ds") ?? "E8-WiFi Plus"
         let isLive = rawDs.hasSuffix(" (live)")
         let cleanName = isLive ? String(rawDs.dropLast(7)) : rawDs
+        let hasColor = (r + g + b + wv) > 0
         return WledWinStatus(
-            isOn: ac > 0,
+            isOn: ac > 0 && (hasColor || isLive),
             bri: max(0, min(255, ac)),
             col: [r, g, b, wv],
             deviceName: cleanName.isEmpty ? "E8-WiFi Plus" : cleanName,
@@ -610,7 +611,7 @@ final class E8LightController: ObservableObject {
         guard let url = URL(string: "http://127.0.0.1:8787/api/live/status") else { return }
         var req = URLRequest(url: url)
         req.setValue("127.0.0.1:8787", forHTTPHeaderField: "Host")
-        req.timeoutInterval = 0.45
+        req.timeoutInterval = 1.2
 
         do {
             let (data, response) = try await urlSession.data(for: req)
@@ -628,6 +629,9 @@ final class E8LightController: ObservableObject {
             }
             if let armedVal = status.serverState?.armed ?? status.lan?.armed {
                 studioArmed = armedVal
+            }
+            if studioOutputMode == "show" || studioArmed {
+                persistWorkItem?.cancel()
             }
             if let tele = status.serverState?.liveTelemetry {
                 studioLiveWatts = tele.watts
@@ -694,6 +698,23 @@ final class E8LightController: ObservableObject {
         guard !isInteracting else { return }
         probeCounter += 1
         loadHostFromConfigJson()
+
+        // When the local Studio server is driving a show (or armed in show mode),
+        // do NOT bombard the ESP32 with TCP HTTP /win requests while 60 Hz UDP DDP packets are streaming.
+        if localStudioReachable && (studioOutputMode == "show" || studioArmed || showIsPlaying) {
+            let wasConnected = isConnected
+            isConnected = true
+            isLiveDdpActive = studioArmed || showIsPlaying
+            if let sw = studioLiveWatts, sw >= 0 {
+                currentWatts = sw
+            }
+            refreshRateHz = studioLiveFps ?? (showIsPlaying ? 60 : (studioArmed ? 4 : 0))
+            onStatusBarUpdate?()
+            if !wasConnected {
+                rescheduleTimer()
+            }
+            return
+        }
 
         if await fetchFromHost(deviceHost) {
             return
@@ -797,8 +818,8 @@ final class E8LightController: ObservableObject {
                 lastObservedOn = win.isOn
             }
 
-            // If we are in ambient mode (no show active) and E8 reports (live), lock LO=2 on E8
-            if !isInteracting && studioOutputMode == "ambient" && !showIsPlaying && isLive {
+            // Only enforce ambient state when the local Studio server is not running and we are strictly in ambient mode
+            if !isInteracting && !localStudioReachable && studioOutputMode == "ambient" && !studioArmed && !showIsPlaying && isLive {
                 Task { await lockAmbientLorOnE8(host: deviceHost) }
             }
 
@@ -817,7 +838,7 @@ final class E8LightController: ObservableObject {
                     if showTitle == nil {
                         updateFallbackShowStatus()
                     }
-                } else if !showIsPlaying && Date().timeIntervalSince1970 - lastLiveSendTime > 2.0 {
+                } else if !localStudioReachable && studioOutputMode == "ambient" && !studioArmed && !showIsPlaying && Date().timeIntervalSince1970 - lastLiveSendTime > 2.0 {
                     let expectedBriByte = max(1, min(255, Int((brightness / 100.0 * 255.0).rounded())))
                     let expectedRgbw = ColorTempMath.rgbwForKelvin(kelvin)
                     let hasColorMismatch = win.col.count >= 4 && (
@@ -958,8 +979,11 @@ final class E8LightController: ObservableObject {
 
         disarmLocalServerIfRunning()
 
+        let outBri = targetOn ? briByte : 255
+        let outRgbw = targetOn ? rgbw : [0, 0, 0, 0]
+
         Task {
-            let winUrlStr = "http://\(host)/win&T=\(targetOn ? 1 : 0)&A=\(briByte)&R=\(rgbw[0])&G=\(rgbw[1])&B=\(rgbw[2])&W=\(rgbw[3])&R2=0&G2=0&B2=0&W2=0&FX=0&LO=2"
+            let winUrlStr = "http://\(host)/win&T=1&A=\(outBri)&R=\(outRgbw[0])&G=\(outRgbw[1])&B=\(outRgbw[2])&W=\(outRgbw[3])&R2=0&G2=0&B2=0&W2=0&FX=0&LO=2"
             guard let url = URL(string: winUrlStr) else { return }
             var req = URLRequest(url: url)
             req.httpMethod = "GET"
@@ -970,7 +994,7 @@ final class E8LightController: ObservableObject {
         }
 
         if saveToFlashAfterDelay {
-            scheduleFlashPersistence(isOn: targetOn, briByte: briByte, rgbw: rgbw, segName: segName, host: host)
+            scheduleFlashPersistence(isOn: targetOn, briByte: outBri, rgbw: outRgbw, segName: segName, host: host)
         }
     }
 
@@ -980,6 +1004,7 @@ final class E8LightController: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 defer { self.isInteracting = false }
+                guard self.studioOutputMode == "ambient" && !self.studioArmed && !self.showIsPlaying else { return }
                 self.lastFlashWhSyncTime = Date().timeIntervalSince1970
                 await self.persistToE8Flash(isOn: isOn, briByte: briByte, rgbw: rgbw, segName: segName, host: host)
             }
@@ -1000,8 +1025,10 @@ final class E8LightController: ObservableObject {
     }
 
     private func persistToE8Flash(isOn: Bool, briByte: Int, rgbw: [Int], segName: String, host: String) async {
-        // Save Preset 1 via WLED's lightweight /win&...&PS=1 endpoint without touching /json/cfg or locking the JSON buffer.
-        let winUrlStr = "http://\(host)/win&T=\(isOn ? 1 : 0)&A=\(briByte)&R=\(rgbw[0])&G=\(rgbw[1])&B=\(rgbw[2])&W=\(rgbw[3])&R2=0&G2=0&B2=0&W2=0&FX=0&LO=2&PS=1"
+        // Apply state via lightweight /win endpoint without touching /json/state or /json/cfg (and without &PS=1 which loads Preset 1).
+        let outBri = isOn ? briByte : 255
+        let outRgbw = isOn ? rgbw : [0, 0, 0, 0]
+        let winUrlStr = "http://\(host)/win&T=1&A=\(outBri)&R=\(outRgbw[0])&G=\(outRgbw[1])&B=\(outRgbw[2])&W=\(outRgbw[3])&R2=0&G2=0&B2=0&W2=0&FX=0&LO=2"
         if let winUrl = URL(string: winUrlStr) {
             var winReq = URLRequest(url: winUrl)
             winReq.httpMethod = "GET"
@@ -1009,16 +1036,16 @@ final class E8LightController: ObservableObject {
             winReq.timeoutInterval = 1.8
             winReq.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
             _ = try? await urlSession.data(for: winReq)
-            appendLocalLog(action: "PRESET_SAVED", details: ["on": isOn, "bri": briByte, "kelvin": Int(kelvin), "lor": 2])
+            appendLocalLog(action: "PRESET_SAVED", details: ["on": isOn, "bri": outBri, "kelvin": Int(kelvin), "lor": 2])
         }
     }
 
     private func enforceSavedMenuBarStateOnE8(host: String) async {
         let targetOn = isOn
-        let briByte = max(1, min(255, Int((brightness / 100.0 * 255.0).rounded())))
-        let rgbw = ColorTempMath.rgbwForKelvin(kelvin)
+        let briByte = targetOn ? max(1, min(255, Int((brightness / 100.0 * 255.0).rounded()))) : 255
+        let rgbw = targetOn ? ColorTempMath.rgbwForKelvin(kelvin) : [0, 0, 0, 0]
         let lor = (studioOutputMode == "ambient") ? 2 : 0
-        let winUrlStr = "http://\(host)/win&T=\(targetOn ? 1 : 0)&A=\(briByte)&R=\(rgbw[0])&G=\(rgbw[1])&B=\(rgbw[2])&W=\(rgbw[3])&R2=0&G2=0&B2=0&W2=0&FX=0&LO=\(lor)&PS=1"
+        let winUrlStr = "http://\(host)/win&T=1&A=\(briByte)&R=\(rgbw[0])&G=\(rgbw[1])&B=\(rgbw[2])&W=\(rgbw[3])&R2=0&G2=0&B2=0&W2=0&FX=0&LO=\(lor)"
         guard let winUrl = URL(string: winUrlStr) else { return }
         var winReq = URLRequest(url: winUrl)
         winReq.httpMethod = "GET"

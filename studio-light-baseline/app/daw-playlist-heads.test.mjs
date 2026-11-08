@@ -1701,6 +1701,138 @@ test('timeline headers: compact 2x2 stem controls and layer solo/mute states wor
   assert.equal(stemState.muted.size, 0, 'Reset cleared mute');
 });
 
+test('playhead scrub release & hover guard: playhead never sticks to mouse after clicking timeline, starting playback, and returning from clips/drivers', () => {
+  const timeline = normalizeTimeline(createAutoShow(analysis()));
+  const store = createStore(timeline);
+  const host = new MockElement('div');
+  const seeks = [];
+  let commits = 0;
+  let playing = false;
+  let currentSec = 0;
+
+  const playlist = createPlaylist(host, {
+    store,
+    getAnalysis: () => analysis(),
+    duration: () => 60,
+    getTime: () => currentSec,
+    seek: (sec, isScrubbing) => {
+      currentSec = sec;
+      seeks.push({ sec, isScrubbing });
+    },
+    commitSeek: () => { commits++; },
+    getSnap: () => 1,
+    getTool: () => 'select',
+    isPlaying: () => playing,
+    hasTrack: () => true,
+    getTrackTitle: () => 'Test Track',
+    isAudioMuted: () => false,
+    toggleAudioMute: () => {},
+    getVolume: () => 1,
+    setVolume: () => {},
+    getActiveLayerIndex: () => 0,
+    setActiveLayer: () => {},
+    status: () => {},
+    newClipSpec: () => ({ preset: 'pulse' })
+  });
+
+  playlist.fit();
+  const ruler = playlist.ruler;
+  const canvas = playlist.canvas;
+
+  // Scenario 1: User clicks on waveform canvas to set playhead, pointerup is missed (or capture dropped),
+  // song starts playing and advances to 18s, user moves mouse down to clips/auto-drivers and returns over canvas with buttons: 0
+  canvas.dispatchEvent(new MockEvent('pointerdown', {
+    button: 0,
+    buttons: 1,
+    clientX: 160,
+    clientY: 20,
+    pointerId: 10
+  }));
+  const seeksAfterDown = seeks.length;
+  assert.equal(seeksAfterDown, 1, 'initial click on waveform seeks once');
+
+  // Song starts playing and advances while user is down in dock (auto drivers)
+  playing = true;
+  currentSec = 18.5;
+
+  // User returns mouse up over canvas with no mouse button pressed (buttons: 0)
+  canvas.dispatchEvent(new MockEvent('pointermove', {
+    buttons: 0,
+    clientX: 420,
+    clientY: 20,
+    pointerId: 10
+  }));
+  canvas.dispatchEvent(new MockEvent('pointermove', {
+    buttons: 0,
+    clientX: 520,
+    clientY: 180,
+    pointerId: 10
+  }));
+
+  assert.equal(seeks.length, seeksAfterDown, 'hovering back over canvas with buttons: 0 must NOT seek or drag playhead');
+  assert.equal(currentSec, 18.5, 'playing song position remains untouched at 18.5s');
+
+  // Scenario 2: User clicks on ruler to set playhead, pointerup is missed, song plays,
+  // and user moves mouse back up over ruler with buttons: 0
+  ruler.dispatchEvent(new MockEvent('pointerdown', {
+    button: 0,
+    buttons: 1,
+    clientX: 200,
+    clientY: 8,
+    pointerId: 11
+  }));
+  const seeksAfterRulerDown = seeks.length;
+  assert.equal(seeksAfterRulerDown, seeksAfterDown + 1, 'initial click on ruler seeks once');
+  currentSec = 24.0;
+
+  ruler.dispatchEvent(new MockEvent('pointermove', {
+    buttons: 0,
+    clientX: 500,
+    clientY: 8,
+    pointerId: 11
+  }));
+  assert.equal(seeks.length, seeksAfterRulerDown, 'hovering back over ruler with buttons: 0 must NOT seek or drag playhead');
+  assert.equal(currentSec, 24.0, 'playing song position remains untouched at 24.0s');
+
+  // Scenario 3: lostpointercapture on canvas or ruler cleanly ends scrub gesture
+  playing = false;
+  canvas.dispatchEvent(new MockEvent('pointerdown', {
+    button: 0,
+    buttons: 1,
+    clientX: 240,
+    clientY: 20,
+    pointerId: 12
+  }));
+  canvas.dispatchEvent(new MockEvent('lostpointercapture', { pointerId: 12 }));
+  const seeksAfterLostCapture = seeks.length;
+  // Even without buttons property on synthetic event, gesture is already cleared by lostpointercapture
+  canvas.dispatchEvent(new MockEvent('pointermove', {
+    clientX: 600,
+    clientY: 20,
+    pointerId: 12
+  }));
+  assert.equal(seeks.length, seeksAfterLostCapture, 'after lostpointercapture, pointermove does not scrub');
+
+  // Scenario 4: playlist.endScrub() called when playback starts terminates any open scrub gesture
+  ruler.dispatchEvent(new MockEvent('pointerdown', {
+    button: 0,
+    buttons: 1,
+    clientX: 120,
+    clientY: 8,
+    pointerId: 13
+  }));
+  playing = true;
+  playlist.endScrub();
+  const seeksAfterEndScrub = seeks.length;
+  ruler.dispatchEvent(new MockEvent('pointermove', {
+    clientX: 640,
+    clientY: 8,
+    pointerId: 13
+  }));
+  assert.equal(seeks.length, seeksAfterEndScrub, 'after endScrub(), pointermove does not scrub');
+});
+
+
 
 
 

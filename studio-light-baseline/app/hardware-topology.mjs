@@ -15,13 +15,13 @@ const e8Routes = BAR_IDS.map((bar, index) => index < 8
 const e8ColumnRoutes = [
   ['L1', 1, 1, 5], ['L2', 1, 2, 5], ['L3', 1, 3, 5],
   ['R1', 3, 1, 4], ['R2', 3, 2, 4], ['R3', 3, 3, 4],
-  ['C2', 5, 1, 17], ['C3', 5, 2, 17], ['C1', 5, 3, 17]
+  ['C2', 7, 1, 33], ['C3', 7, 2, 33], ['C1', 7, 3, 33]
 ].map(([bar, port, chain, gpio]) => ({ bar, node: 'E8-1', port, chain, gpio }));
 
 export const HARDWARE_PROFILES = Object.freeze([
   { id: 'c3-five', label: '5 × ESP32-C3', description: 'Postojeći softverski baseline: četiri čvora s po dva bara i jedan s jednim.', nodes: ['C3-A', 'C3-B', 'C3-C', 'C3-D', 'C3-E'], routes: c3Routes },
   { id: 'e8-c3', label: 'E8-WiFi Plus + C3', description: 'Plan za naručeni E8 V1.01: O1–O8 za prvih osam barova, C3 za R3.', nodes: ['E8-1', 'C3-R3'], routes: e8Routes },
-  { id: 'e8-columns', label: 'E8 · 3 stupca u seriji (O1, O3, O5)', description: 'Jedan E8 kontroler vozi 8 fizičkih barova kroz 3 stupca u seriji: O1 (L1→L2→L3), O3 (R1→R2→R3), O5 (prazno na C1, zatim C2→C3).', nodes: ['E8-1'], routes: e8ColumnRoutes }
+  { id: 'e8-columns', label: 'E8 · 3 stupca u seriji (O1, O3, O7)', description: 'Jedan E8 kontroler vozi 8 fizičkih barova kroz 3 stupca u seriji: O1 (L1→L2→L3), O3 (R1→R2→R3), O7 (prazno na C1, zatim C2→C3).', nodes: ['E8-1'], routes: e8ColumnRoutes }
 ]);
 
 export function hardwareProfile(id = 'c3-five') {

@@ -465,10 +465,14 @@ export function parseWledWinXml(xml) {
   const rawDs = tag('ds') || 'E8-WiFi Plus';
   const isLive = rawDs.endsWith(' (live)');
   const deviceName = isLive ? rawDs.slice(0, -7) : rawDs;
+  const r = clMatches[0] || 0;
+  const g = clMatches[1] || 0;
+  const b = clMatches[2] || 0;
+  const hasColor = (r + g + b + wv) > 0;
   return {
-    on: ac > 0,
+    on: ac > 0 && (hasColor || isLive),
     bri: Math.max(0, Math.min(255, ac)),
-    col: [clMatches[0] || 0, clMatches[1] || 0, clMatches[2] || 0, wv],
+    col: [r, g, b, wv],
     deviceName: deviceName || 'E8-WiFi Plus',
     isLive
   };
@@ -742,7 +746,11 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
   let lastFrame = 0;
   let lastClientFrame = -Infinity;
   let lastAcceptedFrame = -Infinity;
+  let lastInternalFrame = -Infinity;
+  let lastPruneLanPeersAt = 0;
+  const lastWakeAtByHost = new Map();
   let framesSentSinceArm = 0;
+  let consecutiveIdleZeroFrames = 0;
   let sequence = 0;
   let closing = false;
   let discoveryPromise = null;
@@ -1005,8 +1013,10 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     return Math.ceil(remainingMs / 1000);
   };
 
-  const pruneLanPeers = () => {
+  const pruneLanPeers = (force = false) => {
     const nowMs = Date.now();
+    if (!force && stageIdleMs >= 1000 && nowMs - lastPruneLanPeersAt < 250) return false;
+    lastPruneLanPeersAt = nowMs;
     let stageChanged = false;
     for (const [cid, peer] of lanPeers.entries()) {
       const hasSse = peer.sseRes && !peer.sseRes.writableEnded && !peer.sseRes.destroyed;
@@ -1091,7 +1101,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
       reason = activeNodes.length === config.nodes.length ? 'Izlaz uključen' : `Izlaz uključen (${activeNodes.length}/${config.nodes.length} kontrolera)`;
       lastFrame = performance.now();
       lastAcceptedFrame = -Infinity;
-      if (forceWake && (!wasArmed || prevMode !== 'show')) {
+      if (forceWake && (!wasArmed || prevMode !== 'show' || !wledShowCarrierAwake)) {
         for (const node of activeNodes) wakeWled(node.host);
       }
     }
@@ -1509,6 +1519,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     const sentCount = framesSentSinceArm;
     armed = false;
     framesSentSinceArm = 0;
+    consecutiveIdleZeroFrames = 0;
     reason = message;
     if (wasArmed) {
       logEvent('WLED', 'DISARM', { message, sendZeros, framesSentSinceArm: sentCount, outputMode });
@@ -1516,23 +1527,31 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     if (wasArmed && sendZeros) await zeros().catch(() => {});
   };
   const wakeWled = host => {
+    const wasAwake = wledShowCarrierAwake;
     wledShowCarrierAwake = true;
     if (probe === probeWled && host) {
+      const nowMs = Date.now();
+      const lastWake = lastWakeAtByHost.get(host) || 0;
+      if (wasAwake && nowMs - lastWake < 1500) return;
+      lastWakeAtByHost.set(host, nowMs);
       logEvent('WLED', 'WAKE_SHOW', { host, lor: 0 });
       fetch(`http://${host}/win&T=1&A=255&R=0&G=0&B=0&W=0&R2=0&G2=0&B2=0&W2=0&FX=0&LO=0`, {
         signal: AbortSignal.timeout(1200)
       }).catch(() => {});
     }
   };
-  const buildAmbientWinQuery = ({ lockLor = true, savePreset = false } = {}) => {
-    const rgbw = rgbwForKelvin(ambientLight.kelvin);
-    const briByte = Math.max(1, Math.min(255, Math.round((ambientLight.brightness / 100) * 255)));
+  const buildAmbientWinQuery = ({ lockLor = true } = {}) => {
     const isOn = Boolean(ambientLight.on);
+    const rgbw = isOn ? rgbwForKelvin(ambientLight.kelvin) : [0, 0, 0, 0];
+    const briByte = isOn ? Math.max(1, Math.min(255, Math.round((ambientLight.brightness / 100) * 255))) : 255;
     const lor = lockLor ? 2 : 0;
-    return `win&T=${isOn ? 1 : 0}&A=${briByte}&R=${rgbw[0]}&G=${rgbw[1]}&B=${rgbw[2]}&W=${rgbw[3]}&R2=0&G2=0&B2=0&W2=0&FX=0&LO=${lor}${savePreset ? '&PS=1' : ''}`;
+    // Keep WLED RMT carrier active (T=1) with [0,0,0,0] when off so 24V WS2814 data lines are continuously refreshed with zeros instead of floating at 0 FPS.
+    // Note: never append &PS=1 to /win because in WLED HTTP API PS=1 loads Preset 1 instead of saving it.
+    return `win&T=1&A=${briByte}&R=${rgbw[0]}&G=${rgbw[1]}&B=${rgbw[2]}&W=${rgbw[3]}&R2=0&G2=0&B2=0&W2=0&FX=0&LO=${lor}`;
   };
   const restoreAmbientWled = (host, { lockLor = true, savePreset = false } = {}) => {
     wledShowCarrierAwake = false;
+    if (host) lastWakeAtByHost.delete(host);
     if (probe === probeWled && host) {
       const query = buildAmbientWinQuery({ lockLor, savePreset });
       logEvent('WLED', 'LOCK_AMBIENT', {
@@ -1678,8 +1697,9 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
 
     const targets = config.nodes.filter(n => n.host).map(n => n.host);
     if (!targets.length) targets.push('192.168.0.117');
-    const savePreset = merged.savePreset !== false;
-    const winQuery = `win&T=${nextOn ? 1 : 0}&A=${briByte}&R=${rgbw[0]}&G=${rgbw[1]}&B=${rgbw[2]}&W=${rgbw[3]}&R2=0&G2=0&B2=0&W2=0&FX=0&LO=2${savePreset ? '&PS=1' : ''}`;
+    const outRgbw = nextOn ? rgbw : [0, 0, 0, 0];
+    const outBriByte = nextOn ? briByte : 255;
+    const winQuery = `win&T=1&A=${outBriByte}&R=${outRgbw[0]}&G=${outRgbw[1]}&B=${outRgbw[2]}&W=${outRgbw[3]}&R2=0&G2=0&B2=0&W2=0&FX=0&LO=2`;
 
     if (probe === probeWled) {
       await Promise.all(targets.map(host =>
@@ -1916,7 +1936,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     // even when physical WLED output is disarmed or in ambient mode.
     pushFrameToCompanionClients(bars, now, { isPreScaled: false });
     if (!armed || outputMode === 'ambient' || remoteStageOwner) return false;
-    if (now - lastAcceptedFrame < minFrameMs) return false;
+    if (now - lastAcceptedFrame < minFrameMs || now - lastInternalFrame < minFrameMs) return false;
     if (lastDispatchedAt > 0) {
       const dt = now - lastDispatchedAt;
       if (dt > 4 && dt < 1000) {
@@ -1955,7 +1975,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     }
     framesSentSinceArm++;
     lastFrame = now;
-    lastAcceptedFrame = now;
+    lastInternalFrame = now;
     await Promise.all(config.nodes.filter(node => node.host).map(node => send(node.host, values.get(node.id))));
     return true;
   };
@@ -2052,7 +2072,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
     const hasCompanion = hasActiveCompanionClient();
     if (!canSendWled && !hasCompanion) return;
     const nowPerf = performance.now();
-    if (canSendWled && nowPerf - lastAcceptedFrame < 13) return;
+    if (canSendWled && (nowPerf - lastAcceptedFrame < 13 || nowPerf - lastInternalFrame < 13)) return;
     if (!canSendWled && nowPerf - lastCompanionFramePushAt < 30) return;
     const browserFrameIdleMs = nowPerf - lastClientFrame;
     const nowMs = Date.now();
@@ -2066,7 +2086,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
       !extState.dawPlayingLocally &&
       (nowMs - (extState.lastSyncAt || 0) < 1200)
     );
-    if (extActivelyPlaying && (liveControl.clientCount === 0 || browserFrameIdleMs > 35)) {
+    if (extActivelyPlaying && (liveControl.clientCount === 0 || browserFrameIdleMs > 120)) {
       const elapsedSec = Math.max(0, (nowPerf - (extState.lastSyncPerfMs || nowPerf)) / 1000) * (extState.playbackRate || 1);
       const interpTimeSec = Math.max(0, (Number(extState.lastTime) || 0) + elapsedSec);
       const scale = clampVal((liveControl.state.master ?? 70) / 100, 0, 1);
@@ -2109,14 +2129,15 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
       latestLiveState?.isPlaying &&
       (hasCompanion || (nowMs - (latestLiveState.timestamp || 0) < 15000))
     );
-    if (liveClients.size > 0 && dawActivelyPlaying && browserFrameIdleMs > 40 && !fallbackBusy) {
+    if (liveClients.size > 0 && dawActivelyPlaying && browserFrameIdleMs > 350 && !fallbackBusy) {
       const trackId = latestLiveState?.trackId || liveControl.state.trackId;
       if (trackId) {
         const cached = serverShowCache.get(trackId);
+        const offsetSec = Number(latestLiveState?.offsetSec) || 0;
         if (cached && nowMs - cached.loadedAt < 10000) {
           const elapsedSec = Math.max(0, (nowMs - (latestLiveState.timestamp || nowMs)) / 1000);
           const durationLimit = cached.analysis?.durationSec || cached.timeline?.durationSec || Infinity;
-          let tSec = Math.max(0, (Number(latestLiveState?.timeSec) || 0) + elapsedSec);
+          let tSec = Math.max(0, (Number(latestLiveState?.timeSec) || 0) + offsetSec + elapsedSec);
           if (Number.isFinite(durationLimit) && durationLimit > 1 && tSec >= durationLimit) {
             tSec = tSec % durationLimit;
             if (nowMs - (latestLiveState.timestamp || 0) > 4000) {
@@ -2142,7 +2163,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               ? Math.max(0, (Date.now() - (latestLiveState.timestamp || Date.now())) / 1000)
               : 0;
             const durationLimit = show.analysis?.durationSec || show.timeline?.durationSec || Infinity;
-            const tSec = Math.min(durationLimit, Math.max(0, (Number(latestLiveState?.timeSec) || 0) + elapsedSec));
+            const tSec = Math.min(durationLimit, Math.max(0, (Number(latestLiveState?.timeSec) || 0) + offsetSec + elapsedSec));
             let rendered = renderTimelineFrame(show.timeline, show.analysis, tSec, null, true);
             if (serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0) {
               const pCtx = getServerPerfContext();
@@ -2209,18 +2230,19 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
   const renderTimer = setInterval(renderHighRateTick, 16);
   renderTimer.unref();
   const timer = setInterval(() => {
-    if (pruneLanPeers()) {
+    if (pruneLanPeers(true)) {
       broadcastLanPresence({ reason: 'idle_timeout' });
     }
     if (!armed || outputMode === 'ambient' || remoteStageOwner) return;
     const idleMs = performance.now() - lastFrame;
     const hasKnownClient =
+      framesSentSinceArm === 0 ||
       liveClients.size > 0 ||
       lanPeers.size > 0 ||
       Boolean(latestLiveState && Date.now() - (latestLiveState.timestamp || 0) < 30000);
     const effectiveWatchdogMs = hasKnownClient ? Math.max(watchdogMs * 20, 65000) : watchdogMs;
     if (idleMs > effectiveWatchdogMs) {
-      const sendZerosOnTimeout = framesSentSinceArm > 0 && config.profile !== 'e8-columns';
+      const sendZerosOnTimeout = framesSentSinceArm > 0 && !Boolean(ambientLight.on);
       logEvent('WATCHDOG', 'IDLE_TIMEOUT', {
         idleMs: Math.round(idleMs),
         effectiveWatchdogMs,
@@ -3522,7 +3544,11 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (isStageOwner) {
             const wasActive = Boolean(latestLiveState?.isPlaying || (Array.isArray(latestLiveState?.activePads) && latestLiveState.activePads.length > 0));
             const nowActive = Boolean(input.isPlaying || (Array.isArray(input.activePads) && input.activePads.length > 0));
-            latestLiveState = { ...input, timestamp: Date.now() };
+            const nowMs = Date.now();
+            const transitMs = Number.isFinite(Number(input.clientSentAtMs))
+              ? Math.max(0, Math.min(250, nowMs - Number(input.clientSentAtMs)))
+              : 0;
+            latestLiveState = { ...input, timestamp: nowMs - transitMs };
             if (Array.isArray(input.pads)) {
               for (let idx = 0; idx < 12; idx++) {
                 syncServerPadSlot(idx, input.pads[idx]);
@@ -3548,11 +3574,19 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
             if (typeof input.blackout === 'boolean') liveControl.state.blackout = input.blackout;
             if (input.trackId) liveControl.state.trackId = input.trackId;
             if (armed && input.armed) lastFrame = performance.now();
-            if (input.takeover === true || (!wasActive && nowActive && !liveControl.state.blackout)) {
+            if (
+              input.takeover === true ||
+              (!wasActive && nowActive && !liveControl.state.blackout) ||
+              (nowActive && (!armed || outputMode === 'ambient' || !wledShowCarrierAwake) && !liveControl.state.blackout)
+            ) {
               activateShowOutput({ forceWake: true, broadcast: true });
               broadcastLanPresence({ reason: 'daw_play' });
             } else if (wasActive && !nowActive && serverPerformDesk.active.size === 0 && serverPerformDesk.touches.size === 0 && !liveControl.state.blackout) {
-              restoreWledAfterShowStop('daw_stop');
+              if (Boolean(ambientLight.on) && (!armed || outputMode === 'ambient')) {
+                restoreWledAfterShowStop('daw_stop');
+              } else if (!armed) {
+                zeros().catch(() => {});
+              }
             }
           }
           const lanStat = getLanStatus();
@@ -3967,6 +4001,13 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (testRunning) { testAbort = true; stopTest?.(); await testSettled; }
           logEvent('WLED', 'BLACKOUT_TRIGGERED', {});
           await disarm('Blackout', { sendZeros: true });
+          if (probe === probeWled) {
+            for (const node of config.nodes.filter(n => n.host)) {
+              fetch(`http://${node.host}/win&T=1&A=255&R=0&G=0&B=0&W=0&R2=0&G2=0&B2=0&W2=0&FX=0&LO=0`, {
+                signal: AbortSignal.timeout(1200)
+              }).catch(() => {});
+            }
+          }
           broadcastLive('command', { type: 'hardware_sync', state: state() });
           return json(response, 200, state());
         }
@@ -4015,19 +4056,22 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           serverPerformDesk.tick(perfCtx);
           const effectiveMaster = latestLiveState?.master ?? liveControl.state.master ?? 35;
           const hasValidBars = Boolean(input.bars && Object.keys(input.bars).length === 9);
-          const unscaledBaseBars = hasValidBars
+          const hasServerPadsNow = serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0;
+          const needsUnscaled = hasActiveCompanionClient() || !armed || outputMode === 'ambient' || hasServerPadsNow || Boolean(input.previewBars);
+          const unscaledBaseBars = (hasValidBars && needsUnscaled)
             ? ((input.previewBars && Object.keys(input.previewBars).length === 9)
                 ? input.previewBars
                 : unscaleBarsForPreview(input.bars, effectiveMaster))
-            : null;
-          if (unscaledBaseBars && canClientDriveStage(input.clientId)) {
+            : (hasValidBars ? input.bars : null);
+          const clientCanDrive = canClientDriveStage(input.clientId);
+          if (unscaledBaseBars && clientCanDrive) {
             lastBaseBars = unscaledBaseBars;
             lastBaseBarsAt = performance.now();
           }
           if (outputMode === 'ambient') {
-            if (unscaledBaseBars && canClientDriveStage(input.clientId)) {
+            if (unscaledBaseBars && clientCanDrive) {
               let companionBars = unscaledBaseBars;
-              if (serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0) {
+              if (hasServerPadsNow) {
                 companionBars = serverPerformDesk.render({ bars: unscaledBaseBars }, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime).bars;
               }
               pushFrameToCompanionClients(companionBars, performance.now(), { isPreScaled: false });
@@ -4041,7 +4085,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
               isStageOwner: false
             });
           }
-          if (!canClientDriveStage(input.clientId)) {
+          if (!clientCanDrive) {
             const lanStat = getLanStatus();
             return json(response, 200, {
               ok: true,
@@ -4055,7 +4099,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (!armed) {
             if (unscaledBaseBars) {
               let companionBars = unscaledBaseBars;
-              if (serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0) {
+              if (hasServerPadsNow) {
                 companionBars = serverPerformDesk.render({ bars: unscaledBaseBars }, perfCtx.clockTime, perfCtx.bpm, 1, null, perfCtx.songTime).bars;
               }
               pushFrameToCompanionClients(companionBars, performance.now(), { isPreScaled: false });
@@ -4065,7 +4109,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           if (!hasValidBars) throw new Error('Kadar mora sadržavati svih 9 traka.');
           let effectiveBars = input.bars;
           let companionBars = unscaledBaseBars || input.bars;
-          if (serverPerformDesk.active.size > 0 || serverPerformDesk.touches.size > 0) {
+          if (hasServerPadsNow) {
             const browserActiveSet = new Set(Array.isArray(latestLiveState?.activePads) ? latestLiveState.activePads : []);
             const needsServerOverlay =
               serverPerformDesk.touches.size > 0 ||
@@ -4100,28 +4144,36 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
           }
           const cid = input.clientId ? String(input.clientId).trim() : '';
           const peer = cid ? lanPeers.get(cid) : null;
-          const peerIdle = (peer ? (!peer.isPlaying && !peer.hasActivePads) : (!latestLiveState?.isPlaying && !(latestLiveState?.activePads?.length))) && serverPerformDesk.active.size === 0 && serverPerformDesk.touches.size === 0;
-          if (!hasNonZeroChannel && config.profile === 'e8-columns' && !liveControl.state.blackout) {
-            if (peerIdle && cid) {
+          const peerIdle = (peer ? (!peer.isPlaying && !peer.hasActivePads) : (!latestLiveState?.isPlaying && !(latestLiveState?.activePads?.length))) && !hasServerPadsNow;
+          if (!hasNonZeroChannel && peerIdle && !liveControl.state.blackout) {
+            consecutiveIdleZeroFrames++;
+            if (consecutiveIdleZeroFrames > 3 && cid) {
               lastFrame = performance.now();
+              lastClientFrame = lastFrame;
               pushFrameToCompanionClients(companionBars, lastFrame, { isPreScaled: false });
-              if (wledShowCarrierAwake && framesSentSinceArm > 0) {
-                restoreWledAfterShowStop('idle_black_frame');
-              }
               return json(response, 200, { ok: true, skipped: 'idle_black_frame', isStageOwner: true, stageOwnerId });
             }
+          } else {
+            consecutiveIdleZeroFrames = 0;
           }
           if (!wledShowCarrierAwake && !liveControl.state.blackout && (hasNonZeroChannel || !peerIdle)) {
             for (const node of config.nodes.filter(n => n.host)) wakeWled(node.host);
           }
           const now = performance.now();
-          if (now - lastAcceptedFrame < minFrameMs) return json(response, 429, { error: 'Najviše 120 kadrova u sekundi.' });
+          lastClientFrame = now;
+          const effectiveMinFrameMs = cid ? Math.min(minFrameMs, 2) : minFrameMs;
+          if (now - lastAcceptedFrame < effectiveMinFrameMs) return json(response, 429, { error: 'Najviše 120 kadrova u sekundi.' });
           if (framesSentSinceArm === 0) {
             logEvent('DDP', 'STREAM_FIRST_FRAME', { source: 'api_frame', clientId: input.clientId || null, hasNonZeroChannel });
           }
+          if (lastDispatchedAt > 0) {
+            const dt = now - lastDispatchedAt;
+            if (dt > 4 && dt < 1000) {
+              smoothedDdpIntervalMs = smoothedDdpIntervalMs * 0.8 + dt * 0.2;
+            }
+          }
           framesSentSinceArm++;
           lastFrame = now;
-          lastClientFrame = now;
           lastAcceptedFrame = now;
           lastDispatchedBars = effectiveBars;
           lastDispatchedAt = now;
@@ -4200,7 +4252,7 @@ export function createLightingServer({ configPath = resolve(ROOT, 'config.json')
       liveClients.clear();
       lanPeers.clear();
       if (testRunning) { testAbort = true; stopTest?.(); await testSettled; }
-      await disarm('Poslužitelj ugašen', { sendZeros: config.profile !== 'e8-columns' }).catch(() => {});
+      await disarm('Poslužitelj ugašen', { sendZeros: !Boolean(ambientLight.on) }).catch(() => {});
       server.closeAllConnections?.();
       await new Promise(done => server.close(done));
       try { udp.close(); } catch (error) { if (error.code !== 'ERR_SOCKET_DGRAM_NOT_RUNNING') throw error; }

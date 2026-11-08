@@ -43,7 +43,7 @@ function fft(real, imag) {
 const WINDOW = Float64Array.from({ length: FFT_SIZE }, (_, n) => 0.5 - 0.5 * Math.cos(2 * Math.PI * n / (FFT_SIZE - 1)));
 
 /** Compute the spectrogram. `onProgress`/`yieldEvery` let the browser stay responsive. */
-export async function computeSpectrum(samples, sampleRate, { yieldEvery = 400, onProgress } = {}) {
+export async function computeSpectrum(samples, sampleRate, { yieldEvery = 120, onProgress } = {}) {
   if (!(samples?.length > 0) || !(sampleRate > 0)) throw new TypeError('samples and sampleRate are required');
   const frames = Math.max(1, Math.floor((samples.length - FFT_SIZE) / HOP) + 1);
   const raw = new Float32Array(frames * SPECTRUM_BANDS);
@@ -66,7 +66,7 @@ export async function computeSpectrum(samples, sampleRate, { yieldEvery = 400, o
       const mag = Math.sqrt(peak) / FFT_SIZE * tilt[b];
       raw[f * SPECTRUM_BANDS + b] = mag; if (mag > globalMax) globalMax = mag;
     }
-    if (yieldEvery && f % yieldEvery === 0) { onProgress?.(f / frames); await new Promise(resolve => setTimeout(resolve, 0)); }
+    if (yieldEvery && f > 0 && f % yieldEvery === 0) { onProgress?.(f / frames); await new Promise(resolve => setTimeout(resolve, 0)); }
   }
   // Reference = 99.5th percentile of loudness so one stray click does not flatten the map.
   const sample = []; const stride = Math.max(1, Math.floor(raw.length / 20000));
@@ -136,6 +136,10 @@ export function getSpectrumForSource(analysis, source = 'master') {
   const master = analysis.spectrum;
   if (!analysis._stemSpectrums) analysis._stemSpectrums = new Map();
   if (analysis._stemSpectrums.has(cleanSource)) return analysis._stemSpectrums.get(cleanSource);
+  if (analysis.stemSpectrums?.[cleanSource]) {
+    analysis._stemSpectrums.set(cleanSource, analysis.stemSpectrums[cleanSource]);
+    return analysis.stemSpectrums[cleanSource];
+  }
 
   const bands = master.bands;
   const frames = master.frames;
@@ -181,6 +185,9 @@ export function getSpectrumForSource(analysis, source = 'master') {
     source: cleanSource
   };
   analysis._stemSpectrums.set(cleanSource, stemSp);
+  if (analysis.stemSpectrums && typeof analysis.stemSpectrums === 'object') {
+    analysis.stemSpectrums[cleanSource] = stemSp;
+  }
   return stemSp;
 }
 

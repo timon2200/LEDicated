@@ -1349,6 +1349,9 @@ export function createClipEditor(host, ctx) {
   });
 
   canvas.addEventListener('pointermove', event => {
+    if ((s.marquee || s.drag) && typeof event.buttons === 'number' && (event.buttons & 1) === 0) {
+      release(event);
+    }
     const hit = primary(); if (!hit) return;
     const { x, y } = pointer(event), { w, h: hh } = geometry();
     const clip = hit.clip;
@@ -1435,6 +1438,7 @@ export function createClipEditor(host, ctx) {
   };
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener('lostpointercapture', release);
 
   canvas.addEventListener('keydown', event => {
     const hit = primary(); if (!hit) return;

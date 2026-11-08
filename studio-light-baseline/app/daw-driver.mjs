@@ -340,6 +340,9 @@ export function createDriverEditor(host, ctx) {
     specCanvas.setPointerCapture(event.pointerId); specCanvas.style.cursor = mode === 'body' ? 'grabbing' : CURSORS[mode] || 'ew-resize'; draw();
   });
   specCanvas.addEventListener('pointermove', event => {
+    if (s.drag && typeof event.buttons === 'number' && (event.buttons & 1) === 0) {
+      release(event);
+    }
     const hit = primary(); if (!hit) return;
     const { x, y } = where(event), { w, h: hh } = size(specCanvas);
     if (!s.drag) {
@@ -359,8 +362,8 @@ export function createDriverEditor(host, ctx) {
     store.update(t => patchClips(t, refs(), { band: patch }));
     refreshInputs(); draw();
   });
-  const release = event => { if (!s.drag) return; s.drag = null; if (specCanvas.hasPointerCapture(event.pointerId)) specCanvas.releasePointerCapture(event.pointerId); store.end('Frekvencijski pojas'); };
-  specCanvas.addEventListener('pointerup', release); specCanvas.addEventListener('pointercancel', release);
+  const release = event => { if (!s.drag) return; s.drag = null; if (event?.pointerId !== undefined && specCanvas.hasPointerCapture?.(event.pointerId)) specCanvas.releasePointerCapture(event.pointerId); store.end('Frekvencijski pojas'); };
+  specCanvas.addEventListener('pointerup', release); specCanvas.addEventListener('pointercancel', release); specCanvas.addEventListener('lostpointercapture', release);
   specCanvas.addEventListener('pointerleave', () => { if (!s.drag && s.hover) { s.hover = null; draw(); } });
   specCanvas.addEventListener('dblclick', () => {
     const hit = primary();
